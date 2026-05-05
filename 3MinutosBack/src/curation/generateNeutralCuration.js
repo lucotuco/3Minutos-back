@@ -5,9 +5,9 @@ const Article = require('../models/Article');
 const { openai, OPENAI_MODEL } = require('../config/openai');
 
 const NeutralCurationSchema = z.object({
-  neutralTitle: z.string().min(8).max(90),
-  neutralLead: z.string().min(20).max(180),
-  neutralSummary: z.string().min(40).max(500),
+  neutralTitle: z.string().min(8).max(62),
+  neutralLead: z.string().min(15).max(120),
+  neutralSummary: z.string().min(40).max(430),
   neutralityScore: z.number().min(0).max(100),
   politicalBiasRisk: z.enum(['low', 'medium', 'high']),
 });
@@ -43,14 +43,14 @@ function buildFallbackTitle(article) {
 
   if (!title) return 'Noticia relevante del día';
 
-  return truncateWords(title, 12);
+  return truncateWords(title, 9).slice(0, 62).trim();
 }
 
 function buildFallbackLead(article) {
   const sourceText = cleanText(article.rawSummary || article.contentSnippet);
 
   if (sourceText) {
-    return truncateWords(sourceText, 24);
+    return truncateWords(sourceText, 16).slice(0, 120).trim();
   }
 
   return buildFallbackTitle(article);
@@ -60,7 +60,7 @@ function buildFallbackSummary(article) {
   const sourceText = cleanText(article.rawSummary || article.contentSnippet);
 
   if (sourceText) {
-    return truncateWords(sourceText, 70);
+    return truncateWords(sourceText, 60).slice(0, 430).trim();
   }
 
   return buildFallbackLead(article);
@@ -87,50 +87,77 @@ Sos un editor de una app mobile de noticias cortas llamada 3 Minutos.
 
 Objetivo editorial:
 - La noticia debe quedar corta, clara, informativa y neutral.
-- La neutralidad política es prioritaria.
+- La neutralidad política es la prioridad principal del producto.
 - No cambies los hechos.
 - No inventes datos.
-- No ocultes que hay conflicto, críticas, denuncias o posturas enfrentadas si son parte central de la noticia.
+- No agregues contexto externo que no esté en el artículo.
+- No ocultes conflicto, críticas, denuncias o posturas enfrentadas si son parte central de la noticia.
+- Neutral no significa suavizar hechos graves: significa contarlos sin tomar partido.
 - Sí eliminá adjetivos cargados, tono partidario, dramatización, bajada ideológica, épica, sarcasmo, acusaciones no atribuidas y clickbait.
-- Si hay posturas enfrentadas, atribuí de forma neutral: "el Gobierno dijo", "la oposición cuestionó", "según el informe", "el tribunal resolvió".
-- Evitá verbos como: destrozó, fulminó, arrasó, humilló, golpeó, festejó, cruzó fuerte, escándalo, bomba.
-- Usá verbos neutros: dijo, afirmó, cuestionó, aprobó, rechazó, anunció, informó, presentó, resolvió.
+- Si hay posturas enfrentadas, atribuÍ de forma neutral: "el Gobierno dijo", "la oposición cuestionó", "según el informe", "el tribunal resolvió", "según el medio".
+- Evitá verbos como: destrozó, fulminó, arrasó, humilló, golpeó, festejó, cruzó fuerte, escándalo, bomba, crisis, feroz, durísimo.
+- Usá verbos neutros: dijo, afirmó, cuestionó, aprobó, rechazó, anunció, informó, presentó, resolvió, anticipó, señaló.
 - No uses bajada política ni opinión.
 - No tomes partido.
-- No suavices hechos graves: neutral no significa minimizar.
+- No conviertas la noticia en propaganda de ningún actor.
+- No uses comillas cargadas salvo que sean indispensables para entender el hecho.
+- Si una afirmación fuerte viene de una fuente o actor, atribuila.
 
 Campos a devolver:
 
 1. neutralTitle:
-   - 6 a 12 palabras.
+   - 5 a 9 palabras.
+   - Máximo 62 caracteres.
    - Corto, informativo y atractivo sin clickbait.
    - Sin opinión.
    - Sin adjetivos cargados.
    - No uses dos puntos salvo que sea imprescindible.
    - Debe invitar a leer porque el resumen estará oculto.
+   - No nombres políticos si no es indispensable para entender la noticia.
+   - Cuando se pueda, priorizá institución/cargo antes que persona.
+   - Ejemplo malo: "La crisis política de Milei impulsa a Gebel".
+   - Ejemplo bueno: "Gebel suma legisladores en las provincias".
+   - Ejemplo malo: "Trump desafía a la Corte y redobla su apuesta".
+   - Ejemplo bueno: "Trump anuncia nuevos aranceles internacionales".
 
 2. neutralLead:
-   - Copete de 1 oración.
-   - Máximo 22 palabras.
+   - Copete de 1 sola oración.
+   - Máximo 16 palabras.
    - Debe sumar contexto sin repetir el título.
    - Debe ser neutral.
+   - Sin frases vagas como "crecen las críticas", "aumenta la tensión" o "se profundiza la crisis" salvo que el artículo lo pruebe claramente.
+   - Si hay una afirmación sensible, atribuÍ quién la dijo.
 
 3. neutralSummary:
-   - 2 a 4 oraciones.
-   - Claro y completo.
+   - 2 a 3 oraciones.
+   - Máximo 60 palabras.
+   - Claro, concreto y completo.
    - Neutral.
-   - Debe explicar el hecho principal y contexto mínimo.
+   - Debe explicar el hecho principal y el contexto mínimo.
    - No debe tener tinte político ni editorializante.
+   - No debe repetir innecesariamente el título y el copete.
+   - Si el texto original trae framing fuerte, reformulalo con atribución.
 
 4. neutralityScore:
    - 0 a 100.
-   - 100 = completamente neutral.
-   - Bajá puntaje si el tema o el texto fuente tiene mucho framing político, acusaciones fuertes o lenguaje cargado.
+   - Evaluá SOLO la neutralidad del texto que vos generaste: neutralTitle, neutralLead y neutralSummary.
+   - NO castigues el score solo porque el tema sea político, polémico o sensible.
+   - Si el texto final está escrito de forma neutral, el score debe ser 80 o más aunque el tema sea políticamente riesgoso.
+   - Usá 90 a 100 si el texto final es informativo, atribuido y sin carga editorial.
+   - Usá 75 a 89 si el texto final es neutral pero el tema requiere atribuciones delicadas.
+   - Usá 50 a 74 si quedó alguna frase vaga, poco atribuida o con posible framing.
+   - Usá menos de 50 solo si el texto generado conserva sesgo, opinión, acusaciones no atribuidas o lenguaje cargado.
 
 5. politicalBiasRisk:
-   - low: texto fácil de neutralizar, poca carga política.
-   - medium: tema político o económico sensible, pero neutralizable.
-   - high: fuerte riesgo de sesgo, polarización, acusaciones o framing partidario.
+   - Evaluá el riesgo político/sensible del TEMA y del TEXTO ORIGINAL, no del texto generado.
+   - low: tema poco político o texto fuente con baja carga editorial.
+   - medium: tema político/económico sensible, pero con framing manejable.
+   - high: tema polarizante, actores políticos centrales, acusaciones, conflicto institucional o fuente con framing fuerte.
+
+Regla clave:
+- neutralityScore y politicalBiasRisk miden cosas distintas.
+- Ejemplo correcto: una noticia sobre Trump puede tener politicalBiasRisk: "high" y neutralityScore: 88 si el texto final quedó neutral.
+- Ejemplo incorrecto: poner neutralityScore: 45 solo porque el tema es político.
 
 Artículo:
 ${JSON.stringify(payload, null, 2)}
@@ -204,7 +231,7 @@ async function generateNeutralCuration(articleId, options = {}) {
         {
           role: 'system',
           content:
-            'Sos un editor periodístico neutral. Devolvés solo datos estructurados válidos. No inventás hechos.',
+            'Sos un editor periodístico neutral para una app mobile. Tu prioridad es producir títulos, copetes y resúmenes breves, informativos y sin tinte político. Devolvés solo datos estructurados válidos. No inventás hechos.',
         },
         {
           role: 'user',

@@ -1,6 +1,7 @@
 const UserPreference = require('../models/UserPreference');
 const UserDeliveryRun = require('../models/UserDeliveryRun');
 const { buildDigestForUser } = require('./buildDigestForUser');
+
 const {
   getLocalDateString,
   parseTimeToMinutes,
@@ -39,6 +40,7 @@ async function prepareUpcomingDeliveryRuns({
 
   for (const user of usersInWindow) {
     let run;
+    let deliveryRun;
 
     try {
       run = await UserDeliveryRun.findOneAndUpdate(
@@ -57,17 +59,24 @@ async function prepareUpcomingDeliveryRuns({
               topics: user.topics || [],
               deliveryTime: user.deliveryTime,
             },
-            createdAt: new Date(),
           },
         },
         {
           upsert: true,
           returnDocument: 'after',
-          rawResult: true,
+          includeResultMetadata: true,
+          setDefaultsOnInsert: true,
         }
       );
 
-      const deliveryRun = run.value;
+      deliveryRun = run?.value;
+
+      if (!deliveryRun) {
+        throw new Error(
+          `findOneAndUpdate no devolvió deliveryRun. run=${JSON.stringify(run)}`
+        );
+      }
+
       const wasCreated = Boolean(run.lastErrorObject?.upserted);
 
       if (!wasCreated) {
@@ -79,6 +88,7 @@ async function prepareUpcomingDeliveryRuns({
           status: deliveryRun.status,
           runId: String(deliveryRun._id),
         });
+
         continue;
       }
 
@@ -99,6 +109,12 @@ async function prepareUpcomingDeliveryRuns({
         }
       );
 
+      if (!updatedRun) {
+        throw new Error(
+          `No se pudo actualizar UserDeliveryRun con id=${String(deliveryRun._id)}`
+        );
+      }
+
       results.push({
         userId: String(user._id),
         name: user.name,
@@ -108,13 +124,15 @@ async function prepareUpcomingDeliveryRuns({
         runId: String(updatedRun._id),
       });
     } catch (error) {
-      if (run?.value?._id) {
+      const errorMessage = error.message || 'Unknown prepare error';
+
+      if (deliveryRun?._id) {
         const erroredRun = await UserDeliveryRun.findByIdAndUpdate(
-          run.value._id,
+          deliveryRun._id,
           {
             $set: {
               status: 'error',
-              errorMessage: error.message || 'Unknown prepare error',
+              errorMessage,
             },
           },
           {
@@ -127,9 +145,9 @@ async function prepareUpcomingDeliveryRuns({
           name: user.name,
           deliveryTime: user.deliveryTime,
           created: false,
-          status: erroredRun.status,
-          runId: String(erroredRun._id),
-          errorMessage: erroredRun.errorMessage,
+          status: erroredRun?.status || 'error',
+          runId: erroredRun?._id ? String(erroredRun._id) : String(deliveryRun._id),
+          errorMessage: erroredRun?.errorMessage || errorMessage,
         });
 
         continue;
@@ -141,7 +159,7 @@ async function prepareUpcomingDeliveryRuns({
         deliveryTime: user.deliveryTime,
         created: false,
         status: 'error',
-        errorMessage: error.message || 'Unknown prepare error',
+        errorMessage,
       });
     }
   }

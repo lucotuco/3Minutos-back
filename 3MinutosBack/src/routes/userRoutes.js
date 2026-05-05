@@ -1,7 +1,9 @@
 const express = require('express');
+
 const UserPreference = require('../models/UserPreference');
 const UserShownArticle = require('../models/UserShownArticle');
 const UserDeliveryRun = require('../models/UserDeliveryRun');
+
 const { buildDigestForUser } = require('../utils/buildDigestForUser');
 const { saveShownArticlesForUser } = require('../utils/saveShownArticlesForUser');
 const { getLocalDateString } = require('../utils/dateHelpers');
@@ -10,6 +12,7 @@ const router = express.Router();
 
 function normalizeTopics(topics) {
   if (!Array.isArray(topics)) return [];
+
   return topics
     .map((topic) => String(topic || '').trim())
     .filter(Boolean)
@@ -18,6 +21,7 @@ function normalizeTopics(topics) {
 
 function validateDeliveryTime(value) {
   const match = String(value || '').match(/^(\d{2}):(\d{2})$/);
+
   if (!match) return false;
 
   const hours = Number(match[1]);
@@ -88,10 +92,15 @@ async function savePreparedDigestRun(user, digest, deliveryDate) {
 async function triggerBackgroundDigestRefresh(user, deliveryDate) {
   try {
     const digest = await buildDigestForUser(user._id);
+
     await savePreparedDigestRun(user, digest, deliveryDate);
+
     console.log(`✅ Digest refrescado en background para ${user.name} (${user._id})`);
   } catch (error) {
-    console.error(`❌ Error refrescando digest en background para ${user._id}:`, error.message);
+    console.error(
+      `❌ Error refrescando digest en background para ${user._id}:`,
+      error.message
+    );
 
     await UserDeliveryRun.findOneAndUpdate(
       {
@@ -131,15 +140,21 @@ router.post('/preferences', async (req, res) => {
     const expoPushToken = normalizeExpoPushToken(req.body);
 
     if (!cleanName) {
-      return res.status(400).json({ error: 'name is required' });
+      return res.status(400).json({
+        error: 'name is required',
+      });
     }
 
     if (cleanTopics.length !== 3) {
-      return res.status(400).json({ error: 'topics must contain exactly 3 items' });
+      return res.status(400).json({
+        error: 'topics must contain exactly 3 items',
+      });
     }
 
     if (!validateDeliveryTime(deliveryTime)) {
-      return res.status(400).json({ error: 'invalid deliveryTime format, expected HH:MM' });
+      return res.status(400).json({
+        error: 'invalid deliveryTime format, expected HH:MM',
+      });
     }
 
     if (expoPushToken && !isValidExpoPushToken(expoPushToken)) {
@@ -159,7 +174,9 @@ router.post('/preferences', async (req, res) => {
 
     return res.status(201).json(user);
   } catch (error) {
-    return res.status(500).json({ error: error.message || 'Failed to create preferences' });
+    return res.status(500).json({
+      error: error.message || 'Failed to create preferences',
+    });
   }
 });
 
@@ -173,7 +190,9 @@ router.get('/preferences/:userId', async (req, res) => {
 
     return res.json(user);
   } catch (error) {
-    return res.status(500).json({ error: error.message || 'Failed to fetch preferences' });
+    return res.status(500).json({
+      error: error.message || 'Failed to fetch preferences',
+    });
   }
 });
 
@@ -185,24 +204,35 @@ router.patch('/preferences/:userId', async (req, res) => {
 
     if (name !== undefined) {
       const cleanName = String(name).trim();
+
       if (!cleanName) {
-        return res.status(400).json({ error: 'name cannot be empty' });
+        return res.status(400).json({
+          error: 'name cannot be empty',
+        });
       }
+
       updates.name = cleanName;
     }
 
     if (topics !== undefined) {
       const cleanTopics = normalizeTopics(topics);
+
       if (cleanTopics.length !== 3) {
-        return res.status(400).json({ error: 'topics must contain exactly 3 items' });
+        return res.status(400).json({
+          error: 'topics must contain exactly 3 items',
+        });
       }
+
       updates.topics = cleanTopics;
     }
 
     if (deliveryTime !== undefined) {
       if (!validateDeliveryTime(deliveryTime)) {
-        return res.status(400).json({ error: 'invalid deliveryTime format, expected HH:MM' });
+        return res.status(400).json({
+          error: 'invalid deliveryTime format, expected HH:MM',
+        });
       }
+
       updates.deliveryTime = deliveryTime;
     }
 
@@ -223,8 +253,13 @@ router.patch('/preferences/:userId', async (req, res) => {
 
     const user = await UserPreference.findByIdAndUpdate(
       req.params.userId,
-      { $set: updates },
-      { new: true, runValidators: true }
+      {
+        $set: updates,
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
     ).lean();
 
     if (!user) {
@@ -233,7 +268,9 @@ router.patch('/preferences/:userId', async (req, res) => {
 
     return res.json(user);
   } catch (error) {
-    return res.status(500).json({ error: error.message || 'Failed to update preferences' });
+    return res.status(500).json({
+      error: error.message || 'Failed to update preferences',
+    });
   }
 });
 
@@ -244,7 +281,12 @@ router.patch('/preferences/:userId/push-token', async (req, res) => {
     if (!expoPushToken) {
       return res.status(400).json({
         error: 'expoPushToken is required',
-        acceptedFields: ['expoPushToken', 'pushToken', 'token', 'devicePushToken'],
+        acceptedFields: [
+          'expoPushToken',
+          'pushToken',
+          'token',
+          'devicePushToken',
+        ],
       });
     }
 
@@ -257,8 +299,15 @@ router.patch('/preferences/:userId/push-token', async (req, res) => {
 
     const user = await UserPreference.findByIdAndUpdate(
       req.params.userId,
-      { $set: { expoPushToken } },
-      { new: true, runValidators: true }
+      {
+        $set: {
+          expoPushToken,
+        },
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
     ).lean();
 
     if (!user) {
@@ -271,7 +320,9 @@ router.patch('/preferences/:userId/push-token', async (req, res) => {
       expoPushToken: user.expoPushToken,
     });
   } catch (error) {
-    return res.status(500).json({ error: error.message || 'Failed to save push token' });
+    return res.status(500).json({
+      error: error.message || 'Failed to save push token',
+    });
   }
 });
 
@@ -284,7 +335,9 @@ router.get('/:userId/digest', async (req, res) => {
     }
 
     if (!user.isActive) {
-      return res.status(400).json({ error: 'User is inactive' });
+      return res.status(400).json({
+        error: 'User is inactive',
+      });
     }
 
     const deliveryDate = getLocalDateString(new Date());
@@ -292,10 +345,17 @@ router.get('/:userId/digest', async (req, res) => {
     const todaysPreparedRun = await UserDeliveryRun.findOne({
       userId: user._id,
       deliveryDate,
-      status: 'prepared',
-      digest: { $ne: null },
+      status: {
+        $in: ['prepared', 'sent'],
+      },
+      digest: {
+        $ne: null,
+      },
     })
-      .sort({ preparedAt: -1, createdAt: -1 })
+      .sort({
+        preparedAt: -1,
+        createdAt: -1,
+      })
       .lean();
 
     if (todaysPreparedRun?.digest) {
@@ -304,10 +364,17 @@ router.get('/:userId/digest', async (req, res) => {
 
     const latestPreparedRun = await UserDeliveryRun.findOne({
       userId: user._id,
-      status: 'prepared',
-      digest: { $ne: null },
+      status: {
+        $in: ['prepared', 'sent'],
+      },
+      digest: {
+        $ne: null,
+      },
     })
-      .sort({ preparedAt: -1, createdAt: -1 })
+      .sort({
+        preparedAt: -1,
+        createdAt: -1,
+      })
       .lean();
 
     if (latestPreparedRun?.digest) {
@@ -316,6 +383,7 @@ router.get('/:userId/digest', async (req, res) => {
     }
 
     const digest = await buildDigestForUser(req.params.userId);
+
     await savePreparedDigestRun(user, digest, deliveryDate);
 
     return res.json(digest);
@@ -325,10 +393,14 @@ router.get('/:userId/digest', async (req, res) => {
     }
 
     if (error.message === 'User is inactive') {
-      return res.status(400).json({ error: error.message });
+      return res.status(400).json({
+        error: error.message,
+      });
     }
 
-    return res.status(500).json({ error: error.message || 'Failed to build digest' });
+    return res.status(500).json({
+      error: error.message || 'Failed to build digest',
+    });
   }
 });
 
@@ -341,7 +413,9 @@ router.post('/:userId/digest/refresh', async (req, res) => {
     }
 
     if (!user.isActive) {
-      return res.status(400).json({ error: 'User is inactive' });
+      return res.status(400).json({
+        error: 'User is inactive',
+      });
     }
 
     const deliveryDate = getLocalDateString(new Date());
@@ -356,10 +430,14 @@ router.post('/:userId/digest/refresh', async (req, res) => {
     }
 
     if (error.message === 'User is inactive') {
-      return res.status(400).json({ error: error.message });
+      return res.status(400).json({
+        error: error.message,
+      });
     }
 
-    return res.status(500).json({ error: error.message || 'Failed to refresh digest' });
+    return res.status(500).json({
+      error: error.message || 'Failed to refresh digest',
+    });
   }
 });
 
@@ -374,7 +452,9 @@ router.post('/:userId/digest/mark-shown', async (req, res) => {
     const { items = [], shownDate } = req.body || {};
 
     if (!Array.isArray(items)) {
-      return res.status(400).json({ error: 'items must be an array' });
+      return res.status(400).json({
+        error: 'items must be an array',
+      });
     }
 
     const effectiveShownDate = shownDate || getLocalDateString(new Date());
@@ -383,9 +463,13 @@ router.post('/:userId/digest/mark-shown', async (req, res) => {
       shownDate: effectiveShownDate,
     });
 
-    return res.json({ ok: true });
+    return res.json({
+      ok: true,
+    });
   } catch (error) {
-    return res.status(500).json({ error: error.message || 'Failed to mark shown articles' });
+    return res.status(500).json({
+      error: error.message || 'Failed to mark shown articles',
+    });
   }
 });
 
@@ -397,13 +481,20 @@ router.get('/:userId/shown-articles', async (req, res) => {
       return userNotFoundResponse(res);
     }
 
-    const articles = await UserShownArticle.find({ userId: user._id })
-      .sort({ shownAt: -1, createdAt: -1 })
+    const articles = await UserShownArticle.find({
+      userId: user._id,
+    })
+      .sort({
+        shownAt: -1,
+        createdAt: -1,
+      })
       .lean();
 
     return res.json(articles);
   } catch (error) {
-    return res.status(500).json({ error: error.message || 'Failed to fetch shown articles' });
+    return res.status(500).json({
+      error: error.message || 'Failed to fetch shown articles',
+    });
   }
 });
 

@@ -4,12 +4,39 @@ const path = require('path');
 
 const UserPreference = require('../models/UserPreference');
 const UserDeliveryRun = require('../models/UserDeliveryRun');
+
 const { buildUserNewsDigest } = require('./buildUserNewsDigest');
 const { getLocalDateString } = require('./dateHelpers');
+
 const { buildDigestAudioScript } = require('../audio/buildDigestAudioScript');
 const { generateDigestAudioFile } = require('../audio/generateDigestAudioFile');
 const { uploadDigestAudio, deleteDigestAudio } = require('../audio/uploadDigestAudio');
+
 const { startTimer, timeAsync } = require('./timing');
+
+function getDigestItemsFromRun(run) {
+  if (Array.isArray(run?.digest?.items)) {
+    return run.digest.items;
+  }
+
+  if (Array.isArray(run?.digest?.digest?.items)) {
+    return run.digest.digest.items;
+  }
+
+  return [];
+}
+
+function getAudioStorageKeyFromRun(run) {
+  if (run?.digest?.audioStorageKey) {
+    return run.digest.audioStorageKey;
+  }
+
+  if (run?.digest?.digest?.audioStorageKey) {
+    return run.digest.digest.audioStorageKey;
+  }
+
+  return null;
+}
 
 async function buildDigestForUser(userId) {
   const totalTimer = startTimer('buildDigestForUser', {
@@ -39,21 +66,23 @@ async function buildDigestForUser(userId) {
       .lean();
 
     const alreadyShownUrls = previousRuns
-      .flatMap((run) => run?.digest?.items || [])
+      .flatMap((run) => getDigestItemsFromRun(run))
       .map((item) => item?.url)
       .filter(Boolean);
+
+    const uniqueAlreadyShownUrls = [...new Set(alreadyShownUrls)];
 
     const digest = await timeAsync(
       'buildUserNewsDigest',
       () =>
         buildUserNewsDigest({
           topics: user.topics || [],
-          alreadyShownUrls,
+          alreadyShownUrls: uniqueAlreadyShownUrls,
         }),
       {
         userId: String(user._id),
         topics: user.topics || [],
-        alreadyShownUrlsCount: alreadyShownUrls.length,
+        alreadyShownUrlsCount: uniqueAlreadyShownUrls.length,
       }
     );
 
@@ -61,18 +90,24 @@ async function buildDigestForUser(userId) {
 
     const previousRun = await UserDeliveryRun.findOne({
       userId: user._id,
-      status: 'prepared',
-      'digest.audioStorageKey': { $exists: true, $ne: null },
+      status: { $in: ['prepared', 'sent'] },
+      digest: { $ne: null },
     })
       .sort({ preparedAt: -1, createdAt: -1 })
       .lean();
+
+    const previousAudioStorageKey = getAudioStorageKeyFromRun(previousRun);
 
     const script = buildDigestAudioScript({
       userName: user.name,
       items: digest.items || [],
     });
 
-    tempFilePath = path.join(os.tmpdir(), `digest-${user._id}-${Date.now()}.mp3`);
+    tempFilePath = path.join(
+      os.tmpdir(),
+      `digest-${user._id}-${Date.now()}.mp3`
+    );
+
     const storageKey = `digests-audio/${today}/user-${user._id}`;
 
     await timeAsync(
@@ -103,10 +138,10 @@ async function buildDigestForUser(userId) {
     }
 
     if (
-      previousRun?.digest?.audioStorageKey &&
-      previousRun.digest.audioStorageKey !== audioStorageKey
+      previousAudioStorageKey &&
+      previousAudioStorageKey !== audioStorageKey
     ) {
-      await deleteDigestAudio(previousRun.digest.audioStorageKey);
+      await deleteDigestAudio(previousAudioStorageKey);
     }
 
     const result = {

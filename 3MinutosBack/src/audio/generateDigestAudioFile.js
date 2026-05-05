@@ -1,20 +1,42 @@
 const fs = require('fs');
-const path = require('path');
+
 const { openai } = require('../config/openai');
+const { startTimer } = require('../utils/timing');
 
 async function generateDigestAudioFile({ script, outputPath }) {
-  const response = await openai.audio.speech.create({
-    model: 'gpt-4o-mini-tts',
-    voice: 'alloy',
-    input: script,
+  const timer = startTimer('generateDigestAudioFile TTS', {
+    outputPath,
+    scriptLength: script?.length || 0,
   });
 
-  const buffer = Buffer.from(await response.arrayBuffer());
+  try {
+    const response = await openai.audio.speech.create({
+      model: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts',
+      voice: process.env.OPENAI_TTS_VOICE || 'alloy',
+      input: script,
+      format: 'mp3',
+    });
 
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  fs.writeFileSync(outputPath, buffer);
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
 
-  return outputPath;
+    fs.writeFileSync(outputPath, buffer);
+
+    timer.end({
+      outputPath,
+      bytes: buffer.length,
+    });
+
+    return outputPath;
+  } catch (error) {
+    timer.fail(error, {
+      outputPath,
+    });
+
+    throw error;
+  }
 }
 
-module.exports = { generateDigestAudioFile };
+module.exports = {
+  generateDigestAudioFile,
+};

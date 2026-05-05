@@ -1,5 +1,6 @@
 const { pickBestArticlePerTopic } = require('../utils/pickBestArticlePerTopic');
 const { generateNeutralCuration } = require('../curation/generateNeutralCuration');
+const { startTimer, timeAsync } = require('./timing');
 
 function cleanText(value) {
   return String(value || '')
@@ -57,132 +58,187 @@ async function buildUserNewsDigest({
   perTopicLimit = 10,
   numCandidates = 100,
 } = {}) {
-  if (!Array.isArray(topics) || topics.length === 0) {
-    return {
-      items: [],
-    };
-  }
-
-  const picks = await pickBestArticlePerTopic(topics, {
+  const totalTimer = startTimer('buildUserNewsDigest total', {
+    topics,
+    alreadyShownUrlsCount: alreadyShownUrls.length,
     perTopicLimit,
     numCandidates,
-    alreadyShownUrls,
   });
 
-  const items = await Promise.all(
-    picks.map(async (pick) => {
-      if (!pick.article) {
-        return {
-          topic: pick.topic,
-          articleId: null,
-
-          title: null,
-          neutralTitle: null,
-
-          lead: null,
-          neutralLead: null,
-
-          summary: null,
-          neutralSummary: null,
-
-          originalTitle: null,
-
-          url: null,
-          section: null,
-          region: null,
-          tags: [],
-
-          cached: false,
-          fallback: false,
-          curationFallback: false,
-
-          neutralityScore: null,
-          politicalBiasRisk: 'unknown',
-
-          score: null,
-          finalScore: null,
-        };
-      }
-
-      let curationResult;
-
-      try {
-        curationResult = await generateNeutralCuration(pick.article._id);
-      } catch (error) {
-        console.error('❌ Error usando curación neutral en digest');
-        console.error('articleId:', String(pick.article._id));
-        console.error('title:', pick.article.title);
-        console.error('error:', error.message);
-
-        curationResult = buildFallbackCuration(pick.article);
-      }
-
-      const neutralTitle =
-        curationResult.neutralTitle ||
-        pick.article.neutralTitle ||
-        truncateWords(pick.article.title, 12);
-
-      const neutralLead =
-        curationResult.neutralLead ||
-        pick.article.neutralLead ||
-        truncateWords(
-          pick.article.rawSummary || pick.article.contentSnippet || pick.article.title,
-          24
-        );
-
-      const neutralSummary =
-        curationResult.neutralSummary ||
-        pick.article.neutralSummary ||
-        truncateWords(
-          pick.article.rawSummary || pick.article.contentSnippet || pick.article.title,
-          70
-        );
+  try {
+    if (!Array.isArray(topics) || topics.length === 0) {
+      totalTimer.end({
+        items: 0,
+        reason: 'no_topics',
+      });
 
       return {
-        topic: pick.topic,
-        articleId: String(pick.article._id),
-
-        // Compatibilidad con el front actual.
-        title: neutralTitle,
-        summary: neutralSummary,
-
-        // Campos nuevos explícitos.
-        neutralTitle,
-        lead: neutralLead,
-        neutralLead,
-        neutralSummary,
-
-        // Solo para auditoría/debug. No mostrar como principal.
-        originalTitle: pick.article.title,
-
-        url: pick.article.url,
-        section: pick.article.section,
-        region: pick.article.region,
-        tags: pick.article.tags || [],
-
-        cached: Boolean(curationResult.cached),
-        fallback: false,
-        curationFallback: Boolean(curationResult.fallback),
-
-        neutralityScore:
-          curationResult.neutralityScore ??
-          pick.article.neutralityScore ??
-          null,
-
-        politicalBiasRisk:
-          curationResult.politicalBiasRisk ||
-          pick.article.politicalBiasRisk ||
-          'unknown',
-
-        score: pick.article.score ?? null,
-        finalScore: pick.article.finalScore ?? null,
+        items: [],
       };
-    })
-  );
+    }
 
-  return {
-    items,
-  };
+    const picks = await timeAsync(
+      'pickBestArticlePerTopic',
+      () =>
+        pickBestArticlePerTopic(topics, {
+          perTopicLimit,
+          numCandidates,
+          alreadyShownUrls,
+        }),
+      {
+        topics,
+        perTopicLimit,
+        numCandidates,
+      }
+    );
+
+    const items = await Promise.all(
+      picks.map(async (pick) => {
+        if (!pick.article) {
+          return {
+            topic: pick.topic,
+            articleId: null,
+
+            title: null,
+            neutralTitle: null,
+
+            lead: null,
+            neutralLead: null,
+
+            summary: null,
+            neutralSummary: null,
+
+            originalTitle: null,
+
+            url: null,
+            section: null,
+            region: null,
+            tags: [],
+
+            cached: false,
+            fallback: false,
+            curationFallback: false,
+
+            neutralityScore: null,
+            politicalBiasRisk: 'unknown',
+
+            score: null,
+            finalScore: null,
+          };
+        }
+
+        let curationResult;
+
+        try {
+          console.log('🧠 Preparando curación para digest', {
+            topic: pick.topic,
+            articleId: String(pick.article._id),
+            title: pick.article.title,
+            curationStatus: pick.article.curationStatus,
+            hasNeutralTitle: Boolean(pick.article.neutralTitle),
+          });
+
+          curationResult = await timeAsync(
+            'generateNeutralCuration from digest',
+            () => generateNeutralCuration(pick.article._id),
+            {
+              topic: pick.topic,
+              articleId: String(pick.article._id),
+              title: pick.article.title,
+            }
+          );
+        } catch (error) {
+          console.error('❌ Error usando curación neutral en digest');
+          console.error('articleId:', String(pick.article._id));
+          console.error('title:', pick.article.title);
+          console.error('error:', error.message);
+
+          curationResult = buildFallbackCuration(pick.article);
+        }
+
+        const neutralTitle =
+          curationResult.neutralTitle ||
+          pick.article.neutralTitle ||
+          truncateWords(pick.article.title, 12);
+
+        const neutralLead =
+          curationResult.neutralLead ||
+          pick.article.neutralLead ||
+          truncateWords(
+            pick.article.rawSummary || pick.article.contentSnippet || pick.article.title,
+            24
+          );
+
+        const neutralSummary =
+          curationResult.neutralSummary ||
+          pick.article.neutralSummary ||
+          truncateWords(
+            pick.article.rawSummary || pick.article.contentSnippet || pick.article.title,
+            70
+          );
+
+        return {
+          topic: pick.topic,
+          articleId: String(pick.article._id),
+
+          title: neutralTitle,
+          summary: neutralSummary,
+
+          neutralTitle,
+          lead: neutralLead,
+          neutralLead,
+          neutralSummary,
+
+          originalTitle: pick.article.title,
+
+          url: pick.article.url,
+          section: pick.article.section,
+          region: pick.article.region,
+          tags: pick.article.tags || [],
+
+          cached: Boolean(curationResult.cached),
+          fallback: false,
+          curationFallback: Boolean(curationResult.fallback),
+
+          neutralityScore:
+            curationResult.neutralityScore ??
+            pick.article.neutralityScore ??
+            null,
+
+          politicalBiasRisk:
+            curationResult.politicalBiasRisk ||
+            pick.article.politicalBiasRisk ||
+            'unknown',
+
+          score: pick.article.score ?? null,
+          finalScore: pick.article.finalScore ?? null,
+        };
+      })
+    );
+
+    const newCurations = items.filter(
+      (item) => item.articleId && !item.cached && !item.curationFallback
+    ).length;
+    const cachedCurations = items.filter((item) => item.cached).length;
+    const fallbackCurations = items.filter((item) => item.curationFallback).length;
+
+    totalTimer.end({
+      items: items.length,
+      newCurations,
+      cachedCurations,
+      fallbackCurations,
+    });
+
+    return {
+      items,
+    };
+  } catch (error) {
+    totalTimer.fail(error, {
+      topics,
+    });
+
+    throw error;
+  }
 }
 
 module.exports = {

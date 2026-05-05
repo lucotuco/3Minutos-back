@@ -3,6 +3,7 @@ const { zodTextFormat } = require('openai/helpers/zod');
 
 const Article = require('../models/Article');
 const { openai, OPENAI_MODEL } = require('../config/openai');
+const { startTimer } = require('../utils/timing');
 
 const NeutralCurationSchema = z.object({
   neutralTitle: z.string().min(8).max(62),
@@ -146,7 +147,7 @@ Objetivo editorial:
 - Eliminá adjetivos cargados, tono partidario, dramatización, bajada ideológica, épica, sarcasmo, acusaciones no atribuidas y clickbait.
 - No conviertas la noticia en propaganda de ningún actor.
 - No uses comillas cargadas salvo que sean indispensables para entender el hecho.
-- Si una afirmación fuerte viene de un actor político, económico, judicial, militar o institucional, atribuÍ la afirmación a ese actor.
+- Si una afirmación fuerte viene de un actor político, económico, judicial, militar o institucional, atribuí la afirmación a ese actor.
 - Atribuí a actores, no al medio.
 - Prohibido atribuir al medio o al artículo.
 
@@ -293,8 +294,17 @@ async function generateNeutralCuration(articleId, options = {}) {
 
   const article = await Article.findById(articleId);
 
+  const timer = startTimer('generateNeutralCuration', {
+    articleId: String(articleId),
+    title: article?.title || '',
+  });
+
   if (!article) {
-    throw new Error('Article not found');
+    const error = new Error('Article not found');
+    timer.fail(error, {
+      articleId: String(articleId),
+    });
+    throw error;
   }
 
   if (
@@ -304,6 +314,13 @@ async function generateNeutralCuration(articleId, options = {}) {
     article.neutralLead &&
     article.neutralSummary
   ) {
+    timer.end({
+      cached: true,
+      curationStatus: article.curationStatus,
+      neutralityScore: article.neutralityScore,
+      politicalBiasRisk: article.politicalBiasRisk,
+    });
+
     return {
       article,
       neutralTitle: article.neutralTitle,
@@ -369,6 +386,13 @@ async function generateNeutralCuration(articleId, options = {}) {
 
     await article.save();
 
+    timer.end({
+      cached: false,
+      fallback: false,
+      neutralityScore: article.neutralityScore,
+      politicalBiasRisk: article.politicalBiasRisk,
+    });
+
     return {
       article,
       neutralTitle: article.neutralTitle,
@@ -384,6 +408,11 @@ async function generateNeutralCuration(articleId, options = {}) {
     console.error('articleId:', String(article._id));
     console.error('title:', article.title);
     console.error('error:', error.message);
+
+    timer.fail(error, {
+      articleId: String(article._id),
+      title: article.title,
+    });
 
     return saveFallbackCuration(
       article,

@@ -1,5 +1,73 @@
 const { searchArticlesBySimilarityAtlas } = require('../embeddings/searchArticlesBySimilarityAtlas');
 
+const OPINION_KEYWORDS = [
+  'opinion',
+  'opinión',
+  'columna',
+  'columnista',
+  'editorial',
+  'analisis',
+  'análisis',
+];
+
+function normalizeText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function includesOpinionKeyword(value) {
+  const normalized = normalizeText(value);
+
+  return OPINION_KEYWORDS.some((keyword) =>
+    normalized.includes(normalizeText(keyword))
+  );
+}
+
+function isOpinionArticle(article = {}) {
+  const url = normalizeText(article.url);
+  const title = normalizeText(article.title);
+  const section = normalizeText(article.section);
+  const category = normalizeText(article.category);
+  const tags = Array.isArray(article.tags) ? article.tags.map(normalizeText) : [];
+
+  if (url.includes('/opiniones/') || url.includes('/opinion/')) {
+    return true;
+  }
+
+  if (includesOpinionKeyword(section) || includesOpinionKeyword(category)) {
+    return true;
+  }
+
+  if (tags.some((tag) => includesOpinionKeyword(tag))) {
+    return true;
+  }
+
+  if (includesOpinionKeyword(title)) {
+    return true;
+  }
+
+  return false;
+}
+
+function isUsableDigestArticle(article, usedUrls) {
+  if (!article?.url) {
+    return false;
+  }
+
+  if (usedUrls.has(article.url)) {
+    return false;
+  }
+
+  if (isOpinionArticle(article)) {
+    return false;
+  }
+
+  return true;
+}
+
 async function pickBestArticlePerTopic(topics = [], options = {}) {
   if (!Array.isArray(topics) || topics.length === 0) {
     return [];
@@ -24,8 +92,8 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
       numCandidates,
     });
 
-    const bestUnused = candidates.find(
-      (article) => article?.url && !usedUrls.has(article.url)
+    const bestUnused = candidates.find((article) =>
+      isUsableDigestArticle(article, usedUrls)
     );
 
     if (!bestUnused) {

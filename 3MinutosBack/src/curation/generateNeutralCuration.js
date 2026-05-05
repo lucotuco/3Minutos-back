@@ -12,6 +12,36 @@ const NeutralCurationSchema = z.object({
   politicalBiasRisk: z.enum(['low', 'medium', 'high']),
 });
 
+const FORBIDDEN_SOURCE_PHRASES = [
+  'según ámbito',
+  'segun ámbito',
+  'según ambito',
+  'segun ambito',
+  'según el medio',
+  'segun el medio',
+  'según la nota',
+  'segun la nota',
+  'según el artículo',
+  'segun el articulo',
+  'según el portal',
+  'segun el portal',
+  'según la crónica',
+  'segun la cronica',
+  'la nota señala',
+  'la nota indica',
+  'la nota afirma',
+  'la crónica señala',
+  'la cronica señala',
+  'el artículo señala',
+  'el articulo señala',
+  'el medio señala',
+  'el portal señala',
+  'ámbito señaló',
+  'ambito señaló',
+  'ámbito informó',
+  'ambito informó',
+];
+
 function cleanText(value) {
   return String(value || '')
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, ' ')
@@ -25,6 +55,23 @@ function cleanText(value) {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripForbiddenSourcePhrases(value) {
+  let text = cleanText(value);
+
+  for (const phrase of FORBIDDEN_SOURCE_PHRASES) {
+    const pattern = new RegExp(phrase, 'gi');
+    text = text.replace(pattern, '').replace(/\s+/g, ' ').trim();
+  }
+
+  return text
+    .replace(/^,\s*/, '')
+    .replace(/^\.\s*/, '')
+    .replace(/\s+,/g, ',')
+    .replace(/\s+\./g, '.')
+    .replace(/\.\s*\./g, '.')
     .trim();
 }
 
@@ -83,7 +130,10 @@ function buildPrompt(article) {
   const payload = buildArticlePayload(article);
 
   return `
-Sos un editor de una app mobile de noticias cortas llamada 3 Minutos.
+Sos editor de una app mobile de noticias cortas llamada 3 Minutos.
+
+La app no republica el texto de la fuente: lo transforma en una pieza breve, clara, neutral y propia.
+El usuario ya tendrá un botón para abrir la fuente original. Por eso, NO nombres la fuente dentro del texto.
 
 Objetivo editorial:
 - La noticia debe quedar corta, clara, informativa y neutral.
@@ -93,40 +143,80 @@ Objetivo editorial:
 - No agregues contexto externo que no esté en el artículo.
 - No ocultes conflicto, críticas, denuncias o posturas enfrentadas si son parte central de la noticia.
 - Neutral no significa suavizar hechos graves: significa contarlos sin tomar partido.
-- Sí eliminá adjetivos cargados, tono partidario, dramatización, bajada ideológica, épica, sarcasmo, acusaciones no atribuidas y clickbait.
-- Si hay posturas enfrentadas, atribuÍ de forma neutral: "el Gobierno dijo", "la oposición cuestionó", "según el informe", "el tribunal resolvió", "según el medio".
-- Evitá verbos como: destrozó, fulminó, arrasó, humilló, golpeó, festejó, cruzó fuerte, escándalo, bomba, crisis, feroz, durísimo.
-- Usá verbos neutros: dijo, afirmó, cuestionó, aprobó, rechazó, anunció, informó, presentó, resolvió, anticipó, señaló.
-- No uses bajada política ni opinión.
-- No tomes partido.
+- Eliminá adjetivos cargados, tono partidario, dramatización, bajada ideológica, épica, sarcasmo, acusaciones no atribuidas y clickbait.
 - No conviertas la noticia en propaganda de ningún actor.
 - No uses comillas cargadas salvo que sean indispensables para entender el hecho.
-- Si una afirmación fuerte viene de una fuente o actor, atribuila.
+- Si una afirmación fuerte viene de un actor político, económico, judicial, militar o institucional, atribuÍ la afirmación a ese actor.
+- Atribuí a actores, no al medio.
+- Prohibido atribuir al medio o al artículo.
+
+PROHIBIDO usar en neutralTitle, neutralLead o neutralSummary:
+- "Según Ámbito"
+- "según el medio"
+- "según la nota"
+- "según el artículo"
+- "según la crónica"
+- "la nota señala"
+- "la nota indica"
+- "la crónica relata"
+- "el medio informó"
+- cualquier mención al nombre de la fuente
+- cualquier frase que haga sonar el texto como resumen de una publicación
+
+Forma correcta de atribuir:
+- Mal: "Según Ámbito, el Gobierno busca captar capitales."
+- Bien: "El Gobierno busca captar capitales."
+- Mal: "La nota señala que Teherán advirtió..."
+- Bien: "Teherán advirtió..."
+- Mal: "Según la crónica, el delegado rechazó el saludo."
+- Bien: "El delegado palestino rechazó saludar al representante israelí."
+
+Estilo:
+- Escribí como una app de noticias mobile, no como un informe académico.
+- Tono sobrio, directo y humano.
+- Evitá frases robóticas.
+- Evitá títulos demasiado institucionales si pierden claridad.
+- Usá nombres propios cuando ayudan a entender rápido la noticia.
+- Usá cargo/institución cuando el nombre propio no sea necesario o cuando sea más claro.
+- No reemplaces automáticamente nombres por cargos.
+- Si el protagonista central es Milei, Trump, Irán, la FIFA, Israel, etc., podés nombrarlo.
+- No uses "Presidente" solo si eso deja ambiguo de qué presidente se habla.
+
+Verbos a evitar:
+destrozó, fulminó, arrasó, humilló, golpeó, festejó, cruzó fuerte, escándalo, bomba, crisis, feroz, durísimo, desafía, redobla, embiste, apuntó contra.
+
+Verbos recomendados:
+dijo, afirmó, cuestionó, aprobó, rechazó, anunció, informó, presentó, resolvió, anticipó, señaló, advirtió, viaja, busca, prevé, analiza, impulsa.
 
 Campos a devolver:
 
 1. neutralTitle:
    - 5 a 9 palabras.
    - Máximo 62 caracteres.
+   - Debe sonar como título de app mobile.
    - Corto, informativo y atractivo sin clickbait.
    - Sin opinión.
    - Sin adjetivos cargados.
    - No uses dos puntos salvo que sea imprescindible.
    - Debe invitar a leer porque el resumen estará oculto.
-   - No nombres políticos si no es indispensable para entender la noticia.
-   - Cuando se pueda, priorizá institución/cargo antes que persona.
-   - Ejemplo malo: "La crisis política de Milei impulsa a Gebel".
-   - Ejemplo bueno: "Gebel suma legisladores en las provincias".
-   - Ejemplo malo: "Trump desafía a la Corte y redobla su apuesta".
-   - Ejemplo bueno: "Trump anuncia nuevos aranceles internacionales".
+   - Puede usar nombres propios si aportan claridad.
+   - No uses frases genéricas que dejen dudas, por ejemplo "Presidente viaja..." si se puede decir "Milei viaja...".
+   - Ejemplo malo: "Presidente viaja a Los Ángeles por inversiones".
+   - Ejemplo bueno: "Milei viaja a Los Ángeles por inversiones".
+   - Ejemplo malo: "Rechazo de saludo entre delegados de Israel y Palestina".
+   - Ejemplo bueno: "Delegado palestino rechazó saludar a israelí".
+   - Ejemplo malo: "Secretario del Tesoro prevé baja del petróleo tras conflicto".
+   - Ejemplo bueno: "EE.UU. prevé una baja del petróleo".
 
 2. neutralLead:
    - Copete de 1 sola oración.
    - Máximo 16 palabras.
    - Debe sumar contexto sin repetir el título.
    - Debe ser neutral.
+   - Debe sonar natural.
+   - No menciones la fuente.
    - Sin frases vagas como "crecen las críticas", "aumenta la tensión" o "se profundiza la crisis" salvo que el artículo lo pruebe claramente.
-   - Si hay una afirmación sensible, atribuÍ quién la dijo.
+   - Si hay una afirmación sensible, atribuí quién la dijo, no qué medio la publicó.
 
 3. neutralSummary:
    - 2 a 3 oraciones.
@@ -136,28 +226,33 @@ Campos a devolver:
    - Debe explicar el hecho principal y el contexto mínimo.
    - No debe tener tinte político ni editorializante.
    - No debe repetir innecesariamente el título y el copete.
-   - Si el texto original trae framing fuerte, reformulalo con atribución.
+   - No menciones la fuente.
+   - No uses "según el medio", "la nota", "la crónica" ni similares.
+   - Debe leerse como una noticia breve final de 3 Minutos.
 
 4. neutralityScore:
    - 0 a 100.
    - Evaluá SOLO la neutralidad del texto que vos generaste: neutralTitle, neutralLead y neutralSummary.
    - NO castigues el score solo porque el tema sea político, polémico o sensible.
    - Si el texto final está escrito de forma neutral, el score debe ser 80 o más aunque el tema sea políticamente riesgoso.
-   - Usá 90 a 100 si el texto final es informativo, atribuido y sin carga editorial.
+   - Usá 90 a 100 si el texto final es informativo, claro y sin carga editorial.
    - Usá 75 a 89 si el texto final es neutral pero el tema requiere atribuciones delicadas.
    - Usá 50 a 74 si quedó alguna frase vaga, poco atribuida o con posible framing.
    - Usá menos de 50 solo si el texto generado conserva sesgo, opinión, acusaciones no atribuidas o lenguaje cargado.
+   - Si mencionás la fuente o usás "según el medio", el score debe ser menor a 70.
 
 5. politicalBiasRisk:
    - Evaluá el riesgo político/sensible del TEMA y del TEXTO ORIGINAL, no del texto generado.
    - low: tema poco político o texto fuente con baja carga editorial.
    - medium: tema político/económico sensible, pero con framing manejable.
    - high: tema polarizante, actores políticos centrales, acusaciones, conflicto institucional o fuente con framing fuerte.
+   - Si el artículo es de opinión o tiene framing editorial fuerte, el riesgo debe ser high.
 
 Regla clave:
 - neutralityScore y politicalBiasRisk miden cosas distintas.
 - Ejemplo correcto: una noticia sobre Trump puede tener politicalBiasRisk: "high" y neutralityScore: 88 si el texto final quedó neutral.
 - Ejemplo incorrecto: poner neutralityScore: 45 solo porque el tema es político.
+- El texto final nunca debe nombrar el medio del que sale la información.
 
 Artículo:
 ${JSON.stringify(payload, null, 2)}
@@ -231,7 +326,7 @@ async function generateNeutralCuration(articleId, options = {}) {
         {
           role: 'system',
           content:
-            'Sos un editor periodístico neutral para una app mobile. Tu prioridad es producir títulos, copetes y resúmenes breves, informativos y sin tinte político. Devolvés solo datos estructurados válidos. No inventás hechos.',
+            'Sos editor periodístico de una app mobile. Producís textos breves, claros, neutrales y propios. Nunca mencionás el medio, la fuente, la nota, el artículo ni la crónica dentro del texto final. Devolvés solo datos estructurados válidos. No inventás hechos.',
         },
         {
           role: 'user',
@@ -245,15 +340,32 @@ async function generateNeutralCuration(articleId, options = {}) {
 
     const parsed = response.output_parsed;
 
-    article.neutralTitle = cleanText(parsed.neutralTitle);
-    article.neutralLead = cleanText(parsed.neutralLead);
-    article.neutralSummary = cleanText(parsed.neutralSummary);
+    article.neutralTitle = stripForbiddenSourcePhrases(parsed.neutralTitle);
+    article.neutralLead = stripForbiddenSourcePhrases(parsed.neutralLead);
+    article.neutralSummary = stripForbiddenSourcePhrases(parsed.neutralSummary);
     article.neutralityScore = Number(parsed.neutralityScore);
     article.politicalBiasRisk = parsed.politicalBiasRisk;
     article.curationStatus = 'done';
     article.curationGeneratedAt = new Date();
     article.curationError = '';
     article.curationModel = OPENAI_MODEL;
+
+    const combinedText = [
+      article.neutralTitle,
+      article.neutralLead,
+      article.neutralSummary,
+    ]
+      .join(' ')
+      .toLowerCase();
+
+    const hasForbiddenSourcePhrase = FORBIDDEN_SOURCE_PHRASES.some((phrase) =>
+      combinedText.includes(phrase)
+    );
+
+    if (hasForbiddenSourcePhrase) {
+      article.neutralityScore = Math.min(article.neutralityScore, 65);
+      article.curationError = 'Generated text contained forbidden source attribution';
+    }
 
     await article.save();
 

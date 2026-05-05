@@ -20,7 +20,7 @@ const UserDeliveryRunSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['created', 'in_progress', 'prepared', 'sent', 'error'],
+      enum: ['created', 'preparing', 'prepared', 'sent', 'error'],
       default: 'created',
       index: true,
     },

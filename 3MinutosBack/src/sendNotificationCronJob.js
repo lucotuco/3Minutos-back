@@ -1,13 +1,13 @@
 const cron = require('node-cron');
 
-const { prepareUpcomingDeliveryRuns } = require('./utils/prepareUpcomingDeliveryRuns.js');
+const { sendPreparedDigestNotifications } = require('./sendPreparedDigestNotificationsJob');
 const {
   APP_TIME_ZONE,
   getLocalDateString,
   getMinutesNow,
 } = require('./utils/dateHelpers');
 
-let isPrepareJobRunning = false;
+let isNotificationJobRunning = false;
 
 function formatArgentinaDateTime(date = new Date()) {
   return new Intl.DateTimeFormat('es-AR', {
@@ -24,36 +24,29 @@ function formatArgentinaHour(date = new Date()) {
   return `${hours}:${minutes}`;
 }
 
-function startPrepareDeliveryRunsJob() {
+function startNotificationJob() {
   cron.schedule(
-    '*/5 * * * *',
+    '* * * * *',
     async () => {
-      if (isPrepareJobRunning) {
-        console.log('⏭️ Preparación de digest omitida: corrida previa en curso');
+      if (isNotificationJobRunning) {
+        console.log('⏭️ Job de notificaciones omitido: corrida previa en curso');
         return;
       }
 
-      isPrepareJobRunning = true;
+      isNotificationJobRunning = true;
 
       try {
         const now = new Date();
 
-        console.log(`\n📦 Ejecutando job de preparación de digest (AR): ${formatArgentinaDateTime(now)}`);
+        console.log(`\n🔔 Ejecutando job de notificaciones (AR): ${formatArgentinaDateTime(now)}`);
         console.log(`🗓 Fecha AR: ${getLocalDateString(now)}`);
         console.log(`🕒 Hora AR: ${formatArgentinaHour(now)}`);
-        console.log(`🌍 TZ usada: ${APP_TIME_ZONE}`);
 
-        const results = await prepareUpcomingDeliveryRuns({
-          minutesAhead: 15,
-          now,
-        });
-
-        console.log('📦 Resultado preparación de digest:');
-        console.log(JSON.stringify(results, null, 2));
+        await sendPreparedDigestNotifications({ now });
       } catch (error) {
-        console.error('❌ Error en prepare digest job:', error.message);
+        console.error('❌ Error en notification job:', error.message);
       } finally {
-        isPrepareJobRunning = false;
+        isNotificationJobRunning = false;
       }
     },
     {
@@ -63,5 +56,5 @@ function startPrepareDeliveryRunsJob() {
 }
 
 module.exports = {
-  startPrepareDeliveryRunsJob,
+  startNotificationJob,
 };

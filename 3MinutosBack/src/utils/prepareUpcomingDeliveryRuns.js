@@ -20,7 +20,7 @@ function isMinutesInWindow(deliveryMinutes, nowMinutes, minutesAhead) {
 }
 
 async function prepareUpcomingDeliveryRuns({
-  minutesAhead = 10,
+  minutesAhead = 15,
   now = new Date(),
 } = {}) {
   const users = await UserPreference.find({
@@ -38,69 +38,110 @@ async function prepareUpcomingDeliveryRuns({
   const results = [];
 
   for (const user of usersInWindow) {
-    const existing = await UserDeliveryRun.findOne({
-      userId: user._id,
-      deliveryDate,
-      deliveryTime: user.deliveryTime,
-    });
-
-    if (existing) {
-      results.push({
-        userId: String(user._id),
-        name: user.name,
-        deliveryTime: user.deliveryTime,
-        created: false,
-        status: existing.status,
-        runId: String(existing._id),
-      });
-      continue;
-    }
+    let run;
 
     try {
-      const digest = await buildDigestForUser(user._id);
-
-      const run = await UserDeliveryRun.create({
-        userId: user._id,
-        deliveryDate,
-        deliveryTime: user.deliveryTime,
-        status: 'prepared',
-        digest,
-        preferencesSnapshot: {
-          topics: user.topics || [],
+      run = await UserDeliveryRun.findOneAndUpdate(
+        {
+          userId: user._id,
+          deliveryDate,
           deliveryTime: user.deliveryTime,
         },
-        preparedAt: new Date(),
-      });
+        {
+          $setOnInsert: {
+            userId: user._id,
+            deliveryDate,
+            deliveryTime: user.deliveryTime,
+            status: 'preparing',
+            preferencesSnapshot: {
+              topics: user.topics || [],
+              deliveryTime: user.deliveryTime,
+            },
+            createdAt: new Date(),
+          },
+        },
+        {
+          upsert: true,
+          returnDocument: 'after',
+          rawResult: true,
+        }
+      );
+
+      const deliveryRun = run.value;
+      const wasCreated = Boolean(run.lastErrorObject?.upserted);
+
+      if (!wasCreated) {
+        results.push({
+          userId: String(user._id),
+          name: user.name,
+          deliveryTime: user.deliveryTime,
+          created: false,
+          status: deliveryRun.status,
+          runId: String(deliveryRun._id),
+        });
+        continue;
+      }
+
+      const digest = await buildDigestForUser(user._id);
+
+      const updatedRun = await UserDeliveryRun.findByIdAndUpdate(
+        deliveryRun._id,
+        {
+          $set: {
+            status: 'prepared',
+            digest,
+            preparedAt: new Date(),
+            errorMessage: '',
+          },
+        },
+        {
+          returnDocument: 'after',
+        }
+      );
 
       results.push({
         userId: String(user._id),
         name: user.name,
         deliveryTime: user.deliveryTime,
         created: true,
-        status: run.status,
-        runId: String(run._id),
+        status: updatedRun.status,
+        runId: String(updatedRun._id),
       });
     } catch (error) {
-      const run = await UserDeliveryRun.create({
-        userId: user._id,
-        deliveryDate,
-        deliveryTime: user.deliveryTime,
-        status: 'error',
-        preferencesSnapshot: {
-          topics: user.topics || [],
+      if (run?.value?._id) {
+        const erroredRun = await UserDeliveryRun.findByIdAndUpdate(
+          run.value._id,
+          {
+            $set: {
+              status: 'error',
+              errorMessage: error.message || 'Unknown prepare error',
+            },
+          },
+          {
+            returnDocument: 'after',
+          }
+        );
+
+        results.push({
+          userId: String(user._id),
+          name: user.name,
           deliveryTime: user.deliveryTime,
-        },
-        errorMessage: error.message || 'Unknown prepare error',
-      });
+          created: false,
+          status: erroredRun.status,
+          runId: String(erroredRun._id),
+          errorMessage: erroredRun.errorMessage,
+        });
+
+        continue;
+      }
 
       results.push({
         userId: String(user._id),
         name: user.name,
         deliveryTime: user.deliveryTime,
         created: false,
-        status: run.status,
-        runId: String(run._id),
-        errorMessage: run.errorMessage,
+        status: 'error',
+        errorMessage: error.message || 'Unknown prepare error',
       });
     }
   }

@@ -1,5 +1,5 @@
 const { pickBestArticlePerTopic } = require('../utils/pickBestArticlePerTopic');
-const { generateArticleSummary } = require('../summaries/generateArticleSummary');
+const { generateNeutralCuration } = require('../curation/generateNeutralCuration');
 
 function cleanText(value) {
   return String(value || '')
@@ -17,20 +17,38 @@ function cleanText(value) {
     .trim();
 }
 
-function buildFallbackSummary(article) {
-  const sourceText = cleanText(article.rawSummary || article.contentSnippet);
+function truncateWords(text, maxWords) {
+  const words = cleanText(text).split(/\s+/).filter(Boolean);
 
-  if (sourceText) {
-    return sourceText;
+  if (words.length <= maxWords) {
+    return words.join(' ');
   }
 
-  const title = cleanText(article.title);
+  return words.slice(0, maxWords).join(' ');
+}
 
-  if (title) {
-    return title;
-  }
+function buildFallbackCuration(article) {
+  const title = truncateWords(article.title || 'Noticia relevante del día', 12);
 
-  return 'Resumen no disponible por el momento.';
+  const sourceText = cleanText(
+    article.rawSummary ||
+      article.contentSnippet ||
+      article.summary ||
+      article.title ||
+      ''
+  );
+
+  const lead = truncateWords(sourceText || title, 24);
+  const neutralSummary = truncateWords(sourceText || title, 70);
+
+  return {
+    neutralTitle: article.neutralTitle || title,
+    neutralLead: article.neutralLead || lead,
+    neutralSummary: article.neutralSummary || neutralSummary,
+    neutralityScore: Number(article.neutralityScore || 50),
+    politicalBiasRisk: article.politicalBiasRisk || 'unknown',
+    fallback: true,
+  };
 }
 
 async function buildUserNewsDigest({
@@ -57,43 +75,105 @@ async function buildUserNewsDigest({
         return {
           topic: pick.topic,
           articleId: null,
+
           title: null,
+          neutralTitle: null,
+
+          lead: null,
+          neutralLead: null,
+
+          summary: null,
+          neutralSummary: null,
+
+          originalTitle: null,
+
           url: null,
           section: null,
           region: null,
           tags: [],
-          summary: null,
+
           cached: false,
           fallback: false,
+          curationFallback: false,
+
+          neutralityScore: null,
+          politicalBiasRisk: 'unknown',
+
           score: null,
           finalScore: null,
         };
       }
 
-      let summaryResult;
+      let curationResult;
 
       try {
-        summaryResult = await generateArticleSummary(pick.article._id);
+        curationResult = await generateNeutralCuration(pick.article._id);
       } catch (error) {
-        summaryResult = {
-          summary: buildFallbackSummary(pick.article),
-          cached: false,
-          fallback: true,
-          error: error.message || 'Summary generation failed',
-        };
+        console.error('❌ Error usando curación neutral en digest');
+        console.error('articleId:', String(pick.article._id));
+        console.error('title:', pick.article.title);
+        console.error('error:', error.message);
+
+        curationResult = buildFallbackCuration(pick.article);
       }
+
+      const neutralTitle =
+        curationResult.neutralTitle ||
+        pick.article.neutralTitle ||
+        truncateWords(pick.article.title, 12);
+
+      const neutralLead =
+        curationResult.neutralLead ||
+        pick.article.neutralLead ||
+        truncateWords(
+          pick.article.rawSummary || pick.article.contentSnippet || pick.article.title,
+          24
+        );
+
+      const neutralSummary =
+        curationResult.neutralSummary ||
+        pick.article.neutralSummary ||
+        truncateWords(
+          pick.article.rawSummary || pick.article.contentSnippet || pick.article.title,
+          70
+        );
 
       return {
         topic: pick.topic,
         articleId: String(pick.article._id),
-        title: pick.article.title,
+
+        // Compatibilidad con el front actual.
+        title: neutralTitle,
+        summary: neutralSummary,
+
+        // Campos nuevos explícitos.
+        neutralTitle,
+        lead: neutralLead,
+        neutralLead,
+        neutralSummary,
+
+        // Solo para auditoría/debug. No mostrar como principal.
+        originalTitle: pick.article.title,
+
         url: pick.article.url,
         section: pick.article.section,
         region: pick.article.region,
         tags: pick.article.tags || [],
-        summary: summaryResult.summary,
-        cached: Boolean(summaryResult.cached),
-        fallback: Boolean(summaryResult.fallback),
+
+        cached: Boolean(curationResult.cached),
+        fallback: false,
+        curationFallback: Boolean(curationResult.fallback),
+
+        neutralityScore:
+          curationResult.neutralityScore ??
+          pick.article.neutralityScore ??
+          null,
+
+        politicalBiasRisk:
+          curationResult.politicalBiasRisk ||
+          pick.article.politicalBiasRisk ||
+          'unknown',
+
         score: pick.article.score ?? null,
         finalScore: pick.article.finalScore ?? null,
       };

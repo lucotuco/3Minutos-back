@@ -118,6 +118,7 @@ const articleSchema = new mongoose.Schema(
       default: [],
     },
 
+    // Campo viejo. Puede quedar por compatibilidad, pero el digest nuevo NO lo usa.
     summary: {
       type: String,
       default: '',
@@ -132,6 +133,54 @@ const articleSchema = new mongoose.Schema(
       default: null,
     },
     summaryError: {
+      type: String,
+      default: '',
+    },
+
+    // Nueva capa editorial neutral.
+    neutralTitle: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    neutralLead: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    neutralSummary: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    neutralityScore: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+      index: true,
+    },
+    politicalBiasRisk: {
+      type: String,
+      enum: ['low', 'medium', 'high', 'unknown'],
+      default: 'unknown',
+      index: true,
+    },
+    curationStatus: {
+      type: String,
+      enum: ['pending', 'done', 'error'],
+      default: 'pending',
+      index: true,
+    },
+    curationGeneratedAt: {
+      type: Date,
+      default: null,
+    },
+    curationError: {
+      type: String,
+      default: '',
+    },
+    curationModel: {
       type: String,
       default: '',
     },

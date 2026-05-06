@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const newsAgentRoutes = require('./routes/newsAgentRoutes');
 
 const articleRoutes = require('./routes/articleRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -68,6 +69,7 @@ app.get('/', (req, res) => {
 
 app.use('/articles', articleRoutes);
 app.use('/users', userRoutes);
+app.use('/users', newsAgentRoutes);
 
 app.use((req, res) => {
   res.status(404).json({

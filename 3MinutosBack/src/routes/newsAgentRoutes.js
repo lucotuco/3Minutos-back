@@ -27,7 +27,10 @@ const newsAgentLimiter = rateLimit({
 function getClientSecretValue(payload) {
   if (!payload) return '';
 
-  if (typeof payload.value === 'string') return payload.value;
+  if (typeof payload.value === 'string') {
+    return payload.value;
+  }
+
   if (typeof payload.client_secret?.value === 'string') {
     return payload.client_secret.value;
   }
@@ -49,8 +52,26 @@ router.get(
         });
       }
 
-      const { contextText, digestRun } = await buildNewsAgentContext(
-        req.params.userId
+      const { contextText, digestRun, items, hasTodaysDigest } =
+        await buildNewsAgentContext(req.params.userId);
+
+      if (!hasTodaysDigest) {
+        console.log('[news-agent] No todays digest found', {
+          userId: req.params.userId,
+        });
+
+        return res.status(409).json({
+          error:
+            'No hay digest de hoy para discutir. Generá o actualizá tu digest primero.',
+          code: 'NO_TODAYS_DIGEST',
+        });
+      }
+
+      console.log('[news-agent] userId:', req.params.userId);
+      console.log('[news-agent] digestDate:', digestRun?.deliveryDate);
+      console.log(
+        '[news-agent] titles:',
+        items.map((item) => item.neutralTitle || item.title || item.originalTitle)
       );
 
       const instructions = buildNewsAgentInstructions(contextText);
@@ -124,7 +145,8 @@ router.get(
         clientSecret,
         model,
         digestDate: digestRun?.deliveryDate || null,
-        contextSource: digestRun?.source || null,
+        contextSource: 'today',
+        itemCount: items.length,
       });
     } catch (error) {
       console.error('[GET /users/:userId/news-agent/client-secret]', error);

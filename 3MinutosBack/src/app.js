@@ -2,8 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const newsAgentRoutes = require('./routes/newsAgentRoutes');
 
+const newsAgentRoutes = require('./routes/newsAgentRoutes');
 const articleRoutes = require('./routes/articleRoutes');
 const userRoutes = require('./routes/userRoutes');
 
@@ -64,7 +64,10 @@ app.get('/health', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  res.json({ ok: true, service: '3Minutos backend' });
+  res.json({
+    ok: true,
+    service: '3Minutos backend',
+  });
 });
 
 app.use('/articles', articleRoutes);

@@ -15,24 +15,24 @@ const { uploadDigestAudio, deleteDigestAudio } = require('../audio/uploadDigestA
 const { startTimer, timeAsync } = require('./timing');
 
 function getDigestItemsFromRun(run) {
-  if (Array.isArray(run?.digest?.items)) {
-    return run.digest.items;
-  }
-
   if (Array.isArray(run?.digest?.digest?.items)) {
     return run.digest.digest.items;
+  }
+
+  if (Array.isArray(run?.digest?.items)) {
+    return run.digest.items;
   }
 
   return [];
 }
 
 function getAudioStorageKeyFromRun(run) {
-  if (run?.digest?.audioStorageKey) {
-    return run.digest.audioStorageKey;
-  }
-
   if (run?.digest?.digest?.audioStorageKey) {
     return run.digest.digest.audioStorageKey;
+  }
+
+  if (run?.digest?.audioStorageKey) {
+    return run.digest.audioStorageKey;
   }
 
   return null;
@@ -58,10 +58,17 @@ async function buildDigestForUser(userId) {
 
     const previousRuns = await UserDeliveryRun.find({
       userId: user._id,
-      status: { $in: ['prepared', 'sent'] },
-      digest: { $ne: null },
+      status: {
+        $in: ['prepared', 'sent'],
+      },
+      digest: {
+        $ne: null,
+      },
     })
-      .sort({ preparedAt: -1, createdAt: -1 })
+      .sort({
+        preparedAt: -1,
+        createdAt: -1,
+      })
       .limit(10)
       .lean();
 
@@ -90,10 +97,17 @@ async function buildDigestForUser(userId) {
 
     const previousRun = await UserDeliveryRun.findOne({
       userId: user._id,
-      status: { $in: ['prepared', 'sent'] },
-      digest: { $ne: null },
+      status: {
+        $in: ['prepared', 'sent'],
+      },
+      digest: {
+        $ne: null,
+      },
     })
-      .sort({ preparedAt: -1, createdAt: -1 })
+      .sort({
+        preparedAt: -1,
+        createdAt: -1,
+      })
       .lean();
 
     const previousAudioStorageKey = getAudioStorageKeyFromRun(previousRun);

@@ -12,7 +12,10 @@ async function generateDigestAudioFile({ script, outputPath }) {
   try {
     const response = await openai.audio.speech.create({
       model: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts',
-      voice: process.env.OPENAI_TTS_VOICE || 'alloy',
+      voice:
+  process.env.OPENAI_TTS_VOICE ||
+  process.env.NEWS_AGENT_REALTIME_VOICE ||
+  'verse',
       input: script,
       format: 'mp3',
     });

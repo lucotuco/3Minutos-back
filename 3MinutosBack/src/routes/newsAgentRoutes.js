@@ -38,6 +38,32 @@ function getClientSecretValue(payload) {
   return '';
 }
 
+function numberFromEnv(name, fallback) {
+  const raw = process.env[name];
+
+  if (raw === undefined || raw === null || raw === '') {
+    return fallback;
+  }
+
+  const parsed = Number(raw);
+
+  if (Number.isNaN(parsed)) {
+    return fallback;
+  }
+
+  return parsed;
+}
+
+function booleanFromEnv(name, fallback) {
+  const raw = process.env[name];
+
+  if (raw === undefined || raw === null || raw === '') {
+    return fallback;
+  }
+
+  return raw === 'true';
+}
+
 router.get(
   '/:userId/news-agent/client-secret',
   authRequired,
@@ -61,8 +87,7 @@ router.get(
         });
 
         return res.status(409).json({
-          error:
-            'No hay digest de hoy para discutir. Generá o actualizá tu digest primero.',
+          error: 'No hay digest de hoy para discutir. Generá o actualizá tu digest primero.',
           code: 'NO_TODAYS_DIGEST',
         });
       }
@@ -71,29 +96,75 @@ router.get(
       console.log('[news-agent] digestDate:', digestRun?.deliveryDate);
       console.log(
         '[news-agent] titles:',
-        items.map((item) => item.neutralTitle || item.title || item.originalTitle)
+        items.map(
+          (item) => item.neutralTitle || item.title || item.originalTitle
+        )
       );
 
       const instructions = buildNewsAgentInstructions(contextText);
 
       const model = process.env.NEWS_AGENT_REALTIME_MODEL || 'gpt-realtime';
+
       const voice =
-  process.env.NEWS_AGENT_REALTIME_VOICE ||
-  process.env.OPENAI_TTS_VOICE ||
-  'verse';
+        process.env.NEWS_AGENT_REALTIME_VOICE ||
+        process.env.OPENAI_TTS_VOICE ||
+        'verse';
+
       const ttlSeconds = Number(
         process.env.NEWS_AGENT_CLIENT_SECRET_TTL_SECONDS || 600
+      );
+
+      const vadThreshold = numberFromEnv('NEWS_AGENT_VAD_THRESHOLD', 0.78);
+      const vadPrefixPaddingMs = numberFromEnv(
+        'NEWS_AGENT_VAD_PREFIX_PADDING_MS',
+        300
+      );
+      const vadSilenceDurationMs = numberFromEnv(
+        'NEWS_AGENT_VAD_SILENCE_DURATION_MS',
+        900
+      );
+      const vadIdleTimeoutMs = numberFromEnv(
+        'NEWS_AGENT_VAD_IDLE_TIMEOUT_MS',
+        12000
       );
 
       const sessionPayload = {
         type: 'realtime',
         model,
         instructions,
+        output_modalities: ['audio'],
         audio: {
           input: {
             transcription: {
-              model: 'whisper-1',
+              model: process.env.NEWS_AGENT_TRANSCRIPTION_MODEL || 'whisper-1',
               language: 'es',
+            },
+            turn_detection: {
+              type: 'server_vad',
+
+              // Más alto = menos sensible al ruido ambiente.
+              threshold: vadThreshold,
+
+              // Conserva un poco de audio antes de detectar habla.
+              prefix_padding_ms: vadPrefixPaddingMs,
+
+              // Más alto = espera más silencio antes de cerrar el turno.
+              silence_duration_ms: vadSilenceDurationMs,
+
+              // Si el usuario se queda callado mucho tiempo, puede disparar repregunta.
+              idle_timeout_ms: vadIdleTimeoutMs,
+
+              // Mantener true para que responda automáticamente cuando el usuario habla.
+              create_response: booleanFromEnv(
+                'NEWS_AGENT_VAD_CREATE_RESPONSE',
+                true
+              ),
+
+              // Importante: false evita que un ruidito cancele a Dan mientras habla.
+              interrupt_response: booleanFromEnv(
+                'NEWS_AGENT_VAD_INTERRUPT_RESPONSE',
+                false
+              ),
             },
           },
           output: {

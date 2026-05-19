@@ -13,6 +13,8 @@ function processArticle(article = {}) {
 
   processed.aiReviewed = false;
   processed.aiConfidence = 0;
+  processed.topicStatus = 'pending';
+  processed.topic = '';
   processed.aiChangedClassification = false;
   processed.aiReason = '';
   processed.classificationStatus = 'pending_ai';

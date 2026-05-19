@@ -1,6 +1,6 @@
-const { pickBestArticlePerTopic } = require('../utils/pickBestArticlePerTopic');
-const { generateNeutralCuration } = require('../curation/generateNeutralCuration');
-const { startTimer, timeAsync } = require('./timing');
+const { pickBestArticlePerTopic }    = require('../utils/pickBestArticlePerTopic');
+const { generateNeutralCuration }    = require('../curation/generateNeutralCuration');
+const { startTimer, timeAsync }      = require('./timing');
 
 function cleanText(value) {
   return String(value || '')
@@ -20,227 +20,149 @@ function cleanText(value) {
 
 function truncateWords(text, maxWords) {
   const words = cleanText(text).split(/\s+/).filter(Boolean);
-
-  if (words.length <= maxWords) {
-    return words.join(' ');
-  }
-
+  if (words.length <= maxWords) return words.join(' ');
   return words.slice(0, maxWords).join(' ');
 }
 
 function buildFallbackCuration(article) {
-  const title = truncateWords(article.title || 'Noticia relevante del día', 12);
-
-  const sourceText = cleanText(
-    article.rawSummary ||
-      article.contentSnippet ||
-      article.summary ||
-      article.title ||
-      ''
-  );
-
-  const lead = truncateWords(sourceText || title, 24);
+  const title      = truncateWords(article.title || 'Noticia relevante del día', 12);
+  const sourceText = cleanText(article.rawSummary || article.contentSnippet || article.summary || article.title || '');
+  const lead       = truncateWords(sourceText || title, 24);
   const neutralSummary = truncateWords(sourceText || title, 70);
 
   return {
-    neutralTitle: article.neutralTitle || title,
-    neutralLead: article.neutralLead || lead,
-    neutralSummary: article.neutralSummary || neutralSummary,
-    neutralityScore: Number(article.neutralityScore || 50),
+    neutralTitle:      article.neutralTitle      || title,
+    neutralLead:       article.neutralLead       || lead,
+    neutralSummary:    article.neutralSummary    || neutralSummary,
+    neutralityScore:   Number(article.neutralityScore || 50),
     politicalBiasRisk: article.politicalBiasRisk || 'unknown',
     fallback: true,
   };
 }
 
 async function buildUserNewsDigest({
-  topics = [],
+  topics          = [],
   alreadyShownUrls = [],
-  perTopicLimit = 10,
-  numCandidates = 100,
+  perTopicLimit   = 10,
 } = {}) {
   const totalTimer = startTimer('buildUserNewsDigest total', {
     topics,
     alreadyShownUrlsCount: alreadyShownUrls.length,
     perTopicLimit,
-    numCandidates,
   });
 
   try {
     if (!Array.isArray(topics) || topics.length === 0) {
-      totalTimer.end({
-        items: 0,
-        reason: 'no_topics',
-      });
-
-      return {
-        items: [],
-      };
+      totalTimer.end({ items: 0, reason: 'no_topics' });
+      return { items: [] };
     }
 
+    // numCandidates ya no aplica — la búsqueda es por categoría/topic exacto
     const picks = await timeAsync(
       'pickBestArticlePerTopic',
-      () =>
-        pickBestArticlePerTopic(topics, {
-          perTopicLimit,
-          numCandidates,
-          alreadyShownUrls,
-        }),
-      {
-        topics,
-        perTopicLimit,
-        numCandidates,
-      }
+      () => pickBestArticlePerTopic(topics, { perTopicLimit, alreadyShownUrls }),
+      { topics, perTopicLimit }
     );
 
     const items = await Promise.all(
       picks.map(async (pick) => {
         if (!pick.article) {
           return {
-            topic: pick.topic,
-            articleId: null,
-
-            title: null,
+            topic:       pick.topic,
+            articleId:   null,
+            title:       null,
             neutralTitle: null,
-
-            lead: null,
+            lead:        null,
             neutralLead: null,
-
-            summary: null,
+            summary:     null,
             neutralSummary: null,
-
             originalTitle: null,
-
-            url: null,
-            section: null,
-            region: null,
-            tags: [],
-
-            cached: false,
-            fallback: false,
+            url:         null,
+            section:     null,
+            region:      null,
+            category:    null,
+            tags:        [],
+            cached:      false,
+            fallback:    false,
             curationFallback: false,
-
-            neutralityScore: null,
+            neutralityScore:  null,
             politicalBiasRisk: 'unknown',
-
-            score: null,
-            finalScore: null,
+            score:       null,
+            finalScore:  null,
           };
         }
 
         let curationResult;
 
         try {
-          console.log('🧠 Preparando curación para digest', {
-            topic: pick.topic,
-            articleId: String(pick.article._id),
-            title: pick.article.title,
-            curationStatus: pick.article.curationStatus,
-            hasNeutralTitle: Boolean(pick.article.neutralTitle),
-          });
-
           curationResult = await timeAsync(
             'generateNeutralCuration from digest',
             () => generateNeutralCuration(pick.article._id),
-            {
-              topic: pick.topic,
-              articleId: String(pick.article._id),
-              title: pick.article.title,
-            }
+            { topic: pick.topic, articleId: String(pick.article._id) }
           );
         } catch (error) {
-          console.error('❌ Error usando curación neutral en digest');
-          console.error('articleId:', String(pick.article._id));
-          console.error('title:', pick.article.title);
-          console.error('error:', error.message);
-
+          console.error('❌ Error curación neutral:', pick.article._id, error.message);
           curationResult = buildFallbackCuration(pick.article);
         }
 
-        const neutralTitle =
-          curationResult.neutralTitle ||
-          pick.article.neutralTitle ||
-          truncateWords(pick.article.title, 12);
+        const neutralTitle = curationResult.neutralTitle
+          || pick.article.neutralTitle
+          || truncateWords(pick.article.title, 12);
 
-        const neutralLead =
-          curationResult.neutralLead ||
-          pick.article.neutralLead ||
-          truncateWords(
-            pick.article.rawSummary || pick.article.contentSnippet || pick.article.title,
-            24
-          );
+        const neutralLead = curationResult.neutralLead
+          || pick.article.neutralLead
+          || truncateWords(pick.article.rawSummary || pick.article.contentSnippet || pick.article.title, 24);
 
-        const neutralSummary =
-          curationResult.neutralSummary ||
-          pick.article.neutralSummary ||
-          truncateWords(
-            pick.article.rawSummary || pick.article.contentSnippet || pick.article.title,
-            70
-          );
+        const neutralSummary = curationResult.neutralSummary
+          || pick.article.neutralSummary
+          || truncateWords(pick.article.rawSummary || pick.article.contentSnippet || pick.article.title, 70);
 
         return {
-          topic: pick.topic,
-          articleId: String(pick.article._id),
+          topic:         pick.topic,
+          articleId:     String(pick.article._id),
 
-          title: neutralTitle,
-          summary: neutralSummary,
+          title:         neutralTitle,
+          summary:       neutralSummary,
 
           neutralTitle,
-          lead: neutralLead,
+          lead:          neutralLead,
           neutralLead,
           neutralSummary,
 
           originalTitle: pick.article.title,
+          imageUrl:      pick.article.imageUrl || null,
 
-          url: pick.article.url,
-          section: pick.article.section,
-          region: pick.article.region,
-          tags: pick.article.tags || [],
+          url:           pick.article.url,
+          section:       pick.article.section,
+          region:        pick.article.region,
+          category:      pick.article.category,   // ← campo nuevo
+          tags:          pick.article.tags || [],
 
-          cached: Boolean(curationResult.cached),
-          fallback: false,
+          cached:           Boolean(curationResult.cached),
+          fallback:         false,
           curationFallback: Boolean(curationResult.fallback),
 
-          neutralityScore:
-            curationResult.neutralityScore ??
-            pick.article.neutralityScore ??
-            null,
+          neutralityScore:   curationResult.neutralityScore   ?? pick.article.neutralityScore   ?? null,
+          politicalBiasRisk: curationResult.politicalBiasRisk || pick.article.politicalBiasRisk || 'unknown',
 
-          politicalBiasRisk:
-            curationResult.politicalBiasRisk ||
-            pick.article.politicalBiasRisk ||
-            'unknown',
-
-          score: pick.article.score ?? null,
+          score:      pick.article.score      ?? null,
           finalScore: pick.article.finalScore ?? null,
+          rankingScore: pick.article.rankingScore ?? null,  // ← nuevo, útil para debug
         };
       })
     );
 
-    const newCurations = items.filter(
-      (item) => item.articleId && !item.cached && !item.curationFallback
-    ).length;
-    const cachedCurations = items.filter((item) => item.cached).length;
-    const fallbackCurations = items.filter((item) => item.curationFallback).length;
+    const newCurations      = items.filter((i) => i.articleId && !i.cached && !i.curationFallback).length;
+    const cachedCurations   = items.filter((i) => i.cached).length;
+    const fallbackCurations = items.filter((i) => i.curationFallback).length;
 
-    totalTimer.end({
-      items: items.length,
-      newCurations,
-      cachedCurations,
-      fallbackCurations,
-    });
+    totalTimer.end({ items: items.length, newCurations, cachedCurations, fallbackCurations });
 
-    return {
-      items,
-    };
+    return { items };
   } catch (error) {
-    totalTimer.fail(error, {
-      topics,
-    });
-
+    totalTimer.fail(error, { topics });
     throw error;
   }
 }
 
-module.exports = {
-  buildUserNewsDigest,
-};
+module.exports = { buildUserNewsDigest };

@@ -22,7 +22,7 @@ function getFreshnessScore(publishedAt) {
   if (hours <= 24) return 70;
   if (hours <= 48) return 50;
   if (hours <= 72) return 35;
-  if (hours <= 168) return 20; // 7 días
+  if (hours <= 168) return 20;
   return 10;
 }
 

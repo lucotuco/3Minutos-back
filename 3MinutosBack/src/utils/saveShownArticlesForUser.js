@@ -26,6 +26,7 @@ async function saveShownArticlesForUser(
             title: item.title || '',
             summary: item.summary || '',
             topic: item.topic || '',
+            category:   item.category   || '',
             region: item.region || '',
             section: item.section || '',
             shownDate,

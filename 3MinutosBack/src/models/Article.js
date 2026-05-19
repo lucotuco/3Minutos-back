@@ -117,6 +117,29 @@ const articleSchema = new mongoose.Schema(
       type: [Number],
       default: [],
     },
+    topic: {
+      type: String,
+      default: '',
+      index: true,
+    },
+    topicStatus: {
+      type: String,
+      enum: ['pending', 'done', 'error'],
+      default: 'pending',
+      index: true,
+    },
+    topicGeneratedAt: {
+      type: Date,
+      default: null,
+    },
+    topicError: {
+      type: String,
+      default: '',
+    },
+    topicModel: {
+      type: String,
+      default: '',
+    },
 
     // Campo viejo. Puede quedar por compatibilidad, pero el digest nuevo NO lo usa.
     summary: {

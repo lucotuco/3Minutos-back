@@ -4,6 +4,46 @@ const { ALL_CATEGORIES } = require('../ingestion/classifyArticleTopic');
 
 const OPINION_KEYWORDS = ['opinion', 'opinión', 'columna', 'columnista', 'editorial', 'analisis', 'análisis'];
 
+// Mapeo de topic → categoría padre
+const TOPIC_TO_CATEGORY = {
+  'Gobierno Nacional': 'Política',
+  'Justicia y Corrupción': 'Política',
+  'Elecciones': 'Política',
+  'Política Provincial': 'Política',
+  'Seguridad': 'Política',
+  'Dólar e Inflación': 'Economía',
+  'Mercados': 'Economía',
+  'Empresas y Negocios': 'Economía',
+  'Trabajo y Salarios': 'Economía',
+  'Criptomonedas': 'Economía',
+  'EEUU': 'Mundo',
+  'Medio Oriente': 'Mundo',
+  'Europa': 'Mundo',
+  'América Latina': 'Mundo',
+  'Salud Global': 'Mundo',
+  'Fútbol Local': 'Deportes',
+  'Fútbol Internacional': 'Deportes',
+  'Mundial 2026': 'Deportes',
+  'Básquet': 'Deportes',
+  'Tenis': 'Deportes',
+  'Otros Deportes': 'Deportes',
+  'Salud': 'Sociedad',
+  'Educación': 'Sociedad',
+  'Clima y Ambiente': 'Sociedad',
+  'Género': 'Sociedad',
+  'Seguridad Ciudadana': 'Sociedad',
+  'Inteligencia Artificial': 'Tecnología',
+  'Ciencia y Espacio': 'Tecnología',
+  'Gadgets': 'Tecnología',
+  'Internet': 'Tecnología',
+  'Cine y Series': 'Cultura y Vida',
+  'Música': 'Cultura y Vida',
+  'Turismo y Viajes': 'Cultura y Vida',
+  'Libros': 'Cultura y Vida',
+  'Autos': 'Cultura y Vida',
+  'Bienestar': 'Cultura y Vida',
+};
+
 function normalizeText(value) {
   return String(value || '')
     .normalize('NFD')
@@ -45,26 +85,45 @@ async function findCandidatesForTopic(topic, limit) {
 
   const isMainCategory = ALL_CATEGORIES.includes(topic);
 
-  const query = {
-    topicStatus: 'done',
+  const baseQuery = {
     publishedAt: { $gte: cutoff },
     ...(isMainCategory ? { category: topic } : { topic }),
   };
 
-  // Traemos más candidatos de los necesarios para que el ranking elija bien
-  const articles = await Article.find(query)
+  const selectFields = [
+    '_id', 'title', 'url', 'sourceName',
+    'section', 'region', 'tags',
+    'category', 'topic',
+    'importanceScore', 'publishedAt',
+    'neutralTitle', 'neutralLead', 'neutralSummary',
+    'neutralityScore', 'politicalBiasRisk', 'curationStatus',
+    'rawSummary', 'contentSnippet', 'imageUrl',
+  ].join(' ');
+
+  // Primero intentar con topicStatus: 'done'
+  let articles = await Article.find({
+    ...baseQuery,
+    topicStatus: 'done',
+  })
     .sort({ importanceScore: -1, publishedAt: -1 })
-    .limit(limit * 4)
-    .select([
-      '_id', 'title', 'url', 'sourceName',
-      'section', 'region', 'tags',
-      'category', 'topic',
-      'importanceScore', 'publishedAt',
-      'neutralTitle', 'neutralLead', 'neutralSummary',
-      'neutralityScore', 'politicalBiasRisk', 'curationStatus',
-      'rawSummary', 'contentSnippet', 'imageUrl',
-    ].join(' '))
+    .limit(limit * 10)
+    .select(selectFields)
     .lean();
+
+  // Si no hay suficientes, hacer fallback a pending/error
+  if (articles.length < limit) {
+    const missingCount = limit - articles.length;
+    const fallbackArticles = await Article.find({
+      ...baseQuery,
+      topicStatus: { $in: ['pending', 'error'] },
+    })
+      .sort({ importanceScore: -1, publishedAt: -1 })
+      .limit(missingCount * 4)
+      .select(selectFields)
+      .lean();
+
+    articles = articles.concat(fallbackArticles);
+  }
 
   // Aplicar algoritmo de ranking (importanceScore 70% + freshness 30%)
   return articles
@@ -84,16 +143,48 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
     const topic = String(rawTopic || '').trim();
     if (!topic) continue;
 
-    const candidates = await findCandidatesForTopic(topic, perTopicLimit);
-    const bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
+    // Intentar encontrar artículo para el topic específico
+    let candidates = await findCandidatesForTopic(topic, perTopicLimit);
+    let bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
+    let usedFallback = false;
+    let fallbackCategory = null;
+
+    // Si no hay artículo del topic, hacer fallback a la categoría padre
+    if (!bestUnused) {
+      const category = TOPIC_TO_CATEGORY[topic];
+      
+      if (category && category !== topic) {
+        // Buscar en la categoría padre
+        candidates = await findCandidatesForTopic(category, perTopicLimit);
+        bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
+        
+        if (bestUnused) {
+          usedFallback = true;
+          fallbackCategory = category;
+          console.warn(
+            `⚠️  No hay artículos para topic "${topic}". Usando del tema padre "${category}".`
+          );
+        }
+      }
+    }
 
     if (!bestUnused) {
-      results.push({ topic, article: null });
+      results.push({ 
+        topic, 
+        article: null,
+        usedFallback: false,
+        fallbackCategory: null,
+      });
       continue;
     }
 
     usedUrls.add(bestUnused.url);
-    results.push({ topic, article: bestUnused });
+    results.push({ 
+      topic, 
+      article: bestUnused,
+      usedFallback,
+      fallbackCategory,
+    });
   }
 
   return results;

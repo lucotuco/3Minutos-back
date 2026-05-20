@@ -152,13 +152,30 @@ async function buildUserNewsDigest({
       })
     );
 
-    const newCurations      = items.filter((i) => i.articleId && !i.cached && !i.curationFallback).length;
-    const cachedCurations   = items.filter((i) => i.cached).length;
-    const fallbackCurations = items.filter((i) => i.curationFallback).length;
+    // Filtrar items sin artículo (null items)
+    const validItems = items.filter((i) => i.articleId !== null);
+    const nullItems  = items.filter((i) => i.articleId === null);
 
-    totalTimer.end({ items: items.length, newCurations, cachedCurations, fallbackCurations });
+    const newCurations      = validItems.filter((i) => !i.cached && !i.curationFallback).length;
+    const cachedCurations   = validItems.filter((i) => i.cached).length;
+    const fallbackCurations = validItems.filter((i) => i.curationFallback).length;
 
-    return { items };
+    if (nullItems.length > 0) {
+      console.warn(
+        `⚠️  ${nullItems.length} topic(s) sin artículos disponibles:`,
+        nullItems.map((i) => i.topic).join(', ')
+      );
+    }
+
+    totalTimer.end({
+      items: validItems.length,
+      skippedNullItems: nullItems.length,
+      newCurations,
+      cachedCurations,
+      fallbackCurations,
+    });
+
+    return { items: validItems };
   } catch (error) {
     totalTimer.fail(error, { topics });
     throw error;

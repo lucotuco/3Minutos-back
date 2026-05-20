@@ -31,7 +31,7 @@ function getRankingScore(article = {}) {
   const freshnessScore = getFreshnessScore(article.publishedAt);
 
   const rankingScore = clamp(
-    importanceScore * 0.7 + freshnessScore * 0.3,
+    importanceScore * 0.6 + freshnessScore * 0.4,
     0,
     100
   );

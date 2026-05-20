@@ -3,9 +3,9 @@ const { openai } = require('../config/openai');
 
 const CATEGORIES = {
   'Política':       ['Gobierno Nacional', 'Justicia y Corrupción', 'Elecciones', 'Política Provincial', 'Seguridad'],
-  'Economía':       ['Dólar y Tipo de Cambio', 'Mercados', 'Empresas y Negocios', 'Trabajo y Salarios', 'Criptomonedas'],
-  'Mundo':          ['EEUU y Trump', 'Medio Oriente', 'Europa', 'América Latina', 'Salud Global'],
-  'Deportes':       ['Fútbol Local', 'Fútbol Internacional', 'Mundial 2026', 'Básquet', 'Tenis y Otros'],
+  'Economía':       ['Dólar e Inflación', 'Mercados', 'Empresas y Negocios', 'Trabajo y Salarios', 'Criptomonedas'],
+  'Mundo':          ['EEUU', 'Medio Oriente', 'Europa', 'América Latina', 'Salud Global'],
+  'Deportes':       ['Fútbol Local', 'Fútbol Internacional', 'Mundial 2026', 'Básquet', 'Tenis', 'Otros Deportes'],
   'Sociedad':       ['Salud', 'Educación', 'Clima y Ambiente', 'Género', 'Seguridad Ciudadana'],
   'Tecnología':     ['Inteligencia Artificial', 'Ciencia y Espacio', 'Gadgets', 'Internet'],
   'Cultura y Vida': ['Cine y Series', 'Música', 'Turismo y Viajes', 'Libros', 'Autos', 'Bienestar'],
@@ -18,7 +18,7 @@ const DEFAULT_TOPIC_PER_CATEGORY = {
   'Deportes':       'Deportes',
   'Sociedad':       'Sociedad',
   'Tecnología':     'Tecnología',
-  'Cultura y Vida': 'Cultura y Vida//',
+  'Cultura y Vida': 'Cultura y Vida',
 };
 
 const ALL_CATEGORIES = Object.keys(CATEGORIES);
@@ -59,7 +59,7 @@ REGLAS ESTRICTAS:
 REGLAS DE CLASIFICACIÓN PARA ARGENTINA:
 - Clubes argentinos (Boca, River, Racing, San Lorenzo, Huracán, Belgrano, etc.) o torneos locales (Apertura, Clausura, Copa Argentina, Sudamericana, Libertadores) → topic: "Fútbol Local"
 - Fútbol europeo, Champions League, ligas europeas → topic: "Fútbol Internacional"
-- Dólar, tipo de cambio, blue, MEP, CCL, cepo, reservas BCRA → topic: "Dólar y Tipo de Cambio"
+- Dólar, tipo de cambio, blue, MEP, CCL, cepo, reservas BCRA → topic: "Dólar e Inflación"
 - ADRs, bonos, acciones, riesgo país, Wall Street, bolsa → topic: "Mercados"
 - Empresas, PyMES, exportaciones, negocios corporativos, YPF, energía → topic: "Empresas y Negocios"
 - Milei, Casa Rosada, Adorni, gabinete, decretos del Ejecutivo → topic: "Gobierno Nacional"

@@ -89,6 +89,8 @@ async function buildUserNewsDigest({
             politicalBiasRisk: 'unknown',
             score:       null,
             finalScore:  null,
+            usedFallback: pick.usedFallback || false,
+            fallbackCategory: pick.fallbackCategory || null,
           };
         }
 
@@ -148,6 +150,9 @@ async function buildUserNewsDigest({
           score:      pick.article.score      ?? null,
           finalScore: pick.article.finalScore ?? null,
           rankingScore: pick.article.rankingScore ?? null,  // ← nuevo, útil para debug
+          
+          usedFallback:     Boolean(pick.usedFallback),
+          fallbackCategory: pick.fallbackCategory || null,
         };
       })
     );

@@ -3,39 +3,11 @@ const { zodTextFormat } = require('openai/helpers/zod');
 const { openai, OPENAI_MODEL } = require('../config/openai');
 const { buildEmbeddingText } = require('../embeddings/buildEmbeddingsText');
 
-const AllowedSections = [
-  'general',
-  'nacional',
-  'mundo',
-  'politica',
-  'economia',
-  'finanzas',
-  'negocios',
-  'deportes',
-  'tecnologia',
-  'entretenimiento',
-  'lifestyle',
-  'autos',
-  'energia',
-  'real-estate',
-];
-
-const AllowedRegions = [
-  'global',
-  'argentina',
-  'latinoamerica',
-  'europa',
-  'asia',
-  'africa',
-  'eeuu',
-];
 
 const BatchReviewSchema = z.object({
   reviews: z.array(
     z.object({
       url: z.string().min(1),
-      section: z.enum(AllowedSections),
-      region: z.enum(AllowedRegions),
       tags: z.array(z.string().min(1).max(50)).max(5),
       importanceScore: z.number().min(0).max(100),
       aiConfidence: z.number().min(0).max(1),
@@ -66,7 +38,7 @@ function buildArticlePayload(article = {}) {
     rawSummary: article.rawSummary || '',
     contentSnippet: article.contentSnippet || '',
     normalizedTitle: article.normalizedTitle || '',
-    section: article.section || article.section || 'general',
+
     region: article.region || article.region || 'global',
     tags: article.tags || article.tags || [],
     tagScores: article.tagScores || article.tagScores || {},
@@ -82,19 +54,16 @@ async function reviewArticlesWithAIBatch(articles = []) {
 
   const systemPrompt = `
 Sos un clasificador editorial de noticias.
-Tu tarea es clasisficar las noticias que te voy a pasar,por region, seccion, categoria y tags.
+Tu tarea es clasisficar las noticias que te voy a pasar, categoria, tags e importanceScore.
 
 Reglas:
 - Devolvé exactamente una review por cada artículo recibido.
 - Usá el campo "url" para identificar cada resultado.
-- Elegí UNA sola section válida por artículo.
-- Elegí UNA sola region válida por artículo.
 - Tags debe tener entre 0 y 5 tags, cortos y útiles.
 - No inventes hechos.
-- importanceScore va de 0 a 100.
+- importanceScore va de 0 a 100 en base a la importancia del artículo.
 - aiConfidence va de 0 a 1.
 - Priorizá el tema central de la noticia, no menciones secundarias.
-- En deportes, si el evento ocurre claramente en otro lugar, priorizá el lugar del evento antes que la nacionalidad del protagonista, salvo que el enfoque editorial sea evidentemente nacional.
 `;
 
   const userPrompt = `

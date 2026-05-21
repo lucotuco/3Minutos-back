@@ -1,6 +1,7 @@
 const Article = require('../models/Article');
 const { enrichArticleRanking } = require('./articleRanking');
 const { ALL_CATEGORIES } = require('../ingestion/classifyArticleTopic');
+const { searchArticlesBySimilarityAtlas } = require('../embeddings/searchArticlesBySimilarityAtlas');
 
 const OPINION_KEYWORDS = ['opinion', 'opinión', 'columna', 'columnista', 'editorial', 'analisis', 'análisis'];
 
@@ -139,32 +140,83 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
   const usedUrls = new Set(alreadyShownUrls);
   const results  = [];
 
+  // Pre-armar la lista de tópicos oficiales para que la validación sea rápida
+  const officialTopics = new Set([
+    ...ALL_CATEGORIES,
+    ...Object.keys(TOPIC_TO_CATEGORY),
+    ...Object.values(TOPIC_TO_CATEGORY)
+  ]);
+
   for (const rawTopic of topics) {
     const topic = String(rawTopic || '').trim();
     if (!topic) continue;
 
-    // Intentar encontrar artículo para el topic específico
-    let candidates = await findCandidatesForTopic(topic, perTopicLimit);
-    let bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
+    const isOfficial = officialTopics.has(topic);
+    
+    let bestUnused = null;
     let usedFallback = false;
     let fallbackCategory = null;
 
-    // Si no hay artículo del topic, hacer fallback a la categoría padre
-    if (!bestUnused) {
-      const category = TOPIC_TO_CATEGORY[topic];
-      
-      if (category && category !== topic) {
-        // Buscar en la categoría padre
-        candidates = await findCandidatesForTopic(category, perTopicLimit);
-        bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
-        
-        if (bestUnused) {
-          usedFallback = true;
-          fallbackCategory = category;
-          console.warn(
-            `⚠️  No hay artículos para topic "${topic}". Usando del tema padre "${category}".`
-          );
+    if (isOfficial) {
+      // ============================================
+      // CAMINO A: TEMA OFICIAL (Búsqueda Tradicional)
+      // ============================================
+      let candidates = await findCandidatesForTopic(topic, perTopicLimit);
+      bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
+
+      // Si no hay artículo del topic exacto, hacer fallback manual a la categoría padre
+      if (!bestUnused) {
+        const category = TOPIC_TO_CATEGORY[topic];
+        if (category && category !== topic) {
+          candidates = await findCandidatesForTopic(category, perTopicLimit);
+          bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
+          
+          if (bestUnused) {
+            usedFallback = true;
+            fallbackCategory = category;
+          }
         }
+      }
+    } else {
+      // ============================================
+      // CAMINO B: TEMA LIBRE (Búsqueda Vectorial)
+      // ============================================
+      try {
+        // Pedimos el doble del límite para tener margen y filtrar las repetidas
+        const semanticCandidates = await searchArticlesBySimilarityAtlas(topic, { 
+          limit: perTopicLimit * 2 
+        });
+
+        const usableSemantic = semanticCandidates.filter(a => isUsableDigestArticle(a, usedUrls));
+
+        if (usableSemantic.length > 0) {
+          const bestMatch = usableSemantic[0];
+          
+          // Umbral de similitud (0.80 suele ser bueno en text-embedding-3-small)
+          if (bestMatch.score >= 0.80) {
+            bestUnused = bestMatch;
+            usedFallback = false;
+          } else {
+            // El score es bajo: la noticia no trata de lo que pidió el usuario.
+            // Extraemos su categoría oficial para darle algo relacionado en su lugar.
+            fallbackCategory = bestMatch.topic || bestMatch.category || 'Cultura y Vida';
+            
+            let candidates = await findCandidatesForTopic(fallbackCategory, perTopicLimit);
+            bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
+            usedFallback = true;
+            
+            console.warn(`⚠️  Score semántico bajo (${bestMatch.score.toFixed(2)}) para "${topic}". Hacemos fallback a "${fallbackCategory}".`);
+          }
+        } else {
+          // Atlas no devolvió nada
+          fallbackCategory = 'Cultura y Vida';
+          let candidates = await findCandidatesForTopic(fallbackCategory, perTopicLimit);
+          bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
+          usedFallback = true;
+        }
+      } catch (error) {
+        console.error(`❌ Error en búsqueda semántica para "${topic}":`, error);
+        usedFallback = true;
       }
     }
 

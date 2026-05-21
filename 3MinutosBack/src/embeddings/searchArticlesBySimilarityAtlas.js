@@ -63,6 +63,17 @@ async function searchArticlesBySimilarityAtlas(query, options = {}) {
         importanceScore: 1,
         importanceLevel: 1,
         publishedAt: 1,
+        topic: 1,
+        category: 1,
+        imageUrl: 1,
+        neutralTitle: 1,
+        neutralLead: 1,
+        neutralSummary: 1,
+        rawSummary: 1,
+        contentSnippet: 1,
+        neutralityScore: 1,
+        politicalBiasRisk: 1,
+        curationStatus: 1,
         score: { $meta: 'vectorSearchScore' },
       },
     },
@@ -70,12 +81,12 @@ async function searchArticlesBySimilarityAtlas(query, options = {}) {
 
   const results = await Article.aggregate(pipeline);
 
-const reranked = results.map((article) => ({
-  ...article,
-  finalScore: computeFinalScore(article),
-}));
+  const reranked = results.map((article) => ({
+    ...article,
+    finalScore: computeFinalScore(article),
+  }));
 
-reranked.sort((a, b) => b.finalScore - a.finalScore);
+  reranked.sort((a, b) => b.finalScore - a.finalScore);
   return reranked.slice(0, limit);
 }
 

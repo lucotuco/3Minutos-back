@@ -182,7 +182,6 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
       // CAMINO B: TEMA LIBRE (Búsqueda Vectorial)
       // ============================================
       try {
-        // Pedimos el doble del límite para tener margen y filtrar las repetidas
         const semanticCandidates = await searchArticlesBySimilarityAtlas(topic, { 
           limit: perTopicLimit * 2 
         });
@@ -192,23 +191,23 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
         if (usableSemantic.length > 0) {
           const bestMatch = usableSemantic[0];
           
-          // Umbral de similitud (0.80 suele ser bueno en text-embedding-3-small)
-          if (bestMatch.score >= 0.80) {
+          // Log para debuguear y ver qué score realmente tira Atlas
+          console.log(`🔍 [Tema Libre] "${topic}" -> Match: "${bestMatch.title}" | Score: ${bestMatch.score?.toFixed(3)} | Topic Real: ${bestMatch.topic || bestMatch.category}`);
+          
+          // Bajamos el umbral a 0.55
+          if (bestMatch.score >= 0.55) {
             bestUnused = bestMatch;
             usedFallback = false;
           } else {
-            // El score es bajo: la noticia no trata de lo que pidió el usuario.
-            // Extraemos su categoría oficial para darle algo relacionado en su lugar.
             fallbackCategory = bestMatch.topic || bestMatch.category || 'Cultura y Vida';
             
             let candidates = await findCandidatesForTopic(fallbackCategory, perTopicLimit);
             bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
             usedFallback = true;
             
-            console.warn(`⚠️  Score semántico bajo (${bestMatch.score.toFixed(2)}) para "${topic}". Hacemos fallback a "${fallbackCategory}".`);
+            console.warn(`⚠️  Score semántico bajo (${bestMatch.score?.toFixed(2)}) para "${topic}". Fallback a "${fallbackCategory}".`);
           }
         } else {
-          // Atlas no devolvió nada
           fallbackCategory = 'Cultura y Vida';
           let candidates = await findCandidatesForTopic(fallbackCategory, perTopicLimit);
           bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));

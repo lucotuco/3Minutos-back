@@ -57,6 +57,7 @@ async function searchArticlesBySimilarityAtlas(query, options = {}) {
         _id: 1,
         title: 1,
         url: 1,
+        sourceName: 1,
         section: 1,
         region: 1,
         tags: 1,

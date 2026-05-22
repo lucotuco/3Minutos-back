@@ -81,8 +81,8 @@ function isUsableDigestArticle(article, usedUrls) {
 }
 
 async function findCandidatesForTopic(topic, limit) {
-  // 72hs de ventana para tener suficiente volumen
-  const cutoff = new Date(Date.now() - 72 * 60 * 60 * 1000);
+  // 48hs de ventana para tener suficiente volumen
+  const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
 
   const isMainCategory = ALL_CATEGORIES.includes(topic);
 
@@ -194,8 +194,8 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
           // Log para debuguear y ver qué score realmente tira Atlas
           console.log(`🔍 [Tema Libre] "${topic}" -> Match: "${bestMatch.title}" | Score: ${bestMatch.score?.toFixed(3)} | Topic Real: ${bestMatch.topic || bestMatch.category}`);
           
-          // Bajamos el umbral a 0.55
-          if (bestMatch.score >= 0.55) {
+          // Bajamos el umbral a 0.68
+          if (bestMatch.score >= 0.68) {
             bestUnused = bestMatch;
             usedFallback = false;
           } else {

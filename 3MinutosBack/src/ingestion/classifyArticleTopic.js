@@ -1,24 +1,23 @@
-// src/ingestion/classifyArticleTopic.js
 const { openai } = require('../config/openai');
 
 const CATEGORIES = {
-  'Política':       ['Gobierno Nacional', 'Justicia y Corrupción', 'Elecciones', 'Política Provincial', 'Seguridad'],
-  'Economía':       ['Dólar e Inflación', 'Mercados', 'Empresas y Negocios', 'Trabajo y Salarios', 'Criptomonedas'],
-  'Mundo':          ['EEUU', 'Medio Oriente', 'Europa', 'América Latina', 'Salud Global'],
-  'Deportes':       ['Fútbol Local', 'Fútbol Internacional', 'Mundial 2026', 'Básquet', 'Tenis', 'Otros Deportes'],
-  'Sociedad':       ['Salud', 'Educación', 'Clima y Ambiente', 'Género', 'Seguridad Ciudadana'],
-  'Tecnología':     ['Inteligencia Artificial', 'Ciencia y Espacio', 'Gadgets', 'Internet'],
-  'Cultura y Vida': ['Cine y Series', 'Música', 'Turismo y Viajes', 'Libros', 'Autos', 'Bienestar'],
+  'Política':       ['Gobierno Nacional', 'Justicia', 'Elecciones', 'Educación', 'Seguridad'],
+  'Economía':       ['Dólar y Mercados', 'Inflación y Consumo', 'Empresas y Negocios', 'Inversiones', 'Emprendedores'],
+  'Internacional':  ['EEUU', 'Medio Oriente', 'Europa', 'América Latina', 'Conflictos', 'Geopolítica'],
+  'Deportes':       ['Fútbol', 'Mundial 2026', 'Básquet', 'Tenis', 'Rugby'],
+  'Sociedad':       ['Salud', 'Bienestar', 'Clima y Ambiente', 'Historias Humanas', 'Tendencias Y Vida'],
+  'Tecnología':     ['Inteligencia Artificial', 'Ciencia y Espacio', 'Apps y Redes', 'Innovación', 'Videojuegos'],
+  'Entretenimiento/Cultura': ['Cine y Series', 'Música', 'Turismo y Viajes', 'Streaming', 'Autos', 'Viral y Trending','Teatro y Literatura'],
 };
 
 const DEFAULT_TOPIC_PER_CATEGORY = {
   'Política':       'Política',
   'Economía':       'Economía',
-  'Mundo':          'Mundo',
+  'Internacional':  'Internacional',
   'Deportes':       'Deportes',
   'Sociedad':       'Sociedad',
   'Tecnología':     'Tecnología',
-  'Cultura y Vida': 'Cultura y Vida',
+  'Entretenimiento/Cultura': 'Entretenimiento/Cultura',
 };
 
 const ALL_CATEGORIES = Object.keys(CATEGORIES);
@@ -57,21 +56,20 @@ REGLAS ESTRICTAS:
 - NUNCA inventes un subtema que no esté en la lista.
 
 REGLAS DE CLASIFICACIÓN PARA ARGENTINA:
-- Clubes argentinos (Boca, River, Racing, San Lorenzo, Huracán, Belgrano, etc.) o torneos locales (Apertura, Clausura, Copa Argentina, Sudamericana, Libertadores) → topic: "Fútbol Local"
-- Fútbol europeo, Champions League, ligas europeas → topic: "Fútbol Internacional"
-- Dólar, tipo de cambio, blue, MEP, CCL, cepo, reservas BCRA → topic: "Dólar e Inflación"
-- ADRs, bonos, acciones, riesgo país, Wall Street, bolsa → topic: "Mercados"
-- Empresas, PyMES, exportaciones, negocios corporativos, YPF, energía → topic: "Empresas y Negocios"
-- Milei, Casa Rosada, Adorni, gabinete, decretos del Ejecutivo → topic: "Gobierno Nacional"
-- Gobernadores, intendentes, legislaturas provinciales, coparticipación → topic: "Política Provincial"
-- Corte Suprema, juicios, causas penales, corrupción → topic: "Justicia y Corrupción"
-- Sustentabilidad, cambio climático, medio ambiente → topic: "Clima y Ambiente"
-- Salud pública, hospitales, vacunas, enfermedades (Argentina) → topic: "Salud"
-- Brotes, pandemias, salud mundial → topic: "Salud Global"
-- Moda, hogar, mascotas, gastronomía, vinos, psicología cotidiana, recetas, feng shui → topic: "Bienestar"
-- Turismo, viajes, destinos, hoteles → topic: "Turismo y Viajes"
-- Series, películas, streaming (Netflix, Prime, Disney+) → topic: "Cine y Series"
-- Conciertos, artistas musicales → topic: "Música"`;
+- Fútbol (clubes locales, Europa, torneos, etc.) → topic: "Fútbol"
+- Dólar, blue, MEP, CCL, reservas, bolsa, acciones, riesgo país → topic: "Dólar y Mercados"
+- Precios, inflación, IPC, consumo, aumentos → topic: "Inflación y Consumo"
+- Empresas, PyMES, exportaciones, negocios corporativos → topic: "Empresas y Negocios"
+- Milei, Casa Rosada, Adorni, decretos del Ejecutivo → topic: "Gobierno Nacional"
+- Corte Suprema, juicios, causas penales, tribunales → topic: "Justicia"
+- Escuelas, universidades, paros docentes, políticas educativas → topic: "Educación"
+- Asesinatos, robos, policía, inseguridad → topic: "Seguridad"
+- Salud mental, nutrición, fitness, calidad de vida → topic: "Bienestar"
+- Historias de vida, relatos personales inspiradores, solidaridad → topic: "Historias Humanas"
+- Moda, diseño, estilo de vida, hábitos sociales modernos → topic: "Tendencias Y Vida"
+- Netflix, Prime, Disney+, plataformas digitales → topic: "Streaming"
+- Influencers, memes, redes sociales, contenido viral, TikTok → topic: "Viral y Trending"
+- Guerras, tensiones militares o diplomáticas entre países → topic: "Conflictos" o "Geopolítica"`;
 }
 
 function findClosestTopic(category, rawTopic) {
@@ -120,24 +118,20 @@ async function classifyArticleTopic(article = {}) {
   const category = String(parsed.category || '').trim();
   const topic    = String(parsed.topic    || '').trim();
 
-  // Categoría inválida → error real
   if (!ALL_CATEGORIES.includes(category)) {
     throw new Error(`Invalid category: "${category}"`);
   }
 
-  // Topic correcto en la categoría correcta → perfecto
   if (CATEGORIES[category].includes(topic)) {
     return { category, topic };
   }
 
-  // Topic válido pero en categoría incorrecta → buscar la categoría correcta
   const correctCategory = ALL_CATEGORIES.find((cat) => CATEGORIES[cat].includes(topic));
   if (correctCategory) {
     console.warn(`⚠️  Topic "${topic}" movido de "${category}" → "${correctCategory}"`);
     return { category: correctCategory, topic };
   }
 
-  // Topic realmente inválido → fallback
   const fallback = findClosestTopic(category, topic);
   console.warn(`⚠️  Topic inválido "${topic}" en "${category}" → fallback: "${fallback}"`);
   return { category, topic: fallback };

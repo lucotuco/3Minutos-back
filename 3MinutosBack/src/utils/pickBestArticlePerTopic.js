@@ -8,41 +8,43 @@ const OPINION_KEYWORDS = ['opinion', 'opinión', 'columna', 'columnista', 'edito
 // Mapeo de topic → categoría padre
 const TOPIC_TO_CATEGORY = {
   'Gobierno Nacional': 'Política',
-  'Justicia y Corrupción': 'Política',
+  'Justicia': 'Política',
   'Elecciones': 'Política',
-  'Política Provincial': 'Política',
+  'Educación': 'Política',
   'Seguridad': 'Política',
-  'Dólar e Inflación': 'Economía',
-  'Mercados': 'Economía',
+  'Dólar y Mercados': 'Economía',
+  'Inflación y Consumo': 'Economía',
   'Empresas y Negocios': 'Economía',
-  'Trabajo y Salarios': 'Economía',
-  'Criptomonedas': 'Economía',
-  'EEUU': 'Mundo',
-  'Medio Oriente': 'Mundo',
-  'Europa': 'Mundo',
-  'América Latina': 'Mundo',
-  'Salud Global': 'Mundo',
-  'Fútbol Local': 'Deportes',
-  'Fútbol Internacional': 'Deportes',
+  'Inversiones': 'Economía',
+  'Emprendedores': 'Economía',
+  'EEUU': 'Internacional',
+  'Medio Oriente': 'Internacional',
+  'Europa': 'Internacional',
+  'América Latina': 'Internacional',
+  'Conflictos': 'Internacional',
+  'Geopolítica': 'Internacional',
+  'Fútbol': 'Deportes',
   'Mundial 2026': 'Deportes',
   'Básquet': 'Deportes',
   'Tenis': 'Deportes',
-  'Otros Deportes': 'Deportes',
+  'Rugby': 'Deportes',
   'Salud': 'Sociedad',
-  'Educación': 'Sociedad',
+  'Bienestar': 'Sociedad',
   'Clima y Ambiente': 'Sociedad',
-  'Género': 'Sociedad',
-  'Seguridad Ciudadana': 'Sociedad',
+  'Historias Humanas': 'Sociedad',
+  'Tendencias Y Vida': 'Sociedad',
   'Inteligencia Artificial': 'Tecnología',
   'Ciencia y Espacio': 'Tecnología',
-  'Gadgets': 'Tecnología',
-  'Internet': 'Tecnología',
-  'Cine y Series': 'Cultura y Vida',
-  'Música': 'Cultura y Vida',
-  'Turismo y Viajes': 'Cultura y Vida',
-  'Libros': 'Cultura y Vida',
-  'Autos': 'Cultura y Vida',
-  'Bienestar': 'Cultura y Vida',
+  'Apps y Redes': 'Tecnología',
+  'Innovación': 'Tecnología',
+  'Videojuegos': 'Tecnología',
+  'Cine y Series': 'Entretenimiento/Cultura',
+  'Música': 'Entretenimiento/Cultura',
+  'Turismo y Viajes': 'Entretenimiento/Cultura',
+  'Streaming': 'Entretenimiento/Cultura',
+  'Autos': 'Entretenimiento/Cultura',
+  'Viral y Trending': 'Entretenimiento/Cultura',
+  'Teatro y Literatura': 'Entretenimiento/Cultura',
 };
 
 function normalizeText(value) {
@@ -199,7 +201,7 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
             bestUnused = bestMatch;
             usedFallback = false;
           } else {
-            fallbackCategory = bestMatch.topic || bestMatch.category || 'Cultura y Vida';
+            fallbackCategory = bestMatch.topic || bestMatch.category || 'Entretenimiento/Cultura';
             
             let candidates = await findCandidatesForTopic(fallbackCategory, perTopicLimit);
             bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
@@ -208,7 +210,7 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
             console.warn(`⚠️  Score semántico bajo (${bestMatch.score?.toFixed(2)}) para "${topic}". Fallback a "${fallbackCategory}".`);
           }
         } else {
-          fallbackCategory = 'Cultura y Vida';
+          fallbackCategory = 'Entretenimiento/Cultura';
           let candidates = await findCandidatesForTopic(fallbackCategory, perTopicLimit);
           bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
           usedFallback = true;

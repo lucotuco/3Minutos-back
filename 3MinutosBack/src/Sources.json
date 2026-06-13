@@ -142,538 +142,1265 @@
     "country": "ar",
     "priority": 5,
     "active": true
+  },
+  {
+    "name": "Ole Lo Ultimo",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/ultimas-noticias/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 9,
+    "active": true
+  },
+  {
+    "name": "Ole Equipos",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/equipos/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 7,
+    "active": true
+  },
+  {
+    "name": "Ole Boca",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/boca-juniors/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 8,
+    "active": true
+  },
+  {
+    "name": "Ole River",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/river-plate/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 8,
+    "active": true
+  },
+  {
+    "name": "Ole San Lorenzo",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/san-lorenzo/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 7,
+    "active": true
+  },
+  {
+    "name": "Ole Racing",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/racing/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 7,
+    "active": true
+  },
+  {
+    "name": "Ole Independiente",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/independiente/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 7,
+    "active": true
+  },
+  {
+    "name": "Ole Huracan",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/huracan/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 5,
+    "active": true
+  },
+  {
+    "name": "Ole Velez",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/velez/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 5,
+    "active": true
+  },
+  {
+    "name": "Ole Primera Division",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/futbol-primera/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 8,
+    "active": true
+  },
+  {
+    "name": "Ole Ascenso",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/futbol-ascenso/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 5,
+    "active": true
+  },
+  {
+    "name": "Ole Nacional B",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/futbol-ascenso/b-nacional/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 4,
+    "active": true
+  },
+  {
+    "name": "Ole Primera B",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/futbol-ascenso/primera-b/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 3,
+    "active": true
+  },
+  {
+    "name": "Ole Primera C",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/futbol-ascenso/primera-c/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 3,
+    "active": true
+  },
+  {
+    "name": "Ole Primera D",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/futbol-ascenso/primera-d/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Ole Internacional",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/futbol-internacional/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 6,
+    "active": true
+  },
+  {
+    "name": "Ole Libertadores",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/futbol-internacional/libertadores/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 6,
+    "active": true
+  },
+  {
+    "name": "Ole Sudamericana",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/futbol-internacional/sudamericana/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 5,
+    "active": true
+  },
+  {
+    "name": "Ole Liga Espana",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/futbol-internacional/espana/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 4,
+    "active": true
+  },
+  {
+    "name": "Ole Liga Italia",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/futbol-internacional/italia/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 4,
+    "active": true
+  },
+  {
+    "name": "Ole Liga Francia",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/futbol-internacional/francia/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 4,
+    "active": true
+  },
+  {
+    "name": "Ole Champions",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/futbol-internacional/champions/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 5,
+    "active": true
+  },
+  {
+    "name": "Ole Seleccion",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/seleccion/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 8,
+    "active": true
+  },
+  {
+    "name": "Ole Messi",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/messi",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 6,
+    "active": true
+  },
+  {
+    "name": "Ole NBA",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/nba/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 4,
+    "active": false
+  },
+  {
+    "name": "Ole Basquet",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/basquet/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 4,
+    "active": true
+  },
+  {
+    "name": "Ole Tenis",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/tenis/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 4,
+    "active": true
+  },
+  {
+    "name": "Ole Autos",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/autos/",
+    "category": "autos",
+    "country": "ar",
+    "priority": 3,
+    "active": true
+  },
+  {
+    "name": "Ole Rugby",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/rugby/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 4,
+    "active": true
+  },
+  {
+    "name": "Ole Polideportivo",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/poli/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 3,
+    "active": true
+  },
+  {
+    "name": "Ole Fuera de Juego",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/fuera-de-juego/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Ole Running",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/running/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Ole Artes Marciales",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/artes-marciales/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Ole Boxeo",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/boxeo/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Ole Opinion",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/opinion/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 1,
+    "active": false
+  },
+  {
+    "name": "Ole Copa Argentina",
+    "type": "rss",
+    "url": "http://www.ole.com.ar/rss/copa-argentina/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 5,
+    "active": true
+  },
+  {
+    "name": "Clarin Lo Ultimo",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/lo-ultimo/",
+    "category": "general",
+    "country": "ar",
+    "priority": 9,
+    "active": true
+  },
+  {
+    "name": "Clarin Politica",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/politica/",
+    "category": "politica",
+    "country": "ar",
+    "priority": 8,
+    "active": true
+  },
+  {
+    "name": "Clarin Mundo",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/mundo/",
+    "category": "mundo",
+    "country": "ar",
+    "priority": 7,
+    "active": true
+  },
+  {
+    "name": "Clarin Sociedad",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/sociedad/",
+    "category": "general",
+    "country": "ar",
+    "priority": 6,
+    "active": true
+  },
+  {
+    "name": "Clarin Policiales",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/policiales/",
+    "category": "general",
+    "country": "ar",
+    "priority": 6,
+    "active": true
+  },
+  {
+    "name": "Clarin Ciudades",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/ciudades/",
+    "category": "general",
+    "country": "ar",
+    "priority": 5,
+    "active": true
+  },
+  {
+    "name": "Clarin Opinion",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/opinion/",
+    "category": "general",
+    "country": "ar",
+    "priority": 3,
+    "active": false
+  },
+  {
+    "name": "Clarin Cultura",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/cultura/",
+    "category": "entretenimiento",
+    "country": "ar",
+    "priority": 4,
+    "active": true
+  },
+  {
+    "name": "Clarin Rural",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/rural/",
+    "category": "economia",
+    "country": "ar",
+    "priority": 4,
+    "active": true
+  },
+  {
+    "name": "Clarin Economia",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/economia/",
+    "category": "economia",
+    "country": "ar",
+    "priority": 8,
+    "active": true
+  },
+  {
+    "name": "Clarin Tecnologia",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/tecnologia/",
+    "category": "tecnologia",
+    "country": "ar",
+    "priority": 6,
+    "active": true
+  },
+  {
+    "name": "Clarin Internacional",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/internacional/",
+    "category": "mundo",
+    "country": "ar",
+    "priority": 5,
+    "active": true
+  },
+  {
+    "name": "Clarin Viva",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/viva/",
+    "category": "lifestyle",
+    "country": "ar",
+    "priority": 4,
+    "active": true
+  },
+  {
+    "name": "Clarin Futbol",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/deportes/",
+    "category": "deportes",
+    "country": "ar",
+    "priority": 7,
+    "active": true
+  },
+  {
+    "name": "Clarin TV",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/espectaculos/tv/",
+    "category": "entretenimiento",
+    "country": "ar",
+    "priority": 4,
+    "active": true
+  },
+  {
+    "name": "Clarin Cine",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/espectaculos/cine/",
+    "category": "entretenimiento",
+    "country": "ar",
+    "priority": 5,
+    "active": true
+  },
+  {
+    "name": "Clarin Musica",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/espectaculos/musica/",
+    "category": "entretenimiento",
+    "country": "ar",
+    "priority": 5,
+    "active": true
+  },
+  {
+    "name": "Clarin Teatro",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/espectaculos/teatro/",
+    "category": "entretenimiento",
+    "country": "ar",
+    "priority": 3,
+    "active": true
+  },
+  {
+    "name": "Clarin Espectaculos",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/espectaculos/",
+    "category": "entretenimiento",
+    "country": "ar",
+    "priority": 6,
+    "active": true
+  },
+  {
+    "name": "Clarin Autos",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/autos/",
+    "category": "autos",
+    "country": "ar",
+    "priority": 4,
+    "active": true
+  },
+  {
+    "name": "Clarin Buena Vida",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/buena-vida/",
+    "category": "lifestyle",
+    "country": "ar",
+    "priority": 3,
+    "active": true
+  },
+  {
+    "name": "Clarin Viajes",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/viajes/",
+    "category": "lifestyle",
+    "country": "ar",
+    "priority": 4,
+    "active": true
+  },
+  {
+    "name": "Clarin ARQ",
+    "type": "rss",
+    "url": "https://www.clarin.com/rss/arq/",
+    "category": "lifestyle",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La República Economía",
+    "type": "rss",
+    "url": "https://larepublica.pe/rss/economia.xml",
+    "category": "economy",
+    "country": "pe",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La República Política",
+    "type": "rss",
+    "url": "https://larepublica.pe/rss/politica.xml",
+    "category": "politics",
+    "country": "pe",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La República Home",
+    "type": "rss",
+    "url": "https://larepublica.pe/rss/home.xml",
+    "category": "general",
+    "country": "pe",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La República Sociedad",
+    "type": "rss",
+    "url": "https://larepublica.pe/rss/sociedad.xml",
+    "category": "society",
+    "country": "pe",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La República Deportes",
+    "type": "rss",
+    "url": "https://larepublica.pe/rss/deportes.xml",
+    "category": "sports",
+    "country": "pe",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La República Espectáculos",
+    "type": "rss",
+    "url": "https://larepublica.pe/rss/espectaculos.xml",
+    "category": "entertainment",
+    "country": "pe",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La República Mundo",
+    "type": "rss",
+    "url": "https://larepublica.pe/rss/mundo.xml",
+    "category": "world",
+    "country": "pe",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "FayerWayer",
+    "type": "rss",
+    "url": "https://www.fayerwayer.com/arc/outboundfeeds/rss",
+    "category": "tech",
+    "country": "latam",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "G1 Globo",
+    "type": "rss",
+    "url": "https://g1.globo.com/rss/g1/",
+    "category": "general",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La Tercera",
+    "type": "rss",
+    "url": "https://www.latercera.com/arc/outboundfeeds/rss/?outputType=xml",
+    "category": "general",
+    "country": "cl",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El País Uruguay Latest",
+    "type": "rss",
+    "url": "https://www.elpais.com.uy/rss/latest",
+    "category": "general",
+    "country": "uy",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Perfil Política",
+    "type": "rss",
+    "url": "https://www.perfil.com/feed/politica",
+    "category": "politics",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Perfil Economía",
+    "type": "rss",
+    "url": "https://www.perfil.com/feed/economia",
+    "category": "economy",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Perfil Sociedad",
+    "type": "rss",
+    "url": "https://www.perfil.com/feed/sociedad",
+    "category": "society",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Perfil Internacional",
+    "type": "rss",
+    "url": "https://www.perfil.com/feed/internacional",
+    "category": "world",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Perfil Clima",
+    "type": "rss",
+    "url": "https://www.perfil.com/feed/clima",
+    "category": "weather",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Perfil Bloomberg",
+    "type": "rss",
+    "url": "https://www.perfil.com/feed/bloomberg",
+    "category": "economy",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Perfil Empresas",
+    "type": "rss",
+    "url": "https://www.perfil.com/feed/empresas-y-protagonistas",
+    "category": "business",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Perfil Gaming",
+    "type": "rss",
+    "url": "https://www.perfil.com/feed/gaming",
+    "category": "gaming",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Perfil Home",
+    "type": "rss",
+    "url": "https://www.perfil.com/feed/",
+    "category": "general",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Infobae Home",
+    "type": "rss",
+    "url": "https://www.infobae.com/arc/outboundfeeds/rss/",
+    "category": "general",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Infobae Política",
+    "type": "rss",
+    "url": "https://www.infobae.com/arc/outboundfeeds/rss/category/politica/?outputType=xml",
+    "category": "politics",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Infobae Deportes",
+    "type": "rss",
+    "url": "https://www.infobae.com/arc/outboundfeeds/rss/category/deportes/?outputType=xml",
+    "category": "sports",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Infobae Tecno",
+    "type": "rss",
+    "url": "https://www.infobae.com/arc/outboundfeeds/rss/category/tecno/?outputType=xml",
+    "category": "tech",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La Nación Política",
+    "type": "rss",
+    "url": "https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/politica/?outputType=xml",
+    "category": "politics",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La Nación Economía",
+    "type": "rss",
+    "url": "https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/economia/?outputType=xml",
+    "category": "economy",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La Nación Mundo",
+    "type": "rss",
+    "url": "https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/el-mundo/?outputType=xml",
+    "category": "world",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La Nación Espectáculos",
+    "type": "rss",
+    "url": "https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/espectaculos/?outputType=xml",
+    "category": "entertainment",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La Nación Sociedad",
+    "type": "rss",
+    "url": "https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/sociedad/?outputType=xml",
+    "category": "society",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La Nación Tecnología",
+    "type": "rss",
+    "url": "https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/tecnologia/?outputType=xml",
+    "category": "tech",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Economista Últimas Noticias",
+    "type": "rss",
+    "url": "https://eleconomista.com.ar/ultimas-noticias/feed/",
+    "category": "general",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Economista Economía",
+    "type": "rss",
+    "url": "https://eleconomista.com.ar/economia/feed/",
+    "category": "economy",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Economista Política",
+    "type": "rss",
+    "url": "https://eleconomista.com.ar/politica/feed/",
+    "category": "politics",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Intransigente Home",
+    "type": "rss",
+    "url": "https://elintransigente.com/feed/",
+    "category": "general",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Intransigente Política",
+    "type": "rss",
+    "url": "https://elintransigente.com/category/politica/feed/",
+    "category": "politics",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Intransigente Economía",
+    "type": "rss",
+    "url": "https://elintransigente.com/category/economia/feed/",
+    "category": "economy",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Buenos Aires Times",
+    "type": "rss",
+    "url": "https://www.batimes.com.ar/feed",
+    "category": "general",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Cronista News",
+    "type": "rss",
+    "url": "https://www.cronista.com/files/rss/news.xml",
+    "category": "general",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Cronista Economía y Política",
+    "type": "rss",
+    "url": "https://www.cronista.com/files/rss/economia-politica.xml",
+    "category": "economy",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La Política Online Últimas Noticias",
+    "type": "rss",
+    "url": "https://www.lapoliticaonline.com/files/rss/ultimasnoticias.xml",
+    "category": "general",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La Política Online Política",
+    "type": "rss",
+    "url": "https://www.lapoliticaonline.com/files/rss/politica.xml",
+    "category": "politics",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La Política Online Economía",
+    "type": "rss",
+    "url": "https://www.lapoliticaonline.com/files/rss/economia.xml",
+    "category": "economy",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "BBC News Brasil",
+    "type": "rss",
+    "url": "https://feeds.bbci.co.uk/portuguese/rss.xml",
+    "category": "general",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "G1 Globo Economia",
+    "type": "rss",
+    "url": "https://g1.globo.com/rss/g1/economia/",
+    "category": "economy",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "G1 Globo Política",
+    "type": "rss",
+    "url": "https://g1.globo.com/rss/g1/politica/",
+    "category": "politics",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "O Globo Home",
+    "type": "rss",
+    "url": "https://oglobo.globo.com/rss/oglobo",
+    "category": "general",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "O Globo Economia",
+    "type": "rss",
+    "url": "https://oglobo.globo.com/rss/oglobo/economia",
+    "category": "economy",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "O Globo Esportes",
+    "type": "rss",
+    "url": "https://oglobo.globo.com/rss/oglobo/esportes",
+    "category": "sports",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Globo Esporte (GE)",
+    "type": "rss",
+    "url": "https://ge.globo.com/rss/ge",
+    "category": "sports",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Globo Esporte Futebol",
+    "type": "rss",
+    "url": "https://ge.globo.com/rss/ge/futebol/",
+    "category": "sports",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Extra",
+    "type": "rss",
+    "url": "https://extra.globo.com/rss/extra",
+    "category": "general",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Extra Esporte",
+    "type": "rss",
+    "url": "https://extra.globo.com/rss/extra/esporte",
+    "category": "sports",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Estadão Geral",
+    "type": "rss",
+    "url": "https://www.estadao.com.br/arc/outboundfeeds/feeds/rss/sections/geral/",
+    "category": "general",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Estadão Economia",
+    "type": "rss",
+    "url": "https://www.estadao.com.br/arc/outboundfeeds/feeds/rss/sections/economia/",
+    "category": "economy",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Estadão Política",
+    "type": "rss",
+    "url": "https://www.estadao.com.br/arc/outboundfeeds/feeds/rss/sections/politica/",
+    "category": "politics",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "JC UOL Últimas",
+    "type": "rss",
+    "url": "https://jc.uol.com.br/ultimas/rss.xml",
+    "category": "general",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "JC UOL Economia",
+    "type": "rss",
+    "url": "https://jc.uol.com.br/economia/rss.xml",
+    "category": "economy",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "JC UOL Política",
+    "type": "rss",
+    "url": "https://jc.uol.com.br/politica/rss.xml",
+    "category": "politics",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Correio 24 Horas",
+    "type": "rss",
+    "url": "https://www.correio24horas.com.br/rss",
+    "category": "general",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Correio 24 Horas Esportes",
+    "type": "rss",
+    "url": "https://www.correio24horas.com.br/rss/esportes",
+    "category": "sports",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "A Tarde",
+    "type": "rss",
+    "url": "https://atarde.com.br/rss",
+    "category": "general",
+    "country": "br",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Observador Último Momento",
+    "type": "rss",
+    "url": "https://www.elobservador.com.uy/rss/pages/ultimo-momento.xml",
+    "category": "general",
+    "country": "uy",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Observador Nacional",
+    "type": "rss",
+    "url": "https://www.elobservador.com.uy/rss/pages/nacional.xml",
+    "category": "national",
+    "country": "uy",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Observador Referí",
+    "type": "rss",
+    "url": "https://www.elobservador.com.uy/rss/pages/referi.xml",
+    "category": "sports",
+    "country": "uy",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Subrayado Home",
+    "type": "rss",
+    "url": "https://www.subrayado.com.uy/rss/pages/home.xml",
+    "category": "general",
+    "country": "uy",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Subrayado Política",
+    "type": "rss",
+    "url": "https://www.subrayado.com.uy/rss/pages/politica.xml",
+    "category": "politics",
+    "country": "uy",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Subrayado Sociedad",
+    "type": "rss",
+    "url": "https://www.subrayado.com.uy/rss/pages/sociedad.xml",
+    "category": "society",
+    "country": "uy",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Subrayado Deportes",
+    "type": "rss",
+    "url": "https://www.subrayado.com.uy/rss/pages/deportes.xml",
+    "category": "sports",
+    "country": "uy",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Subrayado Internacionales",
+    "type": "rss",
+    "url": "https://www.subrayado.com.uy/rss/pages/internacionales.xml",
+    "category": "world",
+    "country": "uy",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Montevideo Portal 58",
+    "type": "rss",
+    "url": "https://www.montevideo.com.uy/anxml.aspx?58",
+    "category": "general",
+    "country": "uy",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Montevideo Portal 59",
+    "type": "rss",
+    "url": "https://www.montevideo.com.uy/anxml.aspx?59",
+    "category": "general",
+    "country": "uy",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Financiero Home",
+    "type": "rss",
+    "url": "https://www.elfinanciero.com.mx/arc/outboundfeeds/rss/?outputType=xml",
+    "category": "economy",
+    "country": "mx",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Financiero Economía",
+    "type": "rss",
+    "url": "https://www.elfinanciero.com.mx/arc/outboundfeeds/rss/category/economia/?outputType=xml",
+    "category": "economy",
+    "country": "mx",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Financiero Nacional",
+    "type": "rss",
+    "url": "https://www.elfinanciero.com.mx/arc/outboundfeeds/rss/category/nacional/?outputType=xml",
+    "category": "national",
+    "country": "mx",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Reforma Portada",
+    "type": "rss",
+    "url": "https://www.reforma.com/rss/portada.xml",
+    "category": "general",
+    "country": "mx",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Reforma Nacional",
+    "type": "rss",
+    "url": "https://www.reforma.com/rss/nacional.xml",
+    "category": "national",
+    "country": "mx",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Informador Últimas Noticias",
+    "type": "rss",
+    "url": "https://www.informador.mx/rss/ultimas-noticias.xml",
+    "category": "general",
+    "country": "mx",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Informador Deportes",
+    "type": "rss",
+    "url": "https://www.informador.mx/rss/deportes.xml",
+    "category": "sports",
+    "country": "mx",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Siglo de Torreón",
+    "type": "rss",
+    "url": "https://www.elsiglodetorreon.com.mx/index.xml",
+    "category": "general",
+    "country": "mx",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "The Guardian Mexico",
+    "type": "rss",
+    "url": "https://www.theguardian.com/world/mexico/rss",
+    "category": "world",
+    "country": "mx",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "SDP Noticias",
+    "type": "rss",
+    "url": "http://feeds.feedburner.com/SDPnoticiascom",
+    "category": "general",
+    "country": "mx",
+    "priority": 2,
+    "active": true
   }
-  ,
-{
-  "name": "Ole Lo Ultimo",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/ultimas-noticias/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 9,
-  "active": true
-},
-{
-  "name": "Ole Equipos",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/equipos/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 7,
-  "active": true
-},
-{
-  "name": "Ole Boca",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/boca-juniors/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 8,
-  "active": true
-},
-{
-  "name": "Ole River",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/river-plate/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 8,
-  "active": true
-},
-{
-  "name": "Ole San Lorenzo",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/san-lorenzo/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 7,
-  "active": true
-},
-{
-  "name": "Ole Racing",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/racing/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 7,
-  "active": true
-},
-{
-  "name": "Ole Independiente",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/independiente/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 7,
-  "active": true
-},
-{
-  "name": "Ole Huracan",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/huracan/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 5,
-  "active": true
-},
-{
-  "name": "Ole Velez",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/velez/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 5,
-  "active": true
-},
-{
-  "name": "Ole Primera Division",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/futbol-primera/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 8,
-  "active": true
-},
-{
-  "name": "Ole Ascenso",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/futbol-ascenso/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 5,
-  "active": true
-},
-{
-  "name": "Ole Nacional B",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/futbol-ascenso/b-nacional/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 4,
-  "active": true
-},
-{
-  "name": "Ole Primera B",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/futbol-ascenso/primera-b/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 3,
-  "active": true
-},
-{
-  "name": "Ole Primera C",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/futbol-ascenso/primera-c/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 3,
-  "active": true
-},
-{
-  "name": "Ole Primera D",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/futbol-ascenso/primera-d/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 2,
-  "active": true
-},
-{
-  "name": "Ole Internacional",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/futbol-internacional/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 6,
-  "active": true
-},
-{
-  "name": "Ole Libertadores",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/futbol-internacional/libertadores/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 6,
-  "active": true
-},
-{
-  "name": "Ole Sudamericana",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/futbol-internacional/sudamericana/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 5,
-  "active": true
-},
-{
-  "name": "Ole Liga Espana",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/futbol-internacional/espana/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 4,
-  "active": true
-},
-{
-  "name": "Ole Liga Italia",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/futbol-internacional/italia/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 4,
-  "active": true
-},
-{
-  "name": "Ole Liga Francia",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/futbol-internacional/francia/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 4,
-  "active": true
-},
-{
-  "name": "Ole Champions",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/futbol-internacional/champions/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 5,
-  "active": true
-},
-{
-  "name": "Ole Seleccion",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/seleccion/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 8,
-  "active": true
-},
-{
-  "name": "Ole Messi",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/messi",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 6,
-  "active": true
-},
-{
-  "name": "Ole NBA",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/nba/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 4,
-  "active": true
-},
-{
-  "name": "Ole Basquet",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/basquet/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 4,
-  "active": true
-},
-{
-  "name": "Ole Tenis",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/tenis/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 4,
-  "active": true
-},
-{
-  "name": "Ole Autos",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/autos/",
-  "category": "autos",
-  "country": "ar",
-  "priority": 3,
-  "active": true
-},
-{
-  "name": "Ole Rugby",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/rugby/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 4,
-  "active": true
-},
-{
-  "name": "Ole Polideportivo",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/poli/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 3,
-  "active": true
-},
-{
-  "name": "Ole Fuera de Juego",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/fuera-de-juego/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 2,
-  "active": true
-},
-{
-  "name": "Ole Running",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/running/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 2,
-  "active": true
-},
-{
-  "name": "Ole Artes Marciales",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/artes-marciales/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 2,
-  "active": true
-},
-{
-  "name": "Ole Boxeo",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/boxeo/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 2,
-  "active": true
-},
-{
-  "name": "Ole Opinion",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/opinion/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 1,
-  "active": false
-},
-{
-  "name": "Ole Copa Argentina",
-  "type": "rss",
-  "url": "http://www.ole.com.ar/rss/copa-argentina/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 5,
-  "active": true
-}
-,
-{
-  "name": "Clarin Lo Ultimo",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/lo-ultimo/",
-  "category": "general",
-  "country": "ar",
-  "priority": 9,
-  "active": true
-},
-{
-  "name": "Clarin Politica",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/politica/",
-  "category": "politica",
-  "country": "ar",
-  "priority": 8,
-  "active": true
-},
-{
-  "name": "Clarin Mundo",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/mundo/",
-  "category": "mundo",
-  "country": "ar",
-  "priority": 7,
-  "active": true
-},
-{
-  "name": "Clarin Sociedad",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/sociedad/",
-  "category": "general",
-  "country": "ar",
-  "priority": 6,
-  "active": true
-},
-{
-  "name": "Clarin Policiales",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/policiales/",
-  "category": "general",
-  "country": "ar",
-  "priority": 6,
-  "active": true
-},
-{
-  "name": "Clarin Ciudades",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/ciudades/",
-  "category": "general",
-  "country": "ar",
-  "priority": 5,
-  "active": true
-},
-{
-  "name": "Clarin Opinion",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/opinion/",
-  "category": "general",
-  "country": "ar",
-  "priority": 3,
-  "active": false
-},
-{
-  "name": "Clarin Cultura",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/cultura/",
-  "category": "entretenimiento",
-  "country": "ar",
-  "priority": 4,
-  "active": true
-},
-{
-  "name": "Clarin Rural",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/rural/",
-  "category": "economia",
-  "country": "ar",
-  "priority": 4,
-  "active": true
-},
-{
-  "name": "Clarin Economia",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/economia/",
-  "category": "economia",
-  "country": "ar",
-  "priority": 8,
-  "active": true
-},
-{
-  "name": "Clarin Tecnologia",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/tecnologia/",
-  "category": "tecnologia",
-  "country": "ar",
-  "priority": 6,
-  "active": true
-},
-{
-  "name": "Clarin Internacional",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/internacional/",
-  "category": "mundo",
-  "country": "ar",
-  "priority": 5,
-  "active": true
-},
-{
-  "name": "Clarin Viva",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/viva/",
-  "category": "lifestyle",
-  "country": "ar",
-  "priority": 4,
-  "active": true
-},
-{
-  "name": "Clarin Futbol",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/deportes/",
-  "category": "deportes",
-  "country": "ar",
-  "priority": 7,
-  "active": true
-},
-{
-  "name": "Clarin TV",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/espectaculos/tv/",
-  "category": "entretenimiento",
-  "country": "ar",
-  "priority": 4,
-  "active": true
-},
-{
-  "name": "Clarin Cine",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/espectaculos/cine/",
-  "category": "entretenimiento",
-  "country": "ar",
-  "priority": 5,
-  "active": true
-},
-{
-  "name": "Clarin Musica",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/espectaculos/musica/",
-  "category": "entretenimiento",
-  "country": "ar",
-  "priority": 5,
-  "active": true
-},
-{
-  "name": "Clarin Teatro",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/espectaculos/teatro/",
-  "category": "entretenimiento",
-  "country": "ar",
-  "priority": 3,
-  "active": true
-},
-{
-  "name": "Clarin Espectaculos",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/espectaculos/",
-  "category": "entretenimiento",
-  "country": "ar",
-  "priority": 6,
-  "active": true
-},
-{
-  "name": "Clarin Autos",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/autos/",
-  "category": "autos",
-  "country": "ar",
-  "priority": 4,
-  "active": true
-},
-{
-  "name": "Clarin Buena Vida",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/buena-vida/",
-  "category": "lifestyle",
-  "country": "ar",
-  "priority": 3,
-  "active": true
-},
-{
-  "name": "Clarin Viajes",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/viajes/",
-  "category": "lifestyle",
-  "country": "ar",
-  "priority": 4,
-  "active": true
-},
-{
-  "name": "Clarin ARQ",
-  "type": "rss",
-  "url": "https://www.clarin.com/rss/arq/",
-  "category": "lifestyle",
-  "country": "ar",
-  "priority": 2,
-  "active": true
-}
 ]

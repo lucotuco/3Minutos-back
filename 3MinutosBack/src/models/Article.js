@@ -207,6 +207,11 @@ const articleSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    imageUrl: { 
+    type: String, 
+    // Este es el FALLBACK por defecto a nivel de Base de Datos
+    default: "https://via.placeholder.com/800x400.png?text=Noticia+Sin+Imagen" 
+  },
   },
   {
     timestamps: true,

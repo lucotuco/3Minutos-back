@@ -1,70 +1,137 @@
-const Parser = require('rss-parser');
+const { normalizeText } = require('../../utils/normalizeText');
 
-// Configuramos el parser para que detecte etiquetas multimedia especiales en el XML
-const parser = new Parser({
-    customFields: {
-        item: [
-            ['media:content', 'mediaContent'],
-            ['enclosure', 'enclosure']
-        ]
-    }
-});
+const FALLBACK_IMAGE_URL = 'https://st2.depositphotos.com/1036149/5381/i/950/depositphotos_53811511-stock-illustration-duck-with-sunglasses.jpg'; 
 
-// Definimos la imagen por defecto en caso de que el RSS no traiga ninguna
-const FALLBACK_IMAGE_URL = "https://st2.depositphotos.com/1036149/5381/i/950/depositphotos_53811511-stock-illustration-duck-with-sunglasses.jpg";
+function extractImage(item = {}) {
+  let url = null;
 
-/**
- * Función auxiliar para buscar y extraer la URL de la imagen de un item del RSS
- */
-function extractImage(item) {
-    // 1. Prioridad: buscar en la etiqueta estándar <enclosure>
-    if (item.enclosure && item.enclosure.url) {
-        return item.enclosure.url;
+  if (item.reformaEnclosure) {
+    let url = typeof item.reformaEnclosure === 'string' ? item.reformaEnclosure.trim() : null;
+    if (url && url.startsWith('http')) return url;
+  }
+  // Función auxiliar para extraer URLs de diferentes estructuras de objetos XML
+  const getUrlFromObj = (obj) => {
+    if (!obj) return null;
+    
+    // Si el parser lo devuelve como un string directo (ej. Reforma)
+    if (typeof obj === 'string') {
+      const trimmed = obj.trim(); // Limpiamos espacios y saltos de línea
+      if (trimmed.startsWith('http')) return trimmed;
     }
     
-    // 2. Prioridad: buscar en la etiqueta <media:content> (muy común en portales grandes)
-    if (item.mediaContent && item.mediaContent.$ && item.mediaContent.$.url) {
-        return item.mediaContent.$.url;
+    // Si viene parseado de forma estándar
+    if (obj.url) return obj.url;
+    
+    // Si viene parseado por xml2js (los atributos caen dentro de un objeto $)
+    if (obj.$ && obj.$.url) return obj.$.url;
+    
+    // Si el valor está en el texto interior del nodo
+    if (obj._ && typeof obj._ === 'string') {
+      const trimmed = obj._.trim(); // Limpiamos espacios
+      if (trimmed.startsWith('http')) return trimmed;
     }
     
-    // 3. Prioridad: buscar un tag <img> renderizado dentro del HTML del contenido/descripción
-    const content = item.content || item.contentSnippet || item.description || "";
-    const imgRegex = /<img[^>]+src="([^">]+)"/i;
-    const match = content.match(imgRegex);
-    if (match && match[1]) {
+    return null;
+  };
+
+  // 1. Etiqueta <enclosure> (Ámbito, El País Uruguay, La Política Online, Reforma)
+  if (item.enclosure) {
+    url = Array.isArray(item.enclosure) ? getUrlFromObj(item.enclosure[0]) : getUrlFromObj(item.enclosure);
+    if (url) return url;
+  }
+
+  // 2. Etiqueta <media:content> (La Nación, FayerWayer, The Guardian, SDP Noticias, Clarín)
+  const mediaContent = item['media:content'] || item.mediaContent;
+  if (mediaContent) {
+    url = Array.isArray(mediaContent) ? getUrlFromObj(mediaContent[0]) : getUrlFromObj(mediaContent);
+    if (url) return url;
+  }
+
+  // 3. Etiqueta <media:thumbnail> (BBC News Brasil)
+  const mediaThumb = item['media:thumbnail'] || item.mediaThumbnail;
+  if (mediaThumb) {
+    url = Array.isArray(mediaThumb) ? getUrlFromObj(mediaThumb[0]) : getUrlFromObj(mediaThumb);
+    if (url) return url;
+  }
+
+  // 4. Etiqueta <image:image> -> <image:loc> (La República)
+  const imageImage = item['image:image'] || item.imageImage;
+  if (imageImage) {
+    let imgObj = Array.isArray(imageImage) ? imageImage[0] : imageImage;
+    let loc = imgObj['image:loc'] || imgObj.loc;
+    if (loc) {
+      if (Array.isArray(loc)) loc = loc[0];
+      if (typeof loc === 'string' && loc.startsWith('http')) return loc;
+      if (typeof loc === 'object' && loc._ && loc._.startsWith('http')) return loc._;
+    }
+  }
+
+  // 5. Buscar etiqueta <img> dentro de cualquier campo de texto/HTML (G1 Globo, El Economista, Infobae, Montevideo Portal)
+  const contentFields = [
+    item.content,
+    item['content:encoded'],
+    item.contentSnippet,
+    item.summary,
+    item.description
+  ];
+
+  for (let field of contentFields) {
+    let text = field;
+    if (Array.isArray(text)) text = text[0];
+    if (typeof text === 'object' && text !== null && text._) text = text._;
+    
+    if (typeof text === 'string' && text.trim().length > 0) {
+      // Regex súper tolerante a espacios, saltos de línea y distintos tipos de comillas
+      const imgRegex = /<img[^>]+src\s*=\s*["']([^"']+)["']/i;
+      const match = text.match(imgRegex);
+      if (match && match[1]) {
         return match[1];
+      }
     }
-    
-    // Si se agotan las opciones y no hay imagen, retorna el Fallback
-    return FALLBACK_IMAGE_URL;
+  }
+
+  return FALLBACK_IMAGE_URL;
 }
 
-/**
- * Función principal que descarga el RSS y formatea los artículos
- */
-async function fetchRssFeed(source) {
-    try {
-        const feed = await parser.parseURL(source.url);
-        
-        return feed.items.map(item => ({
-            title: item.title,
-            link: item.link,
-            description: item.contentSnippet || item.description,
-            content: item.content || item.description,
-            source: source.name,
-            category: source.category || 'general',
-            country: source.country || 'ar',
-            pubDate: item.pubDate ? new Date(item.pubDate) : new Date(),
-            // Llamamos a la función para extraer o asignar la imagen de fallback
-            imageUrl: extractImage(item)
-        }));
-    } catch (error) {
-        console.error(`Error procesando RSS ${source.url}:`, error.message);
-        // Retornamos un array vacío para que el proceso no se caiga si un feed falla
-        return [];
-    }
+function extractSummary(item = {}) {
+  return (
+    item.content ||
+    item['content:encoded'] ||
+    item.contentSnippet ||
+    item.summary ||
+    item.description ||
+    ''
+  );
+}
+
+function adaptRssArticle(item = {}, source = {}) {
+  const title = item.title || 'Sin título';
+  const url = item.link || '';
+  const rawSummary = extractSummary(item);
+
+  return {
+    sourceName: source.name || 'Fuente RSS',
+    sourceType: 'rss',
+    sourceUrl: source.url || '',
+    title,
+    url,
+    publishedAt: item.pubDate ? new Date(item.pubDate) : null,
+    category: source.category || 'general',
+    country: source.country || 'ar',
+    language: source.language || 'es',
+    author: item.creator || item.author || '',
+    rawSummary,
+    imageUrl: extractImage(item),
+    contentSnippet: item.contentSnippet || item.summary || item.description || '',
+    normalizedTitle: normalizeText(title),
+    _sourceMeta: {
+      type: 'rss',
+      source,
+      rawItem: item,
+    },
+  };
 }
 
 module.exports = {
-    fetchRssFeed
+  adaptRssArticle,
 };

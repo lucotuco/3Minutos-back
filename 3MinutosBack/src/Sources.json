@@ -27,24 +27,6 @@
     "active": true
   },
   {
-    "name": "Ambito Nacional",
-    "type": "rss",
-    "url": "https://www.ambito.com/rss/pages/nacional.xml",
-    "category": "nacional",
-    "country": "ar",
-    "priority": 8,
-    "active": true
-  },
-  {
-    "name": "Ambito Lifestyle",
-    "type": "rss",
-    "url": "https://www.ambito.com/rss/pages/lifestyle.xml",
-    "category": "lifestyle",
-    "country": "ar",
-    "priority": 5,
-    "active": true
-  },
-  {
     "name": "Ambito Espectaculos",
     "type": "rss",
     "url": "https://www.ambito.com/rss/pages/espectaculos.xml",
@@ -87,15 +69,6 @@
     "category": "finanzas",
     "country": "ar",
     "priority": 8,
-    "active": true
-  },
-  {
-    "name": "Ambito Politica",
-    "type": "rss",
-    "url": "https://www.ambito.com/rss/pages/politica.xml",
-    "category": "politica",
-    "country": "ar",
-    "priority": 9,
     "active": true
   },
   {
@@ -972,33 +945,6 @@
     "active": true
   },
   {
-    "name": "El Intransigente Home",
-    "type": "rss",
-    "url": "https://elintransigente.com/feed/",
-    "category": "general",
-    "country": "ar",
-    "priority": 2,
-    "active": true
-  },
-  {
-    "name": "El Intransigente Política",
-    "type": "rss",
-    "url": "https://elintransigente.com/category/politica/feed/",
-    "category": "politics",
-    "country": "ar",
-    "priority": 2,
-    "active": true
-  },
-  {
-    "name": "El Intransigente Economía",
-    "type": "rss",
-    "url": "https://elintransigente.com/category/economia/feed/",
-    "category": "economy",
-    "country": "ar",
-    "priority": 2,
-    "active": true
-  },
-  {
     "name": "Buenos Aires Times",
     "type": "rss",
     "url": "https://www.batimes.com.ar/feed",
@@ -1138,33 +1084,6 @@
     "type": "rss",
     "url": "https://extra.globo.com/rss/extra/esporte",
     "category": "sports",
-    "country": "br",
-    "priority": 2,
-    "active": true
-  },
-  {
-    "name": "Estadão Geral",
-    "type": "rss",
-    "url": "https://www.estadao.com.br/arc/outboundfeeds/feeds/rss/sections/geral/",
-    "category": "general",
-    "country": "br",
-    "priority": 2,
-    "active": true
-  },
-  {
-    "name": "Estadão Economia",
-    "type": "rss",
-    "url": "https://www.estadao.com.br/arc/outboundfeeds/feeds/rss/sections/economia/",
-    "category": "economy",
-    "country": "br",
-    "priority": 2,
-    "active": true
-  },
-  {
-    "name": "Estadão Política",
-    "type": "rss",
-    "url": "https://www.estadao.com.br/arc/outboundfeeds/feeds/rss/sections/politica/",
-    "category": "politics",
     "country": "br",
     "priority": 2,
     "active": true
@@ -1354,24 +1273,6 @@
     "type": "rss",
     "url": "https://www.reforma.com/rss/nacional.xml",
     "category": "national",
-    "country": "mx",
-    "priority": 2,
-    "active": true
-  },
-  {
-    "name": "El Informador Últimas Noticias",
-    "type": "rss",
-    "url": "https://www.informador.mx/rss/ultimas-noticias.xml",
-    "category": "general",
-    "country": "mx",
-    "priority": 2,
-    "active": true
-  },
-  {
-    "name": "El Informador Deportes",
-    "type": "rss",
-    "url": "https://www.informador.mx/rss/deportes.xml",
-    "category": "sports",
     "country": "mx",
     "priority": 2,
     "active": true

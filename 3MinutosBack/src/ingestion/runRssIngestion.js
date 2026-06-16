@@ -12,7 +12,19 @@ const { reviewArticlesWithAIBatch } = require('./reviewArticlesWithAIBatch');
 
 dotenv.config();
 
-const parser = new Parser();
+const FALLBACK_IMAGE_URL = 'https://st2.depositphotos.com/1036149/5381/i/950/depositphotos_53811511-stock-illustration-duck-with-sunglasses.jpg';
+
+const parser = new Parser({
+  customFields: {
+    item: [
+      ['media:content', 'media:content'],
+      ['media:thumbnail', 'media:thumbnail'],
+      ['image:image', 'image:image'],
+      ['content:encoded', 'content:encoded'],
+      ['enclosure', 'reformaEnclosure']
+    ]
+  }
+});
 const AI_BATCH_SIZE = Number(process.env.AI_BATCH_SIZE || 10);
 
 function loadSources() {
@@ -120,15 +132,22 @@ async function runRssIngestion() {
 
       try {
         const feed = await parser.parseURL(source.url);
-        const items = feed.items || [];
-
-        console.log(`📰 ${source.name} -> ${items.length} items`);
+        //const items = feed.items || [];
+        const top10Items = feed.items.slice(0, 10);
+        console.log(`📰 ${source.name} -> ${top10Items.length} items`);
 
         const processedArticles = [];
 
-        for (const item of items) {
+        for (const item of top10Items) {
           try {
             const adapted = adaptRssArticle(item, source);
+
+            // Filtrar artículos que solo tienen la imagen de fallback
+            if (adapted.imageUrl === FALLBACK_IMAGE_URL) {
+              console.log(`🦆 Noticia descartada por no tener imagen original: ${adapted.title}`);
+              continue;
+            }
+
             const processed = processArticle(adapted, {
               defaultMinScore: 6,
               maxTags: 3,

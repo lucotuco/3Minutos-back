@@ -133,12 +133,12 @@ async function runRssIngestion() {
       try {
         const feed = await parser.parseURL(source.url);
         //const items = feed.items || [];
-        const top10Items = feed.items.slice(0, 10);
-        console.log(`📰 ${source.name} -> ${top10Items.length} items`);
+        const top50Items = feed.items.slice(0, 50);
+        console.log(`📰 ${source.name} -> ${top50Items.length} items`);
 
         const processedArticles = [];
 
-        for (const item of top10Items) {
+        for (const item of top50Items) {
           try {
             const adapted = adaptRssArticle(item, source);
 

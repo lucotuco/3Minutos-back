@@ -210,7 +210,7 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
           console.log(`🔍 [Tema Libre] "${topic}" -> Match: "${bestMatch.title}" | Score: ${bestMatch.score?.toFixed(3)} | Topic Real: ${bestMatch.topic || bestMatch.category}`);
           
           // Bajamos el umbral a 0.68
-          if (bestMatch.score >= 0.68) {
+          if (bestMatch.score >= 0.60) {
             bestUnused = bestMatch;
             usedFallback = false;
           } else {

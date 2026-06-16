@@ -105,9 +105,7 @@ router.get(
 
       const model = process.env.NEWS_AGENT_REALTIME_MODEL || 'gpt-realtime';
 
-      const voice =
-        process.env.NEWS_AGENT_REALTIME_VOICE ||
-        'ash';
+      const voice = 'verse';
 
       const ttlSeconds = Number(
         process.env.NEWS_AGENT_CLIENT_SECRET_TTL_SECONDS || 600

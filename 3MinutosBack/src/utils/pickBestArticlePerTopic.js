@@ -173,17 +173,22 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
     let fallbackCategory = null;
 
     if (isOfficial) {
-      // ============================================
-      // CAMINO A: TEMA OFICIAL (Búsqueda Tradicional)
-      // ============================================
-      let candidates = await findCandidatesForTopic(topic, perTopicLimit);
+      // INTENTO 1: Buscar notas frescas (últimos 7 días)
+      let candidates = await findCandidatesForTopic(topic, perTopicLimit, true);
       bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
 
-      // Si no hay artículo del topic exacto, hacer fallback manual a la categoría padre
+      // INTENTO 2: Si no hay frescas, buscar históricas de ESE tema sin límite de fecha
+      if (!bestUnused) {
+        candidates = await findCandidatesForTopic(topic, perTopicLimit, false);
+        bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
+      }
+
+      // INTENTO 3: Si definitivamente no hay NADA de Rugby, fallback a "Deportes"
       if (!bestUnused) {
         const category = TOPIC_TO_CATEGORY[topic];
         if (category && category !== topic) {
-          candidates = await findCandidatesForTopic(category, perTopicLimit);
+          // Acá sí le dejamos el cutoff = true para que no te traiga fútbol viejo
+          candidates = await findCandidatesForTopic(category, perTopicLimit, true);
           bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
           
           if (bestUnused) {

@@ -142,17 +142,31 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
   const results  = [];
 
   // Pre-armar la lista de tópicos oficiales para que la validación sea rápida
-  const officialTopics = new Set([
+  const rawOfficialTopics = [
     ...ALL_CATEGORIES,
     ...Object.keys(TOPIC_TO_CATEGORY),
     ...Object.values(TOPIC_TO_CATEGORY)
-  ]);
+  ];
+
+  const officialTopicsMap = new Map();
+  for (const t of rawOfficialTopics) {
+    officialTopicsMap.set(normalizeText(t), t);
+  }
 
   for (const rawTopic of topics) {
-    const topic = String(rawTopic || '').trim();
-    if (!topic) continue;
+    const trimmedTopic = String(rawTopic || '').trim();
+    if (!trimmedTopic) continue;
 
-    const isOfficial = officialTopics.has(topic);
+    const normTopic = normalizeText(trimmedTopic);
+    
+    // Asumimos el tema tal cual viene, pero si está en nuestro mapa, usamos el oficial
+    let topic = trimmedTopic;
+    let isOfficial = false;
+
+    if (officialTopicsMap.has(normTopic)) {
+      topic = officialTopicsMap.get(normTopic); // Transforma "tenis" -> "Tenis"
+      isOfficial = true;
+    }
     
     let bestUnused = null;
     let usedFallback = false;

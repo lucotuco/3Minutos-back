@@ -83,12 +83,11 @@ function isUsableDigestArticle(article, usedUrls) {
 
 async function findCandidatesForTopic(topic, limit) {
   // 48hs de ventana para tener suficiente volumen
-  const cutoff = new Date(Date.now() - 168 * 60 * 60 * 1000);
+  //const cutoff = new Date(Date.now() - 168 * 60 * 60 * 1000);
 
   const isMainCategory = ALL_CATEGORIES.includes(topic);
 
   const baseQuery = {
-    publishedAt: { $gte: cutoff },
     ...(isMainCategory ? { category: topic } : { topic: new RegExp('^' + topic + '$', 'i') }),
   };
 

@@ -107,8 +107,7 @@ router.get(
 
       const voice =
         process.env.NEWS_AGENT_REALTIME_VOICE ||
-        process.env.OPENAI_TTS_VOICE ||
-        'verse';
+        'ash';
 
       const ttlSeconds = Number(
         process.env.NEWS_AGENT_CLIENT_SECRET_TTL_SECONDS || 600

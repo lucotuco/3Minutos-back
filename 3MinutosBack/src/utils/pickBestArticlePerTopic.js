@@ -5,7 +5,6 @@ const { searchArticlesBySimilarityAtlas } = require('../embeddings/searchArticle
 
 const OPINION_KEYWORDS = ['opinion', 'opinión', 'columna', 'columnista', 'editorial', 'analisis', 'análisis'];
 
-// Mapeo de topic → categoría padre
 const TOPIC_TO_CATEGORY = {
   'Gobierno Nacional': 'Política',
   'Justicia': 'Política',
@@ -90,7 +89,7 @@ async function findCandidatesForTopic(topic, limit) {
 
   const baseQuery = {
     publishedAt: { $gte: cutoff },
-    ...(isMainCategory ? { category: topic } : { topic }),
+    ...(isMainCategory ? { category: topic } : { topic: new RegExp('^' + topic + '$', 'i') }),
   };
 
   const selectFields = [

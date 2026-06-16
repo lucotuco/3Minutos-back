@@ -81,15 +81,18 @@ function isUsableDigestArticle(article, usedUrls) {
   return true;
 }
 
-async function findCandidatesForTopic(topic, limit) {
-  // 48hs de ventana para tener suficiente volumen
-  //const cutoff = new Date(Date.now() - 168 * 60 * 60 * 1000);
-
+async function findCandidatesForTopic(topic, limit, useCutoff = true) {
   const isMainCategory = ALL_CATEGORIES.includes(topic);
 
   const baseQuery = {
     ...(isMainCategory ? { category: topic } : { topic: new RegExp('^' + topic + '$', 'i') }),
   };
+
+  // Solo aplicamos el límite de 7 días si useCutoff es true
+  if (useCutoff) {
+    const cutoff = new Date(Date.now() - 168 * 60 * 60 * 1000);
+    baseQuery.publishedAt = { $gte: cutoff };
+  }
 
   const selectFields = [
     '_id', 'title', 'url', 'sourceName',
@@ -101,17 +104,12 @@ async function findCandidatesForTopic(topic, limit) {
     'rawSummary', 'contentSnippet', 'imageUrl',
   ].join(' ');
 
-  // Primero intentar con topicStatus: 'done'
-  let articles = await Article.find({
-    ...baseQuery,
-    topicStatus: 'done',
-  })
+  let articles = await Article.find({ ...baseQuery, topicStatus: 'done' })
     .sort({ importanceScore: -1, publishedAt: -1 })
     .limit(limit * 10)
     .select(selectFields)
     .lean();
 
-  // Si no hay suficientes, hacer fallback a pending/error
   if (articles.length < limit) {
     const missingCount = limit - articles.length;
     const fallbackArticles = await Article.find({
@@ -126,7 +124,6 @@ async function findCandidatesForTopic(topic, limit) {
     articles = articles.concat(fallbackArticles);
   }
 
-  // Aplicar algoritmo de ranking (importanceScore 70% + freshness 30%)
   return articles
     .map(enrichArticleRanking)
     .sort((a, b) => b.rankingScore - a.rankingScore);

@@ -160,7 +160,7 @@ router.get(
               // Importante: false evita que un ruidito cancele a Dan mientras habla.
               interrupt_response: booleanFromEnv(
                 'NEWS_AGENT_VAD_INTERRUPT_RESPONSE',
-                false
+                true
               ),
             },
           },

@@ -95,11 +95,11 @@ async function sendPreparedDigestNotifications({ now = new Date() } = {}) {
             ? run.digest.items.length
             : 0;
 
-        const title = 'Tu digest ya está listo';
+        const title = 'Tu resumen ya está listo';
         const body =
           itemsCount > 0
             ? `Ya tenés ${itemsCount} noticias nuevas en 3 Minutos.`
-            : 'Ya tenés tu nuevo digest disponible.';
+            : 'Ya tenés tu nuevo resumen disponible.';
 
         console.log('   enviando push...');
 

@@ -87,7 +87,7 @@ router.get(
         });
 
         return res.status(409).json({
-          error: 'No hay digest de hoy para discutir. Generá o actualizá tu digest primero.',
+          error: 'No hay resumen de hoy para discutir. Generá o actualizá tu resumen primero.',
           code: 'NO_TODAYS_DIGEST',
         });
       }

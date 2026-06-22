@@ -124,25 +124,25 @@ async function buildNewsAgentContext(userId) {
       .map((topic) => cleanText(topic, 60))
       .filter(Boolean)
       .join(', ')}`,
-    `Horario de digest: ${user.deliveryTime || 'sin horario'}`,
+    `Horario de resumen: ${user.deliveryTime || 'sin horario'}`,
   ].join('\n');
 
   const digestBlock =
     digestRun && items.length > 0
       ? [
-          `Fecha del digest usado como contexto: ${digestRun.deliveryDate}`,
+          `Fecha del resumen usado como contexto: ${digestRun.deliveryDate}`,
           digestRun.preparedAt
             ? `Preparado en: ${new Date(digestRun.preparedAt).toISOString()}`
             : '',
           getDigestAudioUrlFromRun(digestRun)
-            ? 'El digest también tiene audio generado.'
+            ? 'El resumen también tiene audio generado.'
             : '',
           '',
           items.slice(0, 3).map(formatArticleForContext).join('\n\n'),
         ]
           .filter(Boolean)
           .join('\n')
-      : 'No hay digest de hoy con noticias para este usuario. No hables de noticias específicas.';
+      : 'No hay resumen de hoy con noticias para este usuario. No hables de noticias específicas.';
 
   const contextText = [
     '=== USUARIO ===',

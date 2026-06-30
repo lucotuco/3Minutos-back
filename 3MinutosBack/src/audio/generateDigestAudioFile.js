@@ -27,7 +27,6 @@ async function generateDigestAudioFile({ script, outputPath }) {
       input: script,
       instructions: DIGEST_VOICE_STYLE,
       format: 'mp3',
-      // 3. Agregamos el parámetro speed. 1.0 es el default. 1.15 o 1.2 suele ser ideal para noticias.
       speed: 1.15,
     });
 
@@ -35,6 +34,16 @@ async function generateDigestAudioFile({ script, outputPath }) {
     const buffer = Buffer.from(arrayBuffer);
 
     fs.writeFileSync(outputPath, buffer);
+
+    const caracteres = script?.length || 0;
+    const costoPorMilCaracteres = 0.015; // Precio oficial de OpenAI para tts-1
+    const costoTotal = (caracteres / 1000) * costoPorMilCaracteres;
+
+    console.log(`\n🎙️ [CONSUMO AUDIO - TTS]`);
+    console.log(`   - Archivo generado: ${outputPath.split('/').pop()}`);
+    console.log(`   - Caracteres procesados: ${caracteres}`);
+    console.log(`   - Costo exacto de este audio: $${costoTotal.toFixed(5)} USD`);
+    console.log(`   - Costo proyectado (30 días sin caché): $${(costoTotal * 30).toFixed(4)} USD al mes\n`);
 
     timer.end({
       outputPath,

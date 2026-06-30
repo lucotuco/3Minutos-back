@@ -126,7 +126,7 @@ async function savePreparedDigestRun(user, digest, deliveryDate) {
       },
     },
     {
-      new: true,
+      returnDocument: 'after',
       upsert: true,
       setDefaultsOnInsert: true,
     }
@@ -342,7 +342,7 @@ router.patch(
           $set: updates,
         },
         {
-          new: true,
+          returnDocument: 'after',
           runValidators: true,
         }
       ).lean();
@@ -396,7 +396,7 @@ router.patch(
           },
         },
         {
-          new: true,
+          returnDocument: 'after',
           runValidators: true,
         }
       ).lean();

@@ -234,6 +234,31 @@ async function generateNeutralCuration(articleId, options = {}) {
 
     const parsed = response.output_parsed;
 
+    if (response.usage) {
+      const pTokens = response.usage.prompt_tokens || 0;
+      const cTokens = response.usage.completion_tokens || 0;
+      
+      // Verificamos si OpenAI usó el caché (para cobrarte la mitad)
+      const cachedTokens = response.usage.prompt_tokens_details?.cached_tokens || 0;
+      const uncachedTokens = pTokens - cachedTokens;
+
+      // Precios oficiales actuales para gpt-4o-mini (USD por cada 1 millón de tokens)
+      const precioInput = 0.150;
+      const precioCached = 0.075;
+      const precioOutput = 0.600;
+
+      const costoInput = (uncachedTokens / 1000000) * precioInput;
+      const costoCache = (cachedTokens / 1000000) * precioCached;
+      const costoOutput = (cTokens / 1000000) * precioOutput;
+      const costoTotal = costoInput + costoCache + costoOutput;
+
+      console.log(`\n📝 [CONSUMO TEXTO - CURACIÓN]`);
+      console.log(`   - Noticia: "${article.title.substring(0, 40)}..."`);
+      console.log(`   - Tokens Entrada: ${pTokens} (Cacheados: ${cachedTokens})`);
+      console.log(`   - Tokens Salida: ${cTokens}`);
+      console.log(`   - Costo de esta curación: $${costoTotal.toFixed(6)} USD\n`);
+    }
+
     article.neutralTitle = stripForbiddenSourcePhrases(parsed.neutralTitle);
     article.neutralLead = stripForbiddenSourcePhrases(parsed.neutralLead);
     article.neutralSummary = stripForbiddenSourcePhrases(parsed.neutralSummary);

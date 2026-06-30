@@ -17,7 +17,7 @@ async function generateDigestAudioFile({ script, outputPath }) {
     const request = {
       input: { text: script },
       // Voz Neuronal premium Argentina Masculina
-      voice: { languageCode: 'es-AR', name: 'es-AR-Neural2-B' },
+      voice: { languageCode: 'es-AR', name: 'es-US-Wavenet-B' },
       // Formato MP3 y la velocidad que tenías (speakingRate en lugar de speed)
       audioConfig: { audioEncoding: 'MP3', speakingRate: 1.15 },
     };

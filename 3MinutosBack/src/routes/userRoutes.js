@@ -1,6 +1,12 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const Article = require('../models/Article');
+const { generateDigestAudioFile } = require('../audio/generateDigestAudioFile');
+const { uploadDigestAudio } = require('../audio/uploadDigestAudio');
 
 const UserPreference = require('../models/UserPreference');
 const UserShownArticle = require('../models/UserShownArticle');
@@ -624,6 +630,134 @@ router.get(
       return res.status(500).json({
         error: 'Failed to fetch shown articles',
         code: 'FETCH_SHOWN_ARTICLES_FAILED',
+      });
+    }
+  }
+);
+router.post(
+  '/:userId/digest/play',
+  authRequired,
+  validateUserId,
+  requireSameUserParam('userId'),
+  async (req, res) => {
+    try {
+      // 1. Buscamos el usuario en formato completo (sin .lean() para poder hacer .save())
+      const user = await UserPreference.findById(req.params.userId);
+      if (!user) return userNotFoundResponse(res);
+
+      if (!user.isActive) {
+        return res.status(400).json({ error: 'User is inactive', code: 'USER_INACTIVE' });
+      }
+
+      const deliveryDate = getLocalDateString(new Date());
+
+      // Buscamos el run preparado de hoy para saber qué noticias específicas tiene asignadas
+      const todaysPreparedRun = await UserDeliveryRun.findOne({
+        userId: user._id,
+        deliveryDate,
+        status: { $in: ['prepared', 'sent'] },
+        digest: { $ne: null },
+      })
+        .sort({ preparedAt: -1, createdAt: -1 })
+        .lean();
+
+      let activeDigest = todaysPreparedRun?.digest;
+
+      // Si hoy no abrió la app o no tiene run preparado, buscamos el digest más reciente
+      if (!activeDigest) {
+        const latestPreparedRun = await UserDeliveryRun.findOne({
+          userId: user._id,
+          status: { $in: ['prepared', 'sent'] },
+          digest: { $ne: null },
+        })
+          .sort({ preparedAt: -1, createdAt: -1 })
+          .lean();
+        
+        activeDigest = latestPreparedRun?.digest;
+      }
+
+      if (!activeDigest || !activeDigest.items || activeDigest.items.length === 0) {
+        return res.status(404).json({
+          error: 'No active digest items found to play',
+          code: 'NO_DIGEST_ITEMS',
+        });
+      }
+
+      const playlistUrls = [];
+
+      // ========================================================
+      // 🧩 BLOQUE A: AUDIO 0 - SALUDO (Se actualiza si cambia nombre)
+      // ========================================================
+      let greetingUrl = user.greetingAudioUrl;
+
+      if (!greetingUrl || user.name !== user.greetingNameUsed) {
+        console.log(`🎙️ [PLAY ON-DEMAND] Generando saludo nuevo para: ${user.name}`);
+        const greetingText = `Hola ${user.name}. Estas son tus noticias curadas para hoy.`;
+        const tempGreetingPath = path.join(os.tmpdir(), `greeting-${user._id}-${Date.now()}.mp3`);
+        const storageKey = `greetings/user-${user._id}`;
+
+        // Generamos usando tu utilidad de Google TTS existente
+        await generateDigestAudioFile({ script: greetingText, outputPath: tempGreetingPath });
+        const uploadRes = await uploadDigestAudio(tempGreetingPath, storageKey);
+
+        if (fs.existsSync(tempGreetingPath)) fs.unlinkSync(tempGreetingPath);
+
+        greetingUrl = uploadRes.audioUrl;
+        
+        // Guardamos de forma persistente en su perfil
+        user.greetingAudioUrl = greetingUrl;
+        user.greetingNameUsed = user.name;
+        await user.save();
+      }
+      playlistUrls.push(greetingUrl);
+
+      // ========================================================
+      // 🧩 BLOQUE B: LAS NOTICIAS (Caché inteligente por artículo)
+      // ========================================================
+      for (const item of activeDigest.items) {
+        if (!item.articleId) continue;
+
+        const article = await Article.findById(item.articleId);
+        if (!article) continue;
+
+        let articleAudioUrl = article.audioUrl;
+
+        // Si nadie la reprodujo hoy, la mandamos a Google Cloud TTS
+        if (!articleAudioUrl) {
+          console.log(`🎙️ [PLAY ON-DEMAND - MISS CACHÉ] Generando audio de noticia: ${article._id}`);
+          
+          const textToSpeak = article.neutralSummary || item.summary || article.title;
+          const tempArticlePath = path.join(os.tmpdir(), `article-${article._id}-${Date.now()}.mp3`);
+          const storageKey = `articles-chunks/audio-${article._id}`;
+
+          await generateDigestAudioFile({ script: textToSpeak, outputPath: tempArticlePath });
+          const uploadRes = await uploadDigestAudio(tempArticlePath, storageKey);
+
+          if (fs.existsSync(tempArticlePath)) fs.unlinkSync(tempArticlePath);
+
+          articleAudioUrl = uploadRes.audioUrl;
+
+          // Guardamos en el modelo de la noticia para congelar el costo
+          article.audioUrl = articleAudioUrl;
+          await article.save();
+        } else {
+          console.log(`🎯 [PLAY ON-DEMAND - HIT CACHÉ] Audio reutilizado para noticia: ${article._id}`);
+        }
+
+        playlistUrls.push(articleAudioUrl);
+      }
+
+      // Devolvemos el rompecabezas ordenado en un Array listo para tu lista de reproducción en Expo
+      return res.json({
+        success: true,
+        playlist: playlistUrls,
+      });
+
+    } catch (error) {
+      console.error('[POST /users/:userId/digest/play] Error:', error);
+      return res.status(500).json({
+        error: 'Failed to process on-demand audio playlist',
+        code: 'PLAY_AUDIO_FAILED',
       });
     }
   }

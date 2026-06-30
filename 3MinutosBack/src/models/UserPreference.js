@@ -30,6 +30,14 @@ const UserPreferenceSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    greetingAudioUrl: {
+      type: String,
+      default: null,
+    },
+    greetingNameUsed: {
+      type: String,
+      default: null,
+    },
   },
   { timestamps: true }
 );

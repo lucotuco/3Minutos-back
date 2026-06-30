@@ -212,6 +212,10 @@ const articleSchema = new mongoose.Schema(
     // Este es el FALLBACK por defecto a nivel de Base de Datos
     default: "https://via.placeholder.com/800x400.png?text=Noticia+Sin+Imagen" 
   },
+  audioUrl: {
+      type: String,
+      default: null,
+    },
   },
   {
     timestamps: true,

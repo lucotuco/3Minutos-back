@@ -1,6 +1,9 @@
 const UserPreference = require('../models/UserPreference');
 const UserDeliveryRun = require('../models/UserDeliveryRun');
+
 const { buildUserNewsDigest } = require('./buildUserNewsDigest');
+// 👇 IMPORTAMOS LA UTILIDAD DE HISTORIAL ABSOLUTO QUE NO SE ESTABA USANDO
+const { getAlreadyShownUrlsForUser } = require('./getAlreadyShownUrlsForUser'); 
 const { startTimer, timeAsync } = require('./timing');
 
 function getDigestItemsFromRun(run) {
@@ -16,6 +19,7 @@ async function buildDigestForUser(userId) {
     const user = await UserPreference.findById(userId).lean();
     if (!user || !user.isActive) throw new Error('User not found or inactive');
 
+    // 1. Buscamos URLs en los últimos 10 runs preparados (Por si falló el mark-shown)
     const previousRuns = await UserDeliveryRun.find({
       userId: user._id,
       status: { $in: ['prepared', 'sent'] },
@@ -25,13 +29,20 @@ async function buildDigestForUser(userId) {
       .limit(10)
       .lean();
 
-    const alreadyShownUrls = previousRuns
+    const runUrls = previousRuns
       .flatMap((run) => getDigestItemsFromRun(run))
       .map((item) => item?.url)
       .filter(Boolean);
 
-    const uniqueAlreadyShownUrls = [...new Set(alreadyShownUrls)];
+    // 👇 2. EL ARREGLO: Buscamos el historial definitivo de todo lo que el usuario ya vio
+    const shownUrls = await getAlreadyShownUrlsForUser(user._id);
 
+    // 3. Fusionamos ambas listas y eliminamos duplicados
+    const uniqueAlreadyShownUrls = [...new Set([...runUrls, ...shownUrls])];
+
+    console.log(`🛡️ [FILTRO REPETIDAS] Excluyendo ${uniqueAlreadyShownUrls.length} noticias ya vistas para el usuario ${user.name}`);
+
+    // 4. Generamos el Digest asegurando que no toque las URLs excluidas
     const digest = await timeAsync(
       'buildUserNewsDigest',
       () => buildUserNewsDigest({
@@ -45,8 +56,6 @@ async function buildDigestForUser(userId) {
       }
     );
 
-    // Armamos la respuesta idéntica pero con propiedades de audio vacías/null.
-    // El audio se procesará únicamente cuando toquen "Play".
     const result = {
       user: {
         id: String(user._id),

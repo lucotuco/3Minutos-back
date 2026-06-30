@@ -726,7 +726,7 @@ router.post(
 
       if (!greetingUrl || user.name !== user.greetingNameUsed) {
         console.log(`🎙️ [SALUDO] Generando audio de saludo por primera vez para: ${user.name}`);
-        const greetingText = `Hola ${user.name}. Estas son tus noticias curadas para hoy.`;
+        const greetingText = `Hola ${user.name}. Estas son tus noticias para hoy.`;
         const tempGreetingPath = path.join(os.tmpdir(), `greeting-${user._id}-${Date.now()}.mp3`);
         const storageKey = `greetings/user-${user._id}`;
 
@@ -777,7 +777,9 @@ router.post(
         console.log(`      - Estado de audio en BD para esta noticia: ${articleAudioUrl || 'No generado (MISS)'}`);
 
         if (!articleAudioUrl) {
-          const textToSpeak = article.neutralSummary || item.summary || article.title;
+          const title = article.neutralTitle || item.title || article.title || '';
+          const summary = article.neutralSummary || item.summary || '';
+          const textToSpeak = `${title}. ${summary}`.trim();
           console.log(`      🎙️ [NOTICIA] Enviando texto a Google TTS (${textToSpeak.length} caracteres)...`);
           
           const tempArticlePath = path.join(os.tmpdir(), `article-${article._id}-${Date.now()}.mp3`);

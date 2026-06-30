@@ -22,8 +22,8 @@ async function generateDigestAudioFile({ script, outputPath }) {
       ].join(' ');
 
     const response = await openai.audio.speech.create({
-      model: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts',
-      voice: 'verse',
+      model: process.env.OPENAI_TTS_MODEL || 'tts-1',
+      voice: 'echo',
       input: script,
       instructions: DIGEST_VOICE_STYLE,
       format: 'mp3',

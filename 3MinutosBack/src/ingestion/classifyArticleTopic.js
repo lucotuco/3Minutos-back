@@ -32,23 +32,10 @@ function buildCategoryListText() {
     .join('\n\n');
 }
 
-function buildPrompt(article) {
-  const title   = String(article.title || '').trim();
-  const summary = String(article.rawSummary || article.contentSnippet || '').trim();
-  const source  = String(article.sourceName || '').trim();
-  const section = String(article.section   || '').trim();
-
+function buildPromptReglasYCategorias() {
   return `Sos un clasificador de noticias argentinas. Tu única tarea es elegir UNA categoría y UN subtema de la lista de abajo.
-
-LISTA COMPLETA DE OPCIONES (solo podés usar estos valores, copiados exactamente):
+  LISTA COMPLETA DE OPCIONES (solo podés usar estos valores, copiados exactamente):
 ${buildCategoryListText()}
-
-ARTÍCULO A CLASIFICAR:
-Titular: ${title}
-${summary  ? `Resumen: ${summary}`     : ''}
-${source   ? `Fuente: ${source}`       : ''}
-${section  ? `Sección RSS: ${section}` : ''}
-
 REGLAS ESTRICTAS:
 - Respondé ÚNICAMENTE con JSON válido. Sin texto antes ni después. Sin backticks.
 - Formato exacto: {"category": "...", "topic": "..."}
@@ -70,6 +57,19 @@ REGLAS DE CLASIFICACIÓN PARA ARGENTINA:
 - Netflix, Prime, Disney+, plataformas digitales → topic: "Streaming"
 - Influencers, memes, redes sociales, contenido viral, TikTok → topic: "Viral y Trending"
 - Guerras, tensiones militares o diplomáticas entre países → topic: "Conflictos" o "Geopolítica"`;
+}
+
+function buildPrompt(article) {
+  const title   = String(article.title || '').trim();
+  const summary = String(article.rawSummary || article.contentSnippet || '').trim();
+  const source  = String(article.sourceName || '').trim();
+  const section = String(article.section   || '').trim();
+
+  return `ARTÍCULO A CLASIFICAR:
+Titular: ${title}
+${summary  ? `Resumen: ${summary}`     : ''}
+${source   ? `Fuente: ${source}`       : ''}
+${section  ? `Sección RSS: ${section}` : ''}`;
 }
 
 function findClosestTopic(category, rawTopic) {
@@ -97,10 +97,13 @@ async function classifyArticleTopic(article = {}) {
   if (!title) throw new Error('Missing article title for classification');
 
   const prompt = buildPrompt(article);
+  const promptDeReglasYCategorias= buildPromptReglasYCategorias();
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
-    messages: [{ role: 'user', content: prompt }],
+    messages: [
+      { role: 'system', content: promptDeReglasYCategorias },
+      { role: 'user', content: prompt }],
     temperature: 0,
     max_tokens: 80,
   });

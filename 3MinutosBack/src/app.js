@@ -8,6 +8,7 @@ const articleRoutes = require('./routes/articleRoutes');
 const userRoutes = require('./routes/userRoutes');
 
 const app = express();
+app.set('trust proxy', 1);
 
 function getAllowedOrigins() {
   return String(process.env.CORS_ORIGINS || '')

@@ -721,98 +721,69 @@ router.post(
       // ========================================================
       // 🧩 BLOQUE A: AUDIO 0 - SALUDO PERSONALIZADO
       // ========================================================
-      let greetingUrl = user.greetingAudioUrl;
-      console.log(`🔍 [CHECKPOINT 8] Verificando Saludo (Audio 0). URL en BD: ${greetingUrl || 'Ninguna'}`);
+      console.log('🔍 [CHECKPOINT 8] Iniciando generación paralela de audio...');
 
-      if (!greetingUrl || user.name !== user.greetingNameUsed) {
-        console.log(`🎙️ [SALUDO] Generando audio de saludo por primera vez para: ${user.name}`);
-        const greetingText = `Hola ${user.name}. Estas son tus noticias para hoy.`;
-        const tempGreetingPath = path.join(os.tmpdir(), `greeting-${user._id}-${Date.now()}.mp3`);
-        const storageKey = `greetings/user-${user._id}`;
+      // Promesa 1: El Saludo
+      const greetingPromise = (async () => {
+        let greetingUrl = user.greetingAudioUrl;
+        if (!greetingUrl || user.name !== user.greetingNameUsed) {
+          const greetingText = `Hola ${user.name}. Estas son tus noticias curadas para hoy.`;
+          const tempGreetingPath = path.join(os.tmpdir(), `greeting-${user._id}-${Date.now()}.mp3`);
+          const storageKey = `greetings/user-${user._id}`;
 
-        console.log('   -> Llamando a Google Cloud TTS para el saludo...');
-        await generateDigestAudioFile({ script: greetingText, outputPath: tempGreetingPath });
-        
-        console.log('   -> Subiendo saludo a Cloudinary...');
-        const uploadRes = await uploadDigestAudio(tempGreetingPath, storageKey);
+          await generateDigestAudioFile({ script: greetingText, outputPath: tempGreetingPath });
+          const uploadRes = await uploadDigestAudio(tempGreetingPath, storageKey);
+          if (fs.existsSync(tempGreetingPath)) fs.unlinkSync(tempGreetingPath);
 
-        if (fs.existsSync(tempGreetingPath)) fs.unlinkSync(tempGreetingPath);
-
-        greetingUrl = uploadRes?.audioUrl || null;
-        console.log(`   -> Saludo creado exitosamente. URL: ${greetingUrl}`);
-        
-        if (greetingUrl) {
-          user.greetingAudioUrl = greetingUrl;
-          user.greetingNameUsed = user.name;
-          await user.save();
-          console.log('   -> Usuario actualizado con su nueva URL de saludo permanente');
+          greetingUrl = uploadRes?.audioUrl || null;
+          if (greetingUrl) {
+            user.greetingAudioUrl = greetingUrl;
+            user.greetingNameUsed = user.name;
+            await user.save();
+          }
         }
-      } else {
-        console.log('🎯 [SALUDO - CACHÉ] Reutilizando saludo permanente guardado en el usuario');
-      }
-      
-      if (greetingUrl) playlistUrls.push(greetingUrl);
+        return greetingUrl;
+      })();
 
-      // ========================================================
-      // 🧩 BLOQUE B: LAS NOTICIAS (Caché por artículo)
-      // ========================================================
-      console.log('🔍 [CHECKPOINT 9] Iniciando procesamiento del bloque de noticias...');
-      
-      for (let i = 0; i < digestItems.length; i++) {
-        const item = digestItems[i];
-        console.log(`   👉 Procesando ítem [${i}]: ID de artículo en digest: ${item.articleId}`);
-
-        if (!item.articleId) {
-          console.log(`      ⚠️ Saltando ítem [${i}]: No tiene articleId válido`);
-          continue;
-        }
-
+      // Promesa 2: El array de Noticias
+      const articlesPromises = digestItems.map(async (item, i) => {
+        if (!item.articleId) return null;
+        
         const article = await Article.findById(item.articleId);
-        if (!article) {
-          console.log(`      ⚠️ Saltando ítem [${i}]: El artículo no existe en la colección 'articles'`);
-          continue;
-        }
+        if (!article) return null;
 
         let articleAudioUrl = article.audioUrl;
-        console.log(`      - Estado de audio en BD para esta noticia: ${articleAudioUrl || 'No generado (MISS)'}`);
 
         if (!articleAudioUrl) {
           const title = article.neutralTitle || item.title || article.title || '';
           const summary = article.neutralSummary || item.summary || '';
           const textToSpeak = `${title}. ${summary}`.trim();
-          console.log(`      🎙️ [NOTICIA] Enviando texto a Google TTS (${textToSpeak.length} caracteres)...`);
           
-          const tempArticlePath = path.join(os.tmpdir(), `article-${article._id}-${Date.now()}.mp3`);
+          const tempArticlePath = path.join(os.tmpdir(), `article-${article._id}-${Date.now()}-${i}.mp3`);
           const storageKey = `articles-chunks/audio-${article._id}`;
 
           await generateDigestAudioFile({ script: textToSpeak, outputPath: tempArticlePath });
-          
-          console.log('      - Subiendo fragmento de noticia a Cloudinary...');
           const uploadRes = await uploadDigestAudio(tempArticlePath, storageKey);
-
+          
           if (fs.existsSync(tempArticlePath)) fs.unlinkSync(tempArticlePath);
 
           articleAudioUrl = uploadRes?.audioUrl || null;
-          console.log(`      - Fragmento creado exitosamente. URL: ${articleAudioUrl}`);
-
           if (articleAudioUrl) {
             article.audioUrl = articleAudioUrl;
             await article.save();
-            console.log('      - Artículo actualizado en la BD con su nueva URL de audio');
           }
-        } else {
-          console.log(`      🎯 [NOTICIA - CACHÉ] Audio reutilizado de un usuario anterior`);
         }
+        return articleAudioUrl;
+      });
 
-        if (articleAudioUrl) {
-          playlistUrls.push(articleAudioUrl);
-        }
-      }
+      // 💥 LA MAGIA: Esperamos que todas las promesas terminen al mismo tiempo
+      // Mantenemos el orden exacto: Primero el saludo, después las noticias 1, 2 y 3.
+      const allAudioResults = await Promise.all([greetingPromise, ...articlesPromises]);
 
-      // 4. Respuesta de seguridad final
-      const cleanPlaylist = playlistUrls.filter(Boolean);
-      console.log(`🏁 [CHECKPOINT 10] Proceso terminado. Playlist armada con ${cleanPlaylist.length} enlaces válidos.`);
-      console.log('   -> Contenido enviado al front:', cleanPlaylist);
+      // Limpiamos cualquier nulo que haya fallado
+      const cleanPlaylist = allAudioResults.filter(Boolean);
+      
+      console.log(`🏁 [CHECKPOINT 10] Audio generado en paralelo. Playlist lista con ${cleanPlaylist.length} tracks.`);
 
       return res.json({
         success: true,

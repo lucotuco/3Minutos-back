@@ -6,6 +6,7 @@ const app = require('./app');
 const { startPrepareDeliveryRunsJob } = require('./prepareDeliveryRunsJob');
 const { startNotificationJob } = require('./sendNotificationCronJob');
 const { startHourlyIngestionJob, runHourlyIngestion } = require('./ingestionJob');
+const { startCleanupAudiosJob } = require('./cleanupAudiosJob');
 
 const PORT = Number(process.env.PORT || 3000);
 
@@ -76,6 +77,9 @@ async function start() {
     } else {
       console.log('⏸️ Job de notificaciones deshabilitado');
     }
+
+    startCleanupAudiosJob();
+    console.log('✅ Job de limpieza de audios programado (03:00 AM)');
 
     if (enableIngestionJob) {
       startHourlyIngestionJob();

@@ -640,18 +640,27 @@ router.post(
   validateUserId,
   requireSameUserParam('userId'),
   async (req, res) => {
+    console.log('\n🚀 [CHECKPOINT 1] Entrando al endpoint /play on-demand');
+    console.log(`   - Param userId recibido: ${req.params.userId}`);
+
     try {
-      // 1. Buscamos el usuario en formato completo (sin .lean() para poder hacer .save())
+      // 1. Buscar Usuario
       const user = await UserPreference.findById(req.params.userId);
-      if (!user) return userNotFoundResponse(res);
+      if (!user) {
+        console.log('❌ [CHECKPOINT 2] Usuario no encontrado en la base de datos');
+        return userNotFoundResponse(res);
+      }
+      console.log(`✅ [CHECKPOINT 2] Usuario encontrado: ${user.name}`);
 
       if (!user.isActive) {
+        console.log('❌ [CHECKPOINT 2.1] El usuario está inactivo');
         return res.status(400).json({ error: 'User is inactive', code: 'USER_INACTIVE' });
       }
 
+      // 2. Buscar el Digest del día
       const deliveryDate = getLocalDateString(new Date());
+      console.log(`🔍 [CHECKPOINT 3] Buscando run preparado para la fecha de hoy: ${deliveryDate}`);
 
-      // Buscamos el run preparado de hoy para saber qué noticias específicas tiene asignadas
       const todaysPreparedRun = await UserDeliveryRun.findOne({
         userId: user._id,
         deliveryDate,
@@ -663,8 +672,10 @@ router.post(
 
       let activeDigest = todaysPreparedRun?.digest;
 
-      // Si hoy no abrió la app o no tiene run preparado, buscamos el digest más reciente
-      if (!activeDigest) {
+      if (activeDigest) {
+        console.log('✅ [CHECKPOINT 4] Se encontró el run preparado de HOY');
+      } else {
+        console.log('⚠️ [CHECKPOINT 4] No se encontró run para hoy. Buscando el último digest histórico disponible...');
         const latestPreparedRun = await UserDeliveryRun.findOne({
           userId: user._id,
           status: { $in: ['prepared', 'sent'] },
@@ -676,7 +687,29 @@ router.post(
         activeDigest = latestPreparedRun?.digest;
       }
 
-      if (!activeDigest || !activeDigest.items || activeDigest.items.length === 0) {
+      if (!activeDigest) {
+        console.log('❌ [CHECKPOINT 5] Error crítico: No se encontró ningún digest (ni de hoy ni histórico) para este usuario');
+        return res.status(404).json({
+          error: 'No active digest found for this user',
+          code: 'NO_DIGEST_FOUND',
+        });
+      }
+
+      // 3. Extracción Segura de Items
+      console.log('🔍 [CHECKPOINT 6] Estructura de activeDigest detectada. Extrayendo artículos...');
+      let digestItems = [];
+      
+      if (activeDigest.digest && Array.isArray(activeDigest.digest.items)) {
+        console.log('   -> Caso A: Los artículos están anidados en activeDigest.digest.items');
+        digestItems = activeDigest.digest.items;
+      } else if (Array.isArray(activeDigest.items)) {
+        console.log('   -> Caso B: Los artículos están en la raíz activeDigest.items');
+        digestItems = activeDigest.items;
+      }
+
+      console.log(`📊 [CHECKPOINT 7] Cantidad de noticias extraídas: ${digestItems.length}`);
+      if (digestItems.length === 0) {
+        console.log('❌ [CHECKPOINT 7.1] Deteniendo ejecución: La lista de noticias está vacía');
         return res.status(404).json({
           error: 'No active digest items found to play',
           code: 'NO_DIGEST_ITEMS',
@@ -686,78 +719,111 @@ router.post(
       const playlistUrls = [];
 
       // ========================================================
-      // 🧩 BLOQUE A: AUDIO 0 - SALUDO (Se actualiza si cambia nombre)
+      // 🧩 BLOQUE A: AUDIO 0 - SALUDO PERSONALIZADO
       // ========================================================
       let greetingUrl = user.greetingAudioUrl;
+      console.log(`🔍 [CHECKPOINT 8] Verificando Saludo (Audio 0). URL en BD: ${greetingUrl || 'Ninguna'}`);
 
       if (!greetingUrl || user.name !== user.greetingNameUsed) {
-        console.log(`🎙️ [PLAY ON-DEMAND] Generando saludo nuevo para: ${user.name}`);
+        console.log(`🎙️ [SALUDO] Generando audio de saludo por primera vez para: ${user.name}`);
         const greetingText = `Hola ${user.name}. Estas son tus noticias curadas para hoy.`;
         const tempGreetingPath = path.join(os.tmpdir(), `greeting-${user._id}-${Date.now()}.mp3`);
         const storageKey = `greetings/user-${user._id}`;
 
-        // Generamos usando tu utilidad de Google TTS existente
+        console.log('   -> Llamando a Google Cloud TTS para el saludo...');
         await generateDigestAudioFile({ script: greetingText, outputPath: tempGreetingPath });
+        
+        console.log('   -> Subiendo saludo a Cloudinary...');
         const uploadRes = await uploadDigestAudio(tempGreetingPath, storageKey);
 
         if (fs.existsSync(tempGreetingPath)) fs.unlinkSync(tempGreetingPath);
 
-        greetingUrl = uploadRes.audioUrl;
+        greetingUrl = uploadRes?.audioUrl || null;
+        console.log(`   -> Saludo creado exitosamente. URL: ${greetingUrl}`);
         
-        // Guardamos de forma persistente en su perfil
-        user.greetingAudioUrl = greetingUrl;
-        user.greetingNameUsed = user.name;
-        await user.save();
+        if (greetingUrl) {
+          user.greetingAudioUrl = greetingUrl;
+          user.greetingNameUsed = user.name;
+          await user.save();
+          console.log('   -> Usuario actualizado con su nueva URL de saludo permanente');
+        }
+      } else {
+        console.log('🎯 [SALUDO - CACHÉ] Reutilizando saludo permanente guardado en el usuario');
       }
-      playlistUrls.push(greetingUrl);
+      
+      if (greetingUrl) playlistUrls.push(greetingUrl);
 
       // ========================================================
-      // 🧩 BLOQUE B: LAS NOTICIAS (Caché inteligente por artículo)
+      // 🧩 BLOQUE B: LAS NOTICIAS (Caché por artículo)
       // ========================================================
-      for (const item of activeDigest.items) {
-        if (!item.articleId) continue;
+      console.log('🔍 [CHECKPOINT 9] Iniciando procesamiento del bloque de noticias...');
+      
+      for (let i = 0; i < digestItems.length; i++) {
+        const item = digestItems[i];
+        console.log(`   👉 Procesando ítem [${i}]: ID de artículo en digest: ${item.articleId}`);
+
+        if (!item.articleId) {
+          console.log(`      ⚠️ Saltando ítem [${i}]: No tiene articleId válido`);
+          continue;
+        }
 
         const article = await Article.findById(item.articleId);
-        if (!article) continue;
+        if (!article) {
+          console.log(`      ⚠️ Saltando ítem [${i}]: El artículo no existe en la colección 'articles'`);
+          continue;
+        }
 
         let articleAudioUrl = article.audioUrl;
+        console.log(`      - Estado de audio en BD para esta noticia: ${articleAudioUrl || 'No generado (MISS)'}`);
 
-        // Si nadie la reprodujo hoy, la mandamos a Google Cloud TTS
         if (!articleAudioUrl) {
-          console.log(`🎙️ [PLAY ON-DEMAND - MISS CACHÉ] Generando audio de noticia: ${article._id}`);
-          
           const textToSpeak = article.neutralSummary || item.summary || article.title;
+          console.log(`      🎙️ [NOTICIA] Enviando texto a Google TTS (${textToSpeak.length} caracteres)...`);
+          
           const tempArticlePath = path.join(os.tmpdir(), `article-${article._id}-${Date.now()}.mp3`);
           const storageKey = `articles-chunks/audio-${article._id}`;
 
           await generateDigestAudioFile({ script: textToSpeak, outputPath: tempArticlePath });
+          
+          console.log('      - Subiendo fragmento de noticia a Cloudinary...');
           const uploadRes = await uploadDigestAudio(tempArticlePath, storageKey);
 
           if (fs.existsSync(tempArticlePath)) fs.unlinkSync(tempArticlePath);
 
-          articleAudioUrl = uploadRes.audioUrl;
+          articleAudioUrl = uploadRes?.audioUrl || null;
+          console.log(`      - Fragmento creado exitosamente. URL: ${articleAudioUrl}`);
 
-          // Guardamos en el modelo de la noticia para congelar el costo
-          article.audioUrl = articleAudioUrl;
-          await article.save();
+          if (articleAudioUrl) {
+            article.audioUrl = articleAudioUrl;
+            await article.save();
+            console.log('      - Artículo actualizado en la BD con su nueva URL de audio');
+          }
         } else {
-          console.log(`🎯 [PLAY ON-DEMAND - HIT CACHÉ] Audio reutilizado para noticia: ${article._id}`);
+          console.log(`      🎯 [NOTICIA - CACHÉ] Audio reutilizado de un usuario anterior`);
         }
 
-        playlistUrls.push(articleAudioUrl);
+        if (articleAudioUrl) {
+          playlistUrls.push(articleAudioUrl);
+        }
       }
 
-      // Devolvemos el rompecabezas ordenado en un Array listo para tu lista de reproducción en Expo
+      // 4. Respuesta de seguridad final
+      const cleanPlaylist = playlistUrls.filter(Boolean);
+      console.log(`🏁 [CHECKPOINT 10] Proceso terminado. Playlist armada con ${cleanPlaylist.length} enlaces válidos.`);
+      console.log('   -> Contenido enviado al front:', cleanPlaylist);
+
       return res.json({
         success: true,
-        playlist: playlistUrls,
+        playlist: cleanPlaylist,
       });
 
     } catch (error) {
-      console.error('[POST /users/:userId/digest/play] Error:', error);
+      console.error('\n💥 CRASH DETECTADO EN EL ENDPOINT /PLAY:');
+      console.error(error.stack); // Esto nos va a imprimir el error exacto con número de línea
       return res.status(500).json({
         error: 'Failed to process on-demand audio playlist',
         code: 'PLAY_AUDIO_FAILED',
+        details: error.message
       });
     }
   }

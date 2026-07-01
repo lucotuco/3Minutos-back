@@ -727,7 +727,7 @@ router.post(
       const greetingPromise = (async () => {
         let greetingUrl = user.greetingAudioUrl;
         if (!greetingUrl || user.name !== user.greetingNameUsed) {
-          const greetingText = `Hola ${user.name}. Estas son tus noticias curadas para hoy.`;
+          const greetingText = `Hola ${user.name}. Estas son tus noticias de hoy.`;
           const tempGreetingPath = path.join(os.tmpdir(), `greeting-${user._id}-${Date.now()}.mp3`);
           const storageKey = `greetings/user-${user._id}`;
 

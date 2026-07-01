@@ -54,9 +54,30 @@ function normalizeText(value) {
     .trim();
 }
 
+
+
 function includesOpinionKeyword(value) {
   const normalized = normalizeText(value);
   return OPINION_KEYWORDS.some((kw) => normalized.includes(normalizeText(kw)));
+}
+
+function calculateTitleSimilarity(title1, title2) {
+  if (!title1 || !title2) return 0;
+  
+  const cleanText = (t) => t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w\s]/g, " ");
+  
+  const words1 = new Set(cleanText(title1).split(/\s+/).filter(w => w.length > 3));
+  const words2 = new Set(cleanText(title2).split(/\s+/).filter(w => w.length > 3));
+  
+  if (words1.size === 0 || words2.size === 0) return 0;
+  
+  let intersection = 0;
+  for (const w of words1) {
+    if (words2.has(w)) intersection++;
+  }
+  
+  const union = words1.size + words2.size - intersection;
+  return intersection / union;
 }
 
 function isOpinionArticle(article = {}) {
@@ -74,10 +95,23 @@ function isOpinionArticle(article = {}) {
   return false;
 }
 
-function isUsableDigestArticle(article, usedUrls) {
-  if (!article?.url)             return false;
+
+function isUsableDigestArticle(article, usedUrls, usedTitles = []) {
+  if (!article?.url) return false;
   if (usedUrls.has(article.url)) return false;
   if (isOpinionArticle(article)) return false;
+
+  // FILTRO ANTI-DUPLICADOS POR SIMILITUD (Si el título se parece más de un 40% a algo ya leído)
+  const candidateTitle = article.neutralTitle || article.title || "";
+  for (const seenTitle of usedTitles) {
+    const similarity = calculateTitleSimilarity(candidateTitle, seenTitle);
+    
+    if (similarity > 0.40) {
+      console.log(`      ⛔ [SIMILITUD ${Math.round(similarity*100)}%] Descartando: "${candidateTitle}" (Se parece a: "${seenTitle}")`);
+      return false; // Descartamos la noticia porque ya leyó algo casi igual
+    }
+  }
+
   return true;
 }
 
@@ -132,9 +166,11 @@ async function findCandidatesForTopic(topic, limit, useCutoff = true) {
 async function pickBestArticlePerTopic(topics = [], options = {}) {
   if (!Array.isArray(topics) || topics.length === 0) return [];
 
-  const { perTopicLimit = 10, alreadyShownUrls = [] } = options;
+  // 👇 MODIFICACIÓN: Recibimos los títulos ya leídos 👇
+  const { perTopicLimit = 10, alreadyShownUrls = [], alreadyShownTitles = [] } = options;
 
   const usedUrls = new Set(alreadyShownUrls);
+  const usedTitles = [...alreadyShownTitles]; // Copiamos al array local
   const results  = [];
 
   // Pre-armar la lista de tópicos oficiales para que la validación sea rápida
@@ -160,7 +196,7 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
     let isOfficial = false;
 
     if (officialTopicsMap.has(normTopic)) {
-      topic = officialTopicsMap.get(normTopic); // Transforma "tenis" -> "Tenis"
+      topic = officialTopicsMap.get(normTopic); 
       isOfficial = true;
     }
     
@@ -169,23 +205,23 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
     let fallbackCategory = null;
 
     if (isOfficial) {
-      // INTENTO 1: Buscar notas frescas (últimos 7 días)
+      // INTENTO 1: Buscar notas frescas
       let candidates = await findCandidatesForTopic(topic, perTopicLimit, true);
-      bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
+      // 👇 MODIFICACIÓN: Le agregamos `usedTitles` a todos los filter/find 👇
+      bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls, usedTitles));
 
-      // INTENTO 2: Si no hay frescas, buscar históricas de ESE tema sin límite de fecha
+      // INTENTO 2: Si no hay frescas, buscar históricas de ESE tema sin límite
       if (!bestUnused) {
         candidates = await findCandidatesForTopic(topic, perTopicLimit, false);
-        bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
+        bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls, usedTitles));
       }
 
-      // INTENTO 3: Si definitivamente no hay NADA de Rugby, fallback a "Deportes"
+      // INTENTO 3: Fallback a Categoría (ej: Rugby -> Deportes)
       if (!bestUnused) {
         const category = TOPIC_TO_CATEGORY[topic];
         if (category && category !== topic) {
-          // Acá sí le dejamos el cutoff = true para que no te traiga fútbol viejo
           candidates = await findCandidatesForTopic(category, perTopicLimit, true);
-          bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
+          bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls, usedTitles));
           
           if (bestUnused) {
             usedFallback = true;
@@ -195,22 +231,21 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
       }
     } else {
       // ============================================
-      // CAMINO B: TEMA LIBRE (Búsqueda Vectorial)
+      // CAMINO B: TEMA LIBRE (Búsqueda Vectorial Atlas)
       // ============================================
       try {
         const semanticCandidates = await searchArticlesBySimilarityAtlas(topic, { 
           limit: perTopicLimit * 2 
         });
 
-        const usableSemantic = semanticCandidates.filter(a => isUsableDigestArticle(a, usedUrls));
+        // 👇 MODIFICACIÓN: Agregamos usedTitles 👇
+        const usableSemantic = semanticCandidates.filter(a => isUsableDigestArticle(a, usedUrls, usedTitles));
 
         if (usableSemantic.length > 0) {
           const bestMatch = usableSemantic[0];
           
-          // Log para debuguear y ver qué score realmente tira Atlas
-          console.log(`🔍 [Tema Libre] "${topic}" -> Match: "${bestMatch.title}" | Score: ${bestMatch.score?.toFixed(3)} | Topic Real: ${bestMatch.topic || bestMatch.category}`);
+          console.log(`🔍 [Tema Libre] "${topic}" -> Match: "${bestMatch.title}" | Score: ${bestMatch.score?.toFixed(3)}`);
           
-          // Bajamos el umbral a 0.68
           if (bestMatch.score >= 0.60) {
             bestUnused = bestMatch;
             usedFallback = false;
@@ -218,15 +253,15 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
             fallbackCategory = bestMatch.topic || bestMatch.category || 'Entretenimiento/Cultura';
             
             let candidates = await findCandidatesForTopic(fallbackCategory, perTopicLimit);
-            bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
+            bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls, usedTitles));
             usedFallback = true;
             
-            console.warn(`⚠️  Score semántico bajo (${bestMatch.score?.toFixed(2)}) para "${topic}". Fallback a "${fallbackCategory}".`);
+            console.warn(`⚠️  Score semántico bajo. Fallback a "${fallbackCategory}".`);
           }
         } else {
           fallbackCategory = 'Entretenimiento/Cultura';
           let candidates = await findCandidatesForTopic(fallbackCategory, perTopicLimit);
-          bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls));
+          bestUnused = candidates.find((article) => isUsableDigestArticle(article, usedUrls, usedTitles));
           usedFallback = true;
         }
       } catch (error) {
@@ -246,6 +281,9 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
     }
 
     usedUrls.add(bestUnused.url);
+    // 👇 MODIFICACIÓN VITAL: Bloqueamos el título nuevo para la próxima vuelta del bucle
+    usedTitles.push(bestUnused.neutralTitle || bestUnused.title || "");
+    
     results.push({ 
       topic, 
       article: bestUnused,

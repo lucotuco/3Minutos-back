@@ -60,7 +60,7 @@ async function buildUserNewsDigest({
     // numCandidates ya no aplica — la búsqueda es por categoría/topic exacto
     const picks = await timeAsync(
       'pickBestArticlePerTopic',
-      () => pickBestArticlePerTopic(topics, { perTopicLimit, alreadyShownUrls }),
+      () => pickBestArticlePerTopic(topics, { perTopicLimit, alreadyShownUrls,alreadyShownTitles }),
       { topics, perTopicLimit }
     );
 

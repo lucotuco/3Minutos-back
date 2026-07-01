@@ -76,8 +76,46 @@ function calculateTitleSimilarity(title1, title2) {
     if (words2.has(w)) intersection++;
   }
   
-  const union = words1.size + words2.size - intersection;
-  return intersection / union;
+  // LA MAGIA: Dividimos por el tamaño del título más corto.
+  // Si uno es corto y el otro largo, pero comparten "Lebron James Lakers", da altísimo.
+  const shortestLength = Math.min(words1.size, words2.size);
+  return intersection / shortestLength;
+}
+
+// 👇 FILTRO CON LOGS DETALLADOS PARA DEBUGGEAR 👇
+function isUsableDigestArticle(article, usedUrls, usedTitles = []) {
+  if (!article?.url) return false;
+  if (usedUrls.has(article.url)) return false;
+  if (isOpinionArticle(article)) return false;
+
+  const candidateTitle = article.neutralTitle || article.title || "";
+  
+  let maxSim = 0;
+  let mostSimilarTitle = "";
+
+  // Buscamos cuál es el título viejo que más se le parece
+  for (const seenTitle of usedTitles) {
+    const similarity = calculateTitleSimilarity(candidateTitle, seenTitle);
+    if (similarity > maxSim) {
+      maxSim = similarity;
+      mostSimilarTitle = seenTitle;
+    }
+  }
+
+  // UMBRAL: Si más del 55% de las palabras del título más corto coinciden, lo bloqueamos.
+  if (maxSim >= 0.55) {
+    console.log(`      ⛔ [SIMILITUD ${Math.round(maxSim*100)}%] BLOQUEADO:`);
+    console.log(`         ❌ Intentó entrar: "${candidateTitle}"`);
+    console.log(`         📄 Ya habías leído: "${mostSimilarTitle}"\n`);
+    return false;
+  } else if (maxSim > 0.15) {
+    // Si se parece un poquito pero pasa, te lo muestro en verde para que veas que el filtro funcionó bien
+    console.log(`      ✅ [SIMILITUD ${Math.round(maxSim*100)}%] PERMITIDO:`);
+    console.log(`         🆕 Entró: "${candidateTitle}"`);
+    console.log(`         🔍 Se evaluó contra: "${mostSimilarTitle}"\n`);
+  }
+
+  return true;
 }
 
 function isOpinionArticle(article = {}) {
@@ -95,25 +133,6 @@ function isOpinionArticle(article = {}) {
   return false;
 }
 
-
-function isUsableDigestArticle(article, usedUrls, usedTitles = []) {
-  if (!article?.url) return false;
-  if (usedUrls.has(article.url)) return false;
-  if (isOpinionArticle(article)) return false;
-
-  // FILTRO ANTI-DUPLICADOS POR SIMILITUD (Si el título se parece más de un 40% a algo ya leído)
-  const candidateTitle = article.neutralTitle || article.title || "";
-  for (const seenTitle of usedTitles) {
-    const similarity = calculateTitleSimilarity(candidateTitle, seenTitle);
-    
-    if (similarity > 0.40) {
-      console.log(`      ⛔ [SIMILITUD ${Math.round(similarity*100)}%] Descartando: "${candidateTitle}" (Se parece a: "${seenTitle}")`);
-      return false; // Descartamos la noticia porque ya leyó algo casi igual
-    }
-  }
-
-  return true;
-}
 
 async function findCandidatesForTopic(topic, limit, useCutoff = true) {
   const isMainCategory = ALL_CATEGORIES.includes(topic);

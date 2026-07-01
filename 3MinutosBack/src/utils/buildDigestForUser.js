@@ -19,27 +19,22 @@ async function buildDigestForUser(userId) {
     const user = await UserPreference.findById(userId).lean();
     if (!user || !user.isActive) throw new Error('User not found or inactive');
 
-    // 1. Buscamos URLs y Títulos en los últimos runs
-    const runItems = previousRuns.flatMap((run) => getDigestItemsFromRun(run));
-    const runUrls = runItems.map((item) => item?.url).filter(Boolean);
-    const runTitles = runItems.map((item) => item?.title).filter(Boolean);
-
-    // 2. Buscamos el historial definitivo
+   // 1. Buscamos el historial definitivo directamente de la base de datos
     const history = await getAlreadyShownHistoryForUser(user._id);
 
-    // 3. Fusionamos ambas listas
-    const uniqueAlreadyShownUrls = [...new Set([...runUrls, ...history.urls])];
-    const uniqueAlreadyShownTitles = [...new Set([...runTitles, ...history.titles])];
+    // 2. Extraemos URLs y Títulos únicos
+    const uniqueAlreadyShownUrls = [...new Set(history.urls)];
+    const uniqueAlreadyShownTitles = [...new Set(history.titles)];
 
     console.log(`🛡️ [FILTRO ANTI-DUPLICADOS] Excluyendo ${uniqueAlreadyShownUrls.length} URLs y evaluando similitud contra ${uniqueAlreadyShownTitles.length} títulos.`);
 
-    // 4. Generamos el Digest
+    // 3. Generamos el Digest (Asegurate de que se llame buildUserNewsDigest)
     const digest = await timeAsync(
       'buildUserNewsDigest',
       () => buildUserNewsDigest({
         topics: user.topics || [],
         alreadyShownUrls: uniqueAlreadyShownUrls,
-        alreadyShownTitles: uniqueAlreadyShownTitles,
+        alreadyShownTitles: uniqueAlreadyShownTitles, // <-- PASAMOS LOS TÍTULOS
       }),
       {
         userId: String(user._id),

@@ -1266,7 +1266,7 @@
     "category": "general",
     "country": "mx",
     "priority": 2,
-    "active": true
+    "active": false
   },
   {
     "name": "Reforma Nacional",
@@ -1275,7 +1275,7 @@
     "category": "national",
     "country": "mx",
     "priority": 2,
-    "active": true
+    "active": false
   },
   {
     "name": "El Siglo de Torreón",

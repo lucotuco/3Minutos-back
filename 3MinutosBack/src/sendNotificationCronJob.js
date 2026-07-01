@@ -38,9 +38,9 @@ function startNotificationJob() {
       try {
         const now = new Date();
 
-        console.log(`\n🔔 Ejecutando job de notificaciones (AR): ${formatArgentinaDateTime(now)}`);
-        console.log(`🗓 Fecha AR: ${getLocalDateString(now)}`);
-        console.log(`🕒 Hora AR: ${formatArgentinaHour(now)}`);
+        //console.log(`\n🔔 Ejecutando job de notificaciones (AR): ${formatArgentinaDateTime(now)}`);
+        //console.log(`🗓 Fecha AR: ${getLocalDateString(now)}`);
+        //console.log(`🕒 Hora AR: ${formatArgentinaHour(now)}`);
 
         await sendPreparedDigestNotifications({ now });
       } catch (error) {

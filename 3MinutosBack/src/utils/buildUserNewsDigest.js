@@ -44,6 +44,7 @@ async function buildUserNewsDigest({
   topics          = [],
   alreadyShownUrls = [],
   perTopicLimit   = 10,
+  alreadyShownTitles = []
 } = {}) {
   const totalTimer = startTimer('buildUserNewsDigest total', {
     topics,

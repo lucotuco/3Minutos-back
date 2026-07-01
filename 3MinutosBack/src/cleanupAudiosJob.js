@@ -16,7 +16,7 @@ function startCleanupAudiosJob() {
         const todayFolder = getLocalDateString(new Date());
         console.log(`\n🧹 [CRON] Iniciando limpieza de audios viejos en Cloudinary... (Excluyendo carpeta: ${todayFolder})`);
         
-        await cleanupOldDigestAudios({ todayFolder });
+        await cleanupOldDigestAudios();
         
         console.log('✅ [CRON] Limpieza de audios finalizada');
       } catch (error) {

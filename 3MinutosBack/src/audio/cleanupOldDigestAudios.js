@@ -1,18 +1,25 @@
 const { cloudinary } = require('../config/cloudinary');
 
-async function cleanupOldDigestAudios({ todayFolder }) {
+async function cleanupOldDigestAudios() {
   try {
+    // Le decimos a Cloudinary que busque en la nueva carpeta de noticias
     const result = await cloudinary.api.resources({
       type: 'upload',
       resource_type: 'video',
-      prefix: 'digests-audio/',
+      prefix: 'articles-chunks/', // Carpeta nueva de audios separados
       max_results: 500,
     });
 
+    const now = new Date();
+
+    // Filtramos los que tengan más de 72 horas (3 días) de creados
     const oldResources = (result.resources || []).filter((file) => {
-      const publicId = file.public_id || '';
-      return publicId.startsWith('digests-audio/') && !publicId.startsWith(`digests-audio/${todayFolder}/`);
+      const createdAt = new Date(file.created_at);
+      const diffHours = (now - createdAt) / (1000 * 60 * 60);
+      return diffHours > 72; // Si tiene más de 72 horas de vida, es basura
     });
+
+    console.log(`🧹 Se encontraron ${oldResources.length} audios de noticias caducados para borrar.`);
 
     for (const file of oldResources) {
       try {

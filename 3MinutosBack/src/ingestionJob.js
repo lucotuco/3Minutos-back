@@ -37,6 +37,11 @@ function runScript(scriptRelativePath, label) {
         INGESTION_CHILD_PROCESS: 'true',
       },
     });
+    const timeoutId = setTimeout(() => {
+      console.log(`⏳ ¡TIMEOUT! Matando proceso colgado: ${label}`);
+      child.kill('SIGKILL'); // Lo asesinamos sin piedad
+      reject(new Error(`${label} excedió el tiempo límite de 15 minutos y fue abortado.`));
+    }, 60 * 60 * 1000);
 
     child.on('error', (error) => {
       reject(new Error(`${label}: ${error.message}`));

@@ -15,6 +15,7 @@ dotenv.config();
 const FALLBACK_IMAGE_URL = 'https://st2.depositphotos.com/1036149/5381/i/950/depositphotos_53811511-stock-illustration-duck-with-sunglasses.jpg';
 
 const parser = new Parser({
+  timeout: 30000,
   customFields: {
     item: [
       ['media:content', 'media:content'],

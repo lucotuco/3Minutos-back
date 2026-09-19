@@ -8,17 +8,27 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
-const apiKey = process.env.OPENAI_API_KEY;
+const apiKeyEmbeddings = process.env.OPENAI_API_KEY_EMBEDDINGS;
+const apiKeyReview = process.env.OPENAI_API_KEY_REVIEW;
 
-if (!apiKey) {
-  throw new Error('Falta OPENAI_API_KEY');
+if (!apiKeyEmbeddings) {
+  throw new Error('Falta OPENAI_API_KEY_EMBEDDINGS');
 }
 
-const openai = new OpenAI({
-  apiKey,
+if (!apiKeyReview) {
+  throw new Error('Falta OPENAI_API_KEY_REVIEW');
+}
+
+const openaiEmbeddings = new OpenAI({
+  apiKey: apiKeyEmbeddings,
+});
+
+const openaiReview = new OpenAI({
+  apiKey: apiKeyReview,
 });
 
 module.exports = {
-  openai,
-  OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-5-mini',
+  openaiEmbeddings,
+  openaiReview,
+  OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-4o-mini',
 };

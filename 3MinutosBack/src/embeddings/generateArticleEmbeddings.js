@@ -1,4 +1,4 @@
-const { openai } = require('../config/openai');
+const { openaiEmbeddings } = require('../config/openai');
 
 const EMBEDDING_MODEL = 'text-embedding-3-small';
 
@@ -9,7 +9,7 @@ async function generateArticleEmbedding(article = {}) {
     throw new Error('Missing embeddingText');
   }
 
-  const response = await openai.embeddings.create({
+  const response = await openaiEmbeddings.embeddings.create({
     model: EMBEDDING_MODEL,
     input: embeddingText,
   });

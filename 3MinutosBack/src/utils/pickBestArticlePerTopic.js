@@ -1,11 +1,25 @@
 const Article = require('../models/Article');
 const { enrichArticleRanking } = require('./articleRanking');
-const { ALL_CATEGORIES, ALL_OFFICIAL_TOPICS } = require('../ingestion/classifyArticleTopic');
 const { searchArticlesBySimilarityAtlas } = require('../embeddings/searchArticlesBySimilarityAtlas');
-const { openai } = require('../config/openai');
+const { openaiReview } = require('../config/openai');
 const { cosineSimilarity } = require('../embeddings/searchArticlesBySimilarity');
 
 const MAX_ARTICLE_AGE_HOURS = 48;
+
+const CATEGORIES = {
+  'Política':       ['Gobierno Nacional', 'Justicia', 'Elecciones', 'Educación', 'Seguridad'],
+  'Economía':       ['Dólar y Mercados', 'Inflación y Consumo', 'Empresas y Negocios', 'Inversiones', 'Emprendedores'],
+  'Internacional':  ['EEUU', 'Medio Oriente', 'Europa', 'América Latina', 'Conflictos', 'Geopolítica'],
+  'Deportes':       ['Fútbol', 'F1', 'Básquet', 'Tenis', 'Rugby'],
+  'Sociedad':       ['Salud', 'Bienestar', 'Clima y Ambiente', 'Historias Humanas', 'Tendencias y Vida'],
+  'Tecnología':     ['Inteligencia Artificial', 'Ciencia y Espacio', 'Apps y Redes', 'Innovación', 'Videojuegos'],
+  'Entretenimiento/Cultura': ['Cine y Series', 'Música', 'Turismo y Viajes', 'Streaming', 'Autos', 'Viral y Trending', 'Teatro y Literatura'],
+};
+
+const ALL_CATEGORIES = Object.keys(CATEGORIES);
+const TOPIC_TO_CATEGORY = Object.fromEntries(
+  Object.entries(CATEGORIES).flatMap(([cat, topics]) => topics.map((t) => [t, cat]))
+);
 
 const queryExpansionCache = new Map();
 
@@ -14,16 +28,6 @@ function getFreshnessCutoff() {
 }
 
 const OPINION_KEYWORDS = ['opinion', 'opinión', 'columna', 'columnista', 'editorial', 'analisis', 'análisis'];
-
-const TOPIC_TO_CATEGORY = {
-  'Gobierno Nacional': 'Política', 'Justicia': 'Política', 'Elecciones': 'Política', 'Educación': 'Política', 'Seguridad': 'Política',
-  'Dólar y Mercados': 'Economía', 'Inflación y Consumo': 'Economía', 'Empresas y Negocios': 'Economía', 'Inversiones': 'Economía', 'Emprendedores': 'Economía',
-  'EEUU': 'Internacional', 'Medio Oriente': 'Internacional', 'Europa': 'Internacional', 'América Latina': 'Internacional', 'Conflictos': 'Internacional', 'Geopolítica': 'Internacional',
-  'Fútbol': 'Deportes', 'F1': 'Deportes', 'Básquet': 'Deportes', 'Tenis': 'Deportes', 'Rugby': 'Deportes',
-  'Salud': 'Sociedad', 'Bienestar': 'Sociedad', 'Clima y Ambiente': 'Sociedad', 'Historias Humanas': 'Sociedad', 'Tendencias Y Vida': 'Sociedad',
-  'Inteligencia Artificial': 'Tecnología', 'Ciencia y Espacio': 'Tecnología', 'Apps y Redes': 'Tecnología', 'Innovación': 'Tecnología', 'Videojuegos': 'Tecnología',
-  'Cine y Series': 'Entretenimiento/Cultura', 'Música': 'Entretenimiento/Cultura', 'Turismo y Viajes': 'Entretenimiento/Cultura', 'Streaming': 'Entretenimiento/Cultura', 'Autos': 'Entretenimiento/Cultura', 'Viral y Trending': 'Entretenimiento/Cultura', 'Teatro y Literatura': 'Entretenimiento/Cultura',
-};
 
 function normalizeText(value) {
   return String(value || '')
@@ -46,7 +50,7 @@ async function expandTopicForEmbedding(rawTopic) {
   const currentYear = new Date().getFullYear();
 
   try {
-    const response = await openai.chat.completions.create({
+    const response = await openaiReview.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         {
@@ -60,7 +64,7 @@ async function expandTopicForEmbedding(rawTopic) {
         },
         { role: 'user', content: topic }
       ],
-      temperature: 0, // Temperatura 0 para que sea analítico y no creativo
+      temperature: 0,
       max_tokens: 25,
     });
 
@@ -70,7 +74,7 @@ async function expandTopicForEmbedding(rawTopic) {
     return expanded;
   } catch (error) {
     console.warn(`⚠️ Falló expansión IA para "${topic}", usando original:`, error.message);
-    return topic; // Si falla, devolvemos el tópico limpio, sin agregar basura genérica.
+    return topic;
   }
 }
 
@@ -238,11 +242,7 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
       strictCategoryFilter = TOPIC_TO_CATEGORY[topic]; 
     }
 
-    // -------------------------------------------------------------
-    // CONSULTA UNIFICADA: MOTOR HÍBRIDO (Vectores + BM25) CON 3 ZONAS
-    // -------------------------------------------------------------
     try {
-
       const searchOptions = { 
         limit: perTopicLimit * 2,
         minDate: getFreshnessCutoff() 
@@ -261,13 +261,11 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
 
         console.log(`🔍 [Motor Híbrido] "${trimmedTopic}" -> Match: "${bestMatch.title}" | Score: ${score.toFixed(3)} | Corral: ${strictCategoryFilter || 'Libre'}`);
 
-        // 🟢 ZONA VERDE: Confianza Absoluta (Pasa directo)
         if (score >= 0.94) {
           console.log(`      🟢 [ZONA VERDE] Confianza absoluta. Pasa directo sin filtro léxico.`);
           bestUnused = bestMatch;
           usedFallback = false;
         } 
-        // 🟡 ZONA AMARILLA: Dudoso (Filtro léxico estricto)
         else if (score >= 0.80) {
           console.log(`      🟡 [ZONA AMARILLA] Match dudoso. Verificando coincidencia léxica exacta...`);
           
@@ -301,7 +299,6 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
             bestUnused = null; 
           }
         } 
-        // 🔴 ZONA ROJA: Rechazo absoluto
         else {
           console.log(`      🔴 [ZONA ROJA] Score muy bajo (${score.toFixed(3)}). Rechazo directo.`);
           bestUnused = null;
@@ -315,15 +312,11 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
       bestUnused = null;
     }
 
-    // -------------------------------------------------------------
-    // DEGRADACIÓN ELEGANTE Y RESCATE SÓLO PARA TÓPICOS OFICIALES
-    // -------------------------------------------------------------
     if (!bestUnused) {
       console.log(`🚨 [RESCATE] No hubo resultados para "${topic}". Activando rescate híbrido enfocado en Argentina...`);
       try {
         const emergencyCategory = fallbackCategory || strictCategoryFilter || 'Sociedad';
         
-        // 💥 EL ANCLA GEOGRÁFICA: Forzamos al motor a buscar contexto argentino
         const emergencyQuery = `${emergencyCategory} Argentina actualidad nacional`;
         
         const emergencySearchOptions = { 
@@ -332,20 +325,17 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
           category: emergencyCategory
         };
 
-        // Si el usuario pedía deportes, mantenemos el corral estricto
         const topicLower = normalizeText(topic);
         if (topicLower.includes('river') || topicLower.includes('boca') || topicLower.includes('champions') || topicLower.includes('seleccion') || topicLower.includes('futbol') || topicLower.includes('tenis')) {
           emergencySearchOptions.category = 'Deportes';
         }
 
-        // 💥 Llamamos al poderoso motor híbrido en lugar de un find() ciego
         const emergencyCandidates = await searchArticlesBySimilarityAtlas(
           emergencyQuery, 
           emergencyQuery, 
           emergencySearchOptions
         );
 
-        // Los candidatos ya vienen rankeados y normalizados. Solo buscamos el primero que no hayamos usado.
         bestUnused = emergencyCandidates.find((article) => isUsableDigestArticle(article, usedUrls, dynamicSeenEmbeddings));
         
         if (bestUnused) {

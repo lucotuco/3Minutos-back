@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const Article = require('../models/Article');
 const GlobalContext = require('../models/GlobalContext');
-const { openai, OPENAI_MODEL } = require('../config/openai');
+const { openaiReview, OPENAI_MODEL } = require('../config/openai');
 require('dotenv').config();
 async function generateDailyContext() {
   try {
@@ -32,7 +32,7 @@ async function generateDailyContext() {
     const headlines = recentArticles.map(a => `- [${a.category}] ${a.title}`).join('\n');
 
     // 2. LA SÍNTESIS: Le pedimos a la IA que entienda el mundo hoy
-    const response = await openai.chat.completions.create({
+    const response = await openaiReview.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {

@@ -2,7 +2,7 @@ const { z } = require('zod');
 const { zodTextFormat } = require('openai/helpers/zod');
 
 const Article = require('../models/Article');
-const { openai, OPENAI_MODEL } = require('../config/openai');
+const { openaiReview, OPENAI_MODEL } = require('../config/openai');
 const { startTimer } = require('../utils/timing');
 
 // 🛡️ MODIFICACIÓN 1: Relajamos los límites máximos para evitar que Zod falle
@@ -217,7 +217,7 @@ async function generateNeutralCuration(articleId, options = {}) {
   const prompt = buildPrompt(article);
 
   try {
-    const response = await openai.responses.parse({
+    const response = await openaiReview.responses.parse({
       model: OPENAI_MODEL,
       store: false,
       input: [

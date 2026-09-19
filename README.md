@@ -2,8 +2,6 @@
 
 Welcome to the backend repository for **3Minutos**, an automated, AI-powered news curation and delivery platform. This service ingests, categorizes, neutralizes, and summarizes daily news to generate personalized 3-minute digests (in both text and audio formats) for users.
 
-> **Reference File:** `lucotuco-3minutos-back-8a5edab282632443.txt`
-
 ---
 
 ## 🚀 Key Features

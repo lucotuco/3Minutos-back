@@ -9,6 +9,8 @@ const { adaptRssArticle } = require('./adapter/rssAdapter');
 const { processArticle } = require('./processArticle');
 const { saveNormalizedArticle } = require('./saveNormalizedArticle');
 const { reviewArticlesWithAIBatch } = require('./reviewArticlesWithAIBatch');
+const { generateArticleEmbedding } = require('../embeddings/generateArticleEmbeddings');
+const { buildEmbeddingText } = require('../embeddings/buildEmbeddingsText');
 
 const PostlightParser = require('@postlight/parser');
 
@@ -29,6 +31,8 @@ const parser = new Parser({
   }
 });
 const AI_BATCH_SIZE = Number(process.env.AI_BATCH_SIZE || 10);
+const COSINE_SIMILARITY_THRESHOLD = 0.92;
+const ATLAS_SCORE_THRESHOLD = (1 + COSINE_SIMILARITY_THRESHOLD) / 2;
 
 function loadSources() {
   const filePath = path.join(__dirname, '..', 'Sources.json');
@@ -38,7 +42,7 @@ function loadSources() {
 
 async function connectDB() {
   await mongoose.connect(process.env.MONGODB_URI);
-  console.log('✅ Mongo conectado a:', mongoose.connection.name);
+  console.log('Mongo conectado a:', mongoose.connection.name);
 }
 
 function splitIntoChunks(items = [], chunkSize = 10) {
@@ -61,7 +65,7 @@ async function saveArticles(articles = []) {
       else skipped++;
     } catch (error) {
       errors++;
-      console.log(`❌ Error guardando artículo -> ${error.message}`);
+      console.log(`Error guardando articulo -> ${error.message}`);
     }
   }
 
@@ -82,8 +86,7 @@ async function filterExistingArticles(articles = []) {
 
   for (const article of articles) {
     if (!article?.url) continue;
-    
-    // Evitamos procesar dos veces la misma URL en el mismo lote
+
     if (!uniqueArticlesMap.has(article.url)) {
       uniqueArticlesMap.set(article.url, article);
       urls.push(article.url);
@@ -91,11 +94,8 @@ async function filterExistingArticles(articles = []) {
     }
   }
 
-  // ⏱️ Límite de tiempo: solo buscamos títulos duplicados en los últimos 3 días 
-  // para que la consulta a MongoDB sea rapidísima y no afecte el rendimiento.
   const limiteDias = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
 
-  // 💥 LA MAGIA: Buscamos si ya existe la URL o el Título en la base de datos
   const existingArticles = await Article.find({
     $or: [
       { url: { $in: urls } },
@@ -106,7 +106,6 @@ async function filterExistingArticles(articles = []) {
     ]
   }).select('url title');
 
-  // Creamos Sets para búsquedas ultrarrápidas en memoria
   const existingUrls = new Set(existingArticles.map((article) => article.url));
   const existingTitles = new Set(existingArticles.map((article) => article.title?.trim()));
 
@@ -115,8 +114,7 @@ async function filterExistingArticles(articles = []) {
 
   for (const article of uniqueArticlesMap.values()) {
     const titleTrimmed = article.title?.trim();
-    
-    // 🛡️ BARRERA: Si la URL ya existe O el Título ya existe, es un duplicado de agencia
+
     if (existingUrls.has(article.url) || (titleTrimmed && existingTitles.has(titleTrimmed))) {
       duplicateArticles.push(article);
     } else {
@@ -127,6 +125,65 @@ async function filterExistingArticles(articles = []) {
   return {
     newArticles,
     duplicateArticles,
+  };
+}
+
+async function filterVectorDuplicates(articles = []) {
+  const uniqueArticles = [];
+  let vectorSkipped = 0;
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  for (const article of articles) {
+    try {
+      const embeddingText = buildEmbeddingText(article);
+      article.embeddingText = embeddingText;
+
+      const { vector, embeddingModel } = await generateArticleEmbedding(article);
+
+      const vectorResults = await Article.aggregate([
+        {
+          $vectorSearch: {
+            index: 'articles_embedding_index',
+            path: 'embedding',
+            queryVector: vector,
+            numCandidates: 50,
+            limit: 1,
+            filter: {
+              publishedAt: { $gte: twentyFourHoursAgo }
+            }
+          }
+        },
+        {
+          $project: {
+            _id: 1,
+            title: 1,
+            score: { $meta: 'vectorSearchScore' }
+          }
+        }
+      ]);
+
+      if (vectorResults.length > 0 && vectorResults[0].score >= ATLAS_SCORE_THRESHOLD) {
+        console.log(`Duplicado vectorial detectado (score: ${vectorResults[0].score.toFixed(4)}): ${article.title}`);
+        vectorSkipped++;
+        continue;
+      }
+
+      article.embedding = vector;
+      article.embeddingStatus = 'done';
+      article.embeddingModel = embeddingModel;
+      article.embeddingGeneratedAt = new Date();
+      article.embeddingError = '';
+
+      uniqueArticles.push(article);
+    } catch (error) {
+      console.log(`Error en chequeo vectorial para: ${article.title} -> ${error.message}`);
+      uniqueArticles.push(article);
+    }
+  }
+
+  return {
+    uniqueArticles,
+    vectorSkipped,
   };
 }
 
@@ -157,14 +214,12 @@ async function runRssIngestion() {
 
       try {
         const feed = await parser.parseURL(source.url);
-        //const items = feed.items || [];
         const top50Items = feed.items.slice(0, 50);
-        console.log(`📰 ${source.name} -> ${top50Items.length} items`);
+        console.log(`${source.name} -> ${top50Items.length} items`);
 
         const processedArticles = [];
 
-        for (const item of top50Items) 
-        {
+        for (const item of top50Items) {
           try {
             const adapted = adaptRssArticle(item, source);
 
@@ -172,39 +227,40 @@ async function runRssIngestion() {
             const isAuroraLogo = adapted.imageUrl && adapted.imageUrl.includes('LOGO-AURORA');
 
             if (isFallbackImage || isAuroraLogo) {
-              console.log(`🦆 Noticia descartada por no tener imagen válida: ${adapted.title}`);
-              continue; 
+              console.log(`Noticia descartada por no tener imagen valida: ${adapted.title}`);
+              continue;
             }
 
             let contentText = String(adapted.rawSummary || adapted.contentSnippet || '').trim();
 
             if (contentText.length < 250) {
-              console.log(`🛟 Rescatando nota corta de ${source.name} (${contentText.length} chars)...`);
-              
-              await new Promise(resolve => setTimeout(resolve, 500));
-              
+              console.log(`Rescatando nota corta de ${source.name} (${contentText.length} chars)...`);
+
+              await new Promise((resolve) => setTimeout(resolve, 500));
+
               try {
                 const parsed = await PostlightParser.parse(adapted.url, {
                   headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                  }
+                    'User-Agent':
+                      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                  },
                 });
 
-                const cleanExtracted = parsed.content 
-                  ? parsed.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() 
+                const cleanExtracted = parsed.content
+                  ? parsed.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
                   : '';
 
                 if (cleanExtracted.length >= 250) {
                   adapted.rawSummary = cleanExtracted;
                   adapted.contentSnippet = cleanExtracted;
-                  console.log(`   ✅ Rescate exitoso: ${cleanExtracted.length} chars recuperados.`);
+                  console.log(`Rescate exitoso: ${cleanExtracted.length} chars recuperados.`);
                 } else {
-                  console.log(`   ❌ Descartada: La nota extraída tiene solo ${cleanExtracted.length} chars.`);
-                  continue; 
+                  console.log(`Descartada: La nota extraida tiene solo ${cleanExtracted.length} chars.`);
+                  continue;
                 }
               } catch (parseError) {
-                console.log(`   ❌ Falló el rescate de Postlight: ${parseError.message}`);
-                continue; 
+                console.log(`Fallo el rescate de Postlight: ${parseError.message}`);
+                continue;
               }
             }
 
@@ -215,7 +271,7 @@ async function runRssIngestion() {
             processedArticles.push(processed);
           } catch (error) {
             errors++;
-            console.log(`❌ ${source.name} -> ${error.message}`);
+            console.log(`${source.name} -> ${error.message}`);
           }
         }
 
@@ -223,8 +279,11 @@ async function runRssIngestion() {
 
         skipped += duplicateArticles.length;
 
-        const aiChunks = splitIntoChunks(newArticles, AI_BATCH_SIZE);
-        aiBatchCount = newArticles.length;
+        const { uniqueArticles, vectorSkipped } = await filterVectorDuplicates(newArticles);
+        skipped += vectorSkipped;
+
+        const aiChunks = splitIntoChunks(uniqueArticles, AI_BATCH_SIZE);
+        aiBatchCount = uniqueArticles.length;
 
         for (const chunk of aiChunks) {
           try {
@@ -234,7 +293,7 @@ async function runRssIngestion() {
             skipped += batchSaveResult.skipped;
             errors += batchSaveResult.errors;
           } catch (error) {
-            console.log(`❌ ${source.name} -> error batch IA: ${error.message}`);
+            console.log(`${source.name} -> error batch IA: ${error.message}`);
 
             const fallbackArticles = buildFallbackReviewedArticles(chunk, error.message);
             const fallbackSaveResult = await saveArticles(fallbackArticles);
@@ -246,19 +305,19 @@ async function runRssIngestion() {
         }
 
         console.log(
-          `💾 ${source.name} -> creados: ${created}, omitidos: ${skipped}, errores: ${errors}, IA batch: ${aiBatchCount}`
+          `Guardado ${source.name} -> creados: ${created}, omitidos: ${skipped}, errores: ${errors}, IA batch: ${aiBatchCount}`
         );
       } catch (error) {
-        console.log(`❌ Error procesando feed ${source.name}: ${error.message}`);
+        console.log(`Error procesando feed ${source.name}: ${error.message}`);
       }
     }
   } finally {
     await mongoose.disconnect();
-    console.log('✅ Mongo desconectado');
+    console.log('Mongo desconectado');
   }
 }
 
 runRssIngestion().catch((error) => {
-  console.error('❌ Error general RSS:', error.message);
+  console.error('Error general RSS:', error.message);
   process.exit(1);
 });

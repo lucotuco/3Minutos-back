@@ -1,5 +1,5 @@
 const Article = require('../models/Article');
-const { openai, OPENAI_MODEL } = require('../config/openai');
+const { openaiReview, OPENAI_MODEL } = require('../config/openai');
 
 function stripHtml(value) {
   return String(value || '')
@@ -139,7 +139,7 @@ async function generateArticleSummary(articleId) {
   const prompt = buildSummaryPrompt(article);
 
   try {
-    const response = await openai.responses.create({
+    const response = await openaiReview.responses.create({
       model: OPENAI_MODEL,
       reasoning: {
         effort: 'minimal',

@@ -57,9 +57,9 @@ async function expandTopicForEmbedding(rawTopic) {
           role: 'system',
           content: `Sos un experto en expansión de consultas para un motor de búsqueda vectorial periodístico (${currentYear}).
           REGLA 1: Tu respuesta DEBE EMPEZAR con las palabras exactas del usuario. NUNCA las elimines ni las modifiques.
-          REGLA 2: Agregá de 4 a 6 palabras que sean EXCLUSIVAMENTE jerga hiper-técnica, siglas de organizaciones rectoras, elementos físicos únicos del rubro o terminología ultra específica.
-          REGLA 3: PROHIBICIÓN ABSOLUTA de usar palabras genéricas, ambiguas o compartidas entre disciplinas. ESTÁ ESTRICTAMENTE PROHIBIDO incluir en tu respuesta: mundial, torneo, campeonato, competencia, seleccion, nacional, internacional, jugadores, equipo, deporte, historia, actualidad, destacados, eventos, producciones, plataformas.
-          REGLA 4: El objetivo es aislar semánticamente el tema para que no se confunda con otros. Si es un seleccionado (ej: leonas, pumas) inyectá la jerga de su deporte específico.
+          REGLA 2: Agregá de 2 a 4 palabras clave muy específicas que ayuden a aislar el tema. Si es un club, su estadio o apodo directo. Si es un político, su partido o cargo. Si es un país, su capital.
+          REGLA 3: PROHIBICIÓN ABSOLUTA de agregar nombres de rivales, opositores o conceptos contrarios. Si el tema es "River Plate", NO agregues "boca" ni "bosteros".
+          REGLA 4: NO uses palabras genéricas (deporte, equipo, actualidad, noticias).
           Devolvé ÚNICAMENTE una sola línea de texto en minúsculas, sin comas ni signos de puntuación.`
         },
         { role: 'user', content: topic }
@@ -69,11 +69,11 @@ async function expandTopicForEmbedding(rawTopic) {
     });
 
     const expanded = response.choices?.[0]?.message?.content?.trim() || topic;
-    console.log(`🧠 [Query Expansion IA] "${topic}" -> expandido a "${expanded}"`);
+    console.log(`[Query Expansion IA] "${topic}" -> expandido a "${expanded}"`);
     queryExpansionCache.set(normTopic, expanded);
     return expanded;
   } catch (error) {
-    console.warn(`⚠️ Falló expansión IA para "${topic}", usando original:`, error.message);
+    console.warn(`Fallo expansion IA para "${topic}", usando original:`, error.message);
     return topic;
   }
 }
@@ -92,7 +92,7 @@ function isUsableDigestArticle(article, usedUrls, seenEmbeddings = []) {
     const pubDate = new Date(article.publishedAt).getTime();
     const diffHours = (Date.now() - pubDate) / (1000 * 60 * 60);
     if (diffHours > MAX_ARTICLE_AGE_HOURS) {
-      console.log(`      ⛔ [CADUCIDAD ${Math.round(diffHours)} HS] BLOQUEADO POR EDAD: "${article.neutralTitle || article.title}"\n`);
+      console.log(`[CADUCIDAD ${Math.round(diffHours)} HS] BLOQUEADO POR EDAD: "${article.neutralTitle || article.title}"\n`);
       return false;
     }
   }
@@ -116,14 +116,14 @@ function isUsableDigestArticle(article, usedUrls, seenEmbeddings = []) {
   }
 
   if (maxSim >= 0.85) {
-    console.log(`      ⛔ [DUPLICADO SEMÁNTICO ${Math.round(maxSim*100)}%] BLOQUEADO:`);
-    console.log(`         ❌ Intentó entrar: "${candidateTitle}"`);
-    console.log(`         📄 Ya habías leído el evento: "${mostSimilarTitle}"\n`);
+    console.log(`[DUPLICADO SEMANTICO ${Math.round(maxSim*100)}%] BLOQUEADO:`);
+    console.log(`Intento entrar: "${candidateTitle}"`);
+    console.log(`Ya habias leido el evento: "${mostSimilarTitle}"\n`);
     return false;
   } else if (maxSim > 0.50) {
-    console.log(`      ✅ [TEMA RELACIONADO PERO EVENTO DISTINTO ${Math.round(maxSim*100)}%] PERMITIDO:`);
-    console.log(`         🆕 Entró: "${candidateTitle}"`);
-    console.log(`         🔍 Más cercano en historial: "${mostSimilarTitle}"\n`);
+    console.log(`[TEMA RELACIONADO PERO EVENTO DISTINTO ${Math.round(maxSim*100)}%] PERMITIDO:`);
+    console.log(`Entro: "${candidateTitle}"`);
+    console.log(`Mas cercano en historial: "${mostSimilarTitle}"\n`);
   }
 
   return true;
@@ -259,15 +259,15 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
         const bestMatch = usableSemantic[0];
         const score = bestMatch.score || 0;
 
-        console.log(`🔍 [Motor Híbrido] "${trimmedTopic}" -> Match: "${bestMatch.title}" | Score: ${score.toFixed(3)} | Corral: ${strictCategoryFilter || 'Libre'}`);
+        console.log(`[Motor Hibrido] "${trimmedTopic}" -> Match: "${bestMatch.title}" | Score: ${score.toFixed(3)} | Corral: ${strictCategoryFilter || 'Libre'}`);
 
         if (score >= 0.94) {
-          console.log(`      🟢 [ZONA VERDE] Confianza absoluta. Pasa directo sin filtro léxico.`);
+          console.log(`[ZONA VERDE] Confianza absoluta. Pasa directo sin filtro lexico.`);
           bestUnused = bestMatch;
           usedFallback = false;
         } 
         else if (score >= 0.80) {
-          console.log(`      🟡 [ZONA AMARILLA] Match dudoso. Verificando coincidencia léxica exacta...`);
+          console.log(`[ZONA AMARILLA] Match dudoso. Verificando coincidencia lexica exacta...`);
           
           const topicClean = normalizeText(trimmedTopic);
           const contentToSearch = normalizeText(
@@ -291,32 +291,31 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
           }
 
           if (hasLexicalMatch) {
-            console.log(`         ✅ Léxico exitoso. Confirmado.`);
+            console.log(`Lexico exitoso. Confirmado.`);
             bestUnused = bestMatch;
             usedFallback = false;
           } else {
-            console.log(`         ❌ Léxico fallido. Se rechaza la noticia para evitar falsos positivos.`);
+            console.log(`Lexico fallido. Se rechaza la noticia para evitar falsos positivos.`);
             bestUnused = null; 
           }
         } 
         else {
-          console.log(`      🔴 [ZONA ROJA] Score muy bajo (${score.toFixed(3)}). Rechazo directo.`);
+          console.log(`[ZONA ROJA] Score muy bajo (${score.toFixed(3)}). Rechazo directo.`);
           bestUnused = null;
         }
       } else {
-        console.warn(`⚠️ Cero resultados vectoriales válidos para "${trimmedTopic}".`);
+        console.warn(`Cero resultados vectoriales validos para "${trimmedTopic}".`);
         bestUnused = null;
       }
     } catch (error) {
-      console.error(`❌ Error en búsqueda semántica para "${trimmedTopic}":`, error);
+      console.error(`Error en busqueda semantica para "${trimmedTopic}":`, error);
       bestUnused = null;
     }
 
     if (!bestUnused) {
-      console.log(`🚨 [RESCATE] No hubo resultados para "${topic}". Activando rescate híbrido enfocado en Argentina...`);
+      console.log(`[RESCATE] No hubo resultados para "${topic}". Activando rescate hibrido enfocado en categoria general...`);
       try {
         const emergencyCategory = fallbackCategory || strictCategoryFilter || 'Sociedad';
-        
         const emergencyQuery = `${emergencyCategory} Argentina actualidad nacional`;
         
         const emergencySearchOptions = { 
@@ -341,10 +340,10 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
         if (bestUnused) {
           usedFallback = true;
           fallbackCategory = bestUnused.category || emergencyCategory;
-          console.log(`   🆘 [RESCATE EXITOSO] Entregado: "${bestUnused.title}"`);
+          console.log(`[RESCATE EXITOSO] Entregado: "${bestUnused.title}"`);
         }
       } catch (emergencyErr) {
-        console.error(`❌ Error en rescate de emergencia híbrido para "${topic}":`, emergencyErr);
+        console.error(`Error en rescate de emergencia hibrido para "${topic}":`, emergencyErr);
       }
     }
 

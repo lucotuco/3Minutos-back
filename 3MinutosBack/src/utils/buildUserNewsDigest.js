@@ -93,6 +93,11 @@ async function buildUserNewsDigest({
             finalScore:  null,
             usedFallback: pick.usedFallback || false,
             fallbackCategory: pick.fallbackCategory || null,
+            matchZone: pick.matchZone || null,
+            matchScore: pick.matchScore ?? null,
+            matchReason: pick.matchReason || null,
+            corralCategory: pick.corralCategory || null,
+            candidatesEvaluated: pick.candidatesEvaluated || 0,
           };
         }
 
@@ -159,6 +164,11 @@ async function buildUserNewsDigest({
           
           usedFallback:     Boolean(pick.usedFallback),
           fallbackCategory: pick.fallbackCategory || null,
+          matchZone:        pick.matchZone || null,
+          matchScore:       pick.matchScore ?? null,
+          matchReason:      pick.matchReason || null,
+          corralCategory:   pick.corralCategory || null,
+          candidatesEvaluated: pick.candidatesEvaluated || 0,
         };
       })
     );

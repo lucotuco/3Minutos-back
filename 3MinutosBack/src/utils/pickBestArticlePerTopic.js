@@ -3,6 +3,7 @@ const { enrichArticleRanking } = require('./articleRanking');
 const { searchArticlesBySimilarityAtlas } = require('../embeddings/searchArticlesBySimilarityAtlas');
 const { openaiReview } = require('../config/openai');
 const { cosineSimilarity } = require('../embeddings/searchArticlesBySimilarity');
+const { selectBestCandidate, inferCorralCategory } = require('./topicMatching');
 
 const MAX_ARTICLE_AGE_HOURS = 48;
 
@@ -231,7 +232,12 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
     let bestUnused = null;
     let usedFallback = false;
     let fallbackCategory = null;
-    
+    let matchZone = null;
+    let matchScore = null;
+    let corralCategory = null;
+    let candidatesEvaluated = 0;
+    let matchReason = null;
+
     const queryForEmbedding = expandedQueriesMap.get(trimmedTopic) || trimmedTopic;
     const queryExpanded = queryForEmbedding;
 
@@ -253,69 +259,47 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
       }
 
       const semanticCandidates = await searchArticlesBySimilarityAtlas(trimmedTopic, queryForEmbedding, searchOptions);
-      const usableSemantic = semanticCandidates.filter(a => isUsableDigestArticle(a, usedUrls, dynamicSeenEmbeddings));
 
-      if (usableSemantic.length > 0) {
-        const bestMatch = usableSemantic[0];
-        const score = bestMatch.score || 0;
+      // Se evalúan los candidatos EN ORDEN hasta encontrar uno valido (no solo el primero).
+      // Ancla lexica y corral de categoria se derivan de los propios candidatos (ver topicMatching.js).
+      const selection = selectBestCandidate(trimmedTopic, semanticCandidates, {
+        isUsable: (a) => isUsableDigestArticle(a, usedUrls, dynamicSeenEmbeddings),
+        strictCategory: strictCategoryFilter,
+      });
 
-        console.log(`[Motor Hibrido] "${trimmedTopic}" -> Match: "${bestMatch.title}" | Score: ${score.toFixed(3)} | Corral: ${strictCategoryFilter || 'Libre'}`);
+      corralCategory = selection.corral;
+      candidatesEvaluated = selection.candidatesEvaluated;
 
-        if (score >= 0.94) {
-          console.log(`[ZONA VERDE] Confianza absoluta. Pasa directo sin filtro lexico.`);
-          bestUnused = bestMatch;
-          usedFallback = false;
-        } 
-        else if (score >= 0.80) {
-          console.log(`[ZONA AMARILLA] Match dudoso. Verificando coincidencia lexica exacta...`);
-          
-          const topicClean = normalizeText(trimmedTopic);
-          const contentToSearch = normalizeText(
-            `${bestMatch.title} ${bestMatch.rawSummary} ${bestMatch.contentSnippet} ${(bestMatch.tags || []).join(' ')}`
-          );
+      console.log(
+        `[Motor Hibrido] "${trimmedTopic}" -> ${semanticCandidates.length} candidatos | ` +
+        `Corral: ${selection.corral || 'Libre'} | Anclas: [${selection.anchors.join(', ')}] (${selection.anchorMode}) | ` +
+        `Evaluados: ${selection.candidatesEvaluated}`
+      );
 
-          const wordsToMatch = topicClean.split(' ').filter(w => w.length >= 3);
-          let hasLexicalMatch = false;
-
-          if (wordsToMatch.length > 0) {
-            if (wordsToMatch.length <= 3) {
-              hasLexicalMatch = contentToSearch.includes(topicClean) || 
-                                wordsToMatch.every(word => contentToSearch.includes(word));
-            } else {
-              const matchedWords = wordsToMatch.filter(word => contentToSearch.includes(word));
-              hasLexicalMatch = (matchedWords.length >= Math.ceil(wordsToMatch.length * 0.75)) || 
-                                contentToSearch.includes(topicClean);
-            }
-          } else {
-            hasLexicalMatch = contentToSearch.includes(topicClean);
-          }
-
-          if (hasLexicalMatch) {
-            console.log(`Lexico exitoso. Confirmado.`);
-            bestUnused = bestMatch;
-            usedFallback = false;
-          } else {
-            console.log(`Lexico fallido. Se rechaza la noticia para evitar falsos positivos.`);
-            bestUnused = null; 
-          }
-        } 
-        else {
-          console.log(`[ZONA ROJA] Score muy bajo (${score.toFixed(3)}). Rechazo directo.`);
-          bestUnused = null;
-        }
+      if (selection.article) {
+        bestUnused = selection.article;
+        matchZone = selection.zone;
+        matchScore = selection.score;
+        usedFallback = false;
+        matchReason = `${selection.zone} score=${selection.score.toFixed(3)} (candidato #${selection.candidatesEvaluated})`;
+        console.log(`[MATCH ${selection.zone}] "${bestUnused.title}" | Score: ${selection.score.toFixed(3)} | candidato #${selection.candidatesEvaluated}`);
       } else {
-        console.warn(`Cero resultados vectoriales validos para "${trimmedTopic}".`);
-        bestUnused = null;
+        matchReason = semanticCandidates.length === 0 ? 'sin_candidatos' : 'ningun_candidato_valido';
+        console.warn(`Ningun candidato valido para "${trimmedTopic}" (${matchReason}).`);
+        // El corral inferido tambien sirve para que el rescate se quede en el mismo rubro.
+        if (!corralCategory) corralCategory = inferCorralCategory(semanticCandidates.filter((a) => (a.score || 0) >= 0.80).slice(0, 10));
       }
     } catch (error) {
       console.error(`Error en busqueda semantica para "${trimmedTopic}":`, error);
       bestUnused = null;
+      matchReason = 'error_busqueda';
     }
 
     if (!bestUnused) {
       console.log(`[RESCATE] No hubo resultados para "${topic}". Activando rescate hibrido enfocado en categoria general...`);
       try {
-        const emergencyCategory = fallbackCategory || strictCategoryFilter || 'Sociedad';
+        // Rubro del rescate: el oficial, o el que votaron los candidatos del propio tema (sin listas manuales).
+        const emergencyCategory = fallbackCategory || strictCategoryFilter || corralCategory || 'Sociedad';
         const emergencyQuery = `${emergencyCategory} Argentina actualidad nacional`;
         
         const emergencySearchOptions = { 
@@ -323,11 +307,6 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
           minDate: getFreshnessCutoff(),
           category: emergencyCategory
         };
-
-        const topicLower = normalizeText(topic);
-        if (topicLower.includes('river') || topicLower.includes('boca') || topicLower.includes('champions') || topicLower.includes('seleccion') || topicLower.includes('futbol') || topicLower.includes('tenis')) {
-          emergencySearchOptions.category = 'Deportes';
-        }
 
         const emergencyCandidates = await searchArticlesBySimilarityAtlas(
           emergencyQuery, 
@@ -340,6 +319,8 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
         if (bestUnused) {
           usedFallback = true;
           fallbackCategory = bestUnused.category || emergencyCategory;
+          matchZone = 'RESCATE';
+          matchScore = bestUnused.score ?? null;
           console.log(`[RESCATE EXITOSO] Entregado: "${bestUnused.title}"`);
         }
       } catch (emergencyErr) {
@@ -354,6 +335,11 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
         article: null,
         usedFallback: false,
         fallbackCategory: null,
+        matchZone: null,
+        matchScore: null,
+        matchReason,
+        corralCategory,
+        candidatesEvaluated,
       });
       continue;
     }
@@ -374,6 +360,11 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
       article: bestUnused,
       usedFallback,
       fallbackCategory,
+      matchZone,
+      matchScore,
+      matchReason,
+      corralCategory,
+      candidatesEvaluated,
     });
   }
 

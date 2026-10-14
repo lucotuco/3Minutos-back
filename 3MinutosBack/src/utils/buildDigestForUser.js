@@ -76,6 +76,13 @@ async function buildDigestForUser(userId) {
           publishedAt: item.publishedAt || null,
           categoria: item.category || '',
           puntajeNoticia: Number(item.rankingScore ?? item.finalScore ?? item.score ?? 0),
+          usedFallback: Boolean(item.usedFallback),
+          fallbackCategory: item.fallbackCategory || null,
+          zona: item.matchZone || null,
+          scoreBusqueda: item.matchScore ?? null,
+          motivoMatch: item.matchReason || null,
+          corralCategoria: item.corralCategory || null,
+          candidatosEvaluados: item.candidatesEvaluated || 0,
         })),
       }).catch((logError) => {
         console.error('⚠️ [TEST LOG] No se pudo guardar el log de testing:', logError.message);

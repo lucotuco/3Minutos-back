@@ -1,5 +1,4 @@
 const Article = require('../models/Article');
-const { classifyArticleTopic } = require('./classifyArticleTopic');
 const { buildEmbeddingText } = require('../embeddings/buildEmbeddingsText');
 const { generateArticleEmbedding } = require('../embeddings/generateArticleEmbeddings');
 const { cosineSimilarity } = require('../embeddings/searchArticlesBySimilarity');
@@ -20,7 +19,6 @@ async function saveNormalizedArticle(article = {}) {
   // =========================================================
   // FASE 2: Deduplicación Semántica (Vectorial)
   // =========================================================
-  // 1. Armamos el texto y generamos el vector en el aire
   article.embeddingText = buildEmbeddingText(article);
   let newVector = [];
   let embeddingModel = '';
@@ -34,7 +32,6 @@ async function saveNormalizedArticle(article = {}) {
     return { status: 'skipped', reason: 'embedding_failed' };
   }
 
-  // 2. Buscamos candidatos similares en Atlas (solo los de las últimas 72 horas)
   const limiteDias = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
   const candidates = await Article.aggregate([
     {
@@ -52,7 +49,6 @@ async function saveNormalizedArticle(article = {}) {
     }
   ]);
 
-  // 3. Validación matemática exacta en Node.js (85% de similitud)
   for (const candidate of candidates) {
     const similarity = cosineSimilarity(newVector, candidate.embedding);
     if (similarity >= 0.92) {
@@ -64,28 +60,15 @@ async function saveNormalizedArticle(article = {}) {
   }
 
   // =========================================================
-  // FASE 3: Clasificación Inteligente
+  // FASE 3: Guardado Final en MongoDB
   // =========================================================
-  let category = 'Sociedad', topic = 'General', geoScope = 'Global';
-  try {
-    const classification = await classifyArticleTopic(article);
-    category = classification.category;
-    topic = classification.topic;
-    geoScope = classification.geoScope || 'Global';
-  } catch (error) {
-    console.error(`❌ Error en clasificación IA para "${article.title}":`, error.message);
-  }
-
-  // =========================================================
-  // FASE 4: Guardado Final en MongoDB
-  // =========================================================
-  // Guardamos la noticia terminada con vector y clasificación de una sola vez
   const created = await Article.create({
     ...article,
-    category,
-    topic,
-    geoScope,
-    topicStatus: 'done',
+    // Category, topic, and geoScope are populated by reviewArticlesWithAIBatch.js
+    category: article.category || 'Sociedad',
+    topic: article.topic || 'General',
+    geoScope: article.geoScope || 'Global',
+    topicStatus: article.topicStatus || 'pending',
     topicGeneratedAt: new Date(),
     topicModel: 'gpt-4o-mini',
     
@@ -100,7 +83,6 @@ async function saveNormalizedArticle(article = {}) {
     curationGeneratedAt: null,
     curationModel: '',
     
-    // Inyectamos el vector calculado en Fase 2
     embeddingText: article.embeddingText,
     embedding: newVector,
     embeddingModel,

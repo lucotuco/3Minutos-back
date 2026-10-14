@@ -22,6 +22,14 @@ const DigestTestLogSchema = new mongoose.Schema(
         publishedAt: { type: Date, default: null },
         categoria: { type: String, default: '' },
         puntajeNoticia: { type: Number, default: 0 },
+        // Trazabilidad de la busqueda (para medir calidad sin adivinar)
+        usedFallback: { type: Boolean, default: false },
+        fallbackCategory: { type: String, default: null },
+        zona: { type: String, default: null },            // VERDE | AMARILLA | RESCATE | null (sin noticia)
+        scoreBusqueda: { type: Number, default: null },   // score hibrido normalizado 0-1
+        motivoMatch: { type: String, default: null },
+        corralCategoria: { type: String, default: null }, // categoria oficial o inferida por voto
+        candidatosEvaluados: { type: Number, default: 0 },
       }
     ],
   },

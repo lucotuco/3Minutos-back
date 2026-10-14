@@ -1,5 +1,8 @@
 {
   "dependencies": {
-    "@postlight/parser": "^2.2.3"
+    "@postlight/parser": "^2.2.3",
+    "mongoose": "^9.10.1",
+    "openai": "^7.18.0",
+    "rss-parser": "^3.13.0"
   }
 }

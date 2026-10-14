@@ -1,11 +1,26 @@
 const Article = require('../models/Article');
 const { enrichArticleRanking } = require('./articleRanking');
-const { ALL_CATEGORIES, ALL_OFFICIAL_TOPICS } = require('../ingestion/classifyArticleTopic');
 const { searchArticlesBySimilarityAtlas } = require('../embeddings/searchArticlesBySimilarityAtlas');
-const { openai } = require('../config/openai');
+const { openaiReview } = require('../config/openai');
 const { cosineSimilarity } = require('../embeddings/searchArticlesBySimilarity');
+const { selectBestCandidate, inferCorralCategory } = require('./topicMatching');
 
 const MAX_ARTICLE_AGE_HOURS = 48;
+
+const CATEGORIES = {
+  'Política':       ['Gobierno Nacional', 'Justicia', 'Elecciones', 'Educación', 'Seguridad'],
+  'Economía':       ['Dólar y Mercados', 'Inflación y Consumo', 'Empresas y Negocios', 'Inversiones', 'Emprendedores'],
+  'Internacional':  ['EEUU', 'Medio Oriente', 'Europa', 'América Latina', 'Conflictos', 'Geopolítica'],
+  'Deportes':       ['Fútbol', 'F1', 'Básquet', 'Tenis', 'Rugby'],
+  'Sociedad':       ['Salud', 'Bienestar', 'Clima y Ambiente', 'Historias Humanas', 'Tendencias y Vida'],
+  'Tecnología':     ['Inteligencia Artificial', 'Ciencia y Espacio', 'Apps y Redes', 'Innovación', 'Videojuegos'],
+  'Entretenimiento/Cultura': ['Cine y Series', 'Música', 'Turismo y Viajes', 'Streaming', 'Autos', 'Viral y Trending', 'Teatro y Literatura'],
+};
+
+const ALL_CATEGORIES = Object.keys(CATEGORIES);
+const TOPIC_TO_CATEGORY = Object.fromEntries(
+  Object.entries(CATEGORIES).flatMap(([cat, topics]) => topics.map((t) => [t, cat]))
+);
 
 const queryExpansionCache = new Map();
 
@@ -14,16 +29,6 @@ function getFreshnessCutoff() {
 }
 
 const OPINION_KEYWORDS = ['opinion', 'opinión', 'columna', 'columnista', 'editorial', 'analisis', 'análisis'];
-
-const TOPIC_TO_CATEGORY = {
-  'Gobierno Nacional': 'Política', 'Justicia': 'Política', 'Elecciones': 'Política', 'Educación': 'Política', 'Seguridad': 'Política',
-  'Dólar y Mercados': 'Economía', 'Inflación y Consumo': 'Economía', 'Empresas y Negocios': 'Economía', 'Inversiones': 'Economía', 'Emprendedores': 'Economía',
-  'EEUU': 'Internacional', 'Medio Oriente': 'Internacional', 'Europa': 'Internacional', 'América Latina': 'Internacional', 'Conflictos': 'Internacional', 'Geopolítica': 'Internacional',
-  'Fútbol': 'Deportes', 'F1': 'Deportes', 'Básquet': 'Deportes', 'Tenis': 'Deportes', 'Rugby': 'Deportes',
-  'Salud': 'Sociedad', 'Bienestar': 'Sociedad', 'Clima y Ambiente': 'Sociedad', 'Historias Humanas': 'Sociedad', 'Tendencias Y Vida': 'Sociedad',
-  'Inteligencia Artificial': 'Tecnología', 'Ciencia y Espacio': 'Tecnología', 'Apps y Redes': 'Tecnología', 'Innovación': 'Tecnología', 'Videojuegos': 'Tecnología',
-  'Cine y Series': 'Entretenimiento/Cultura', 'Música': 'Entretenimiento/Cultura', 'Turismo y Viajes': 'Entretenimiento/Cultura', 'Streaming': 'Entretenimiento/Cultura', 'Autos': 'Entretenimiento/Cultura', 'Viral y Trending': 'Entretenimiento/Cultura', 'Teatro y Literatura': 'Entretenimiento/Cultura',
-};
 
 function normalizeText(value) {
   return String(value || '')
@@ -46,31 +51,31 @@ async function expandTopicForEmbedding(rawTopic) {
   const currentYear = new Date().getFullYear();
 
   try {
-    const response = await openai.chat.completions.create({
+    const response = await openaiReview.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         {
           role: 'system',
           content: `Sos un experto en expansión de consultas para un motor de búsqueda vectorial periodístico (${currentYear}).
           REGLA 1: Tu respuesta DEBE EMPEZAR con las palabras exactas del usuario. NUNCA las elimines ni las modifiques.
-          REGLA 2: Agregá de 4 a 6 palabras que sean EXCLUSIVAMENTE jerga hiper-técnica, siglas de organizaciones rectoras, elementos físicos únicos del rubro o terminología ultra específica.
-          REGLA 3: PROHIBICIÓN ABSOLUTA de usar palabras genéricas, ambiguas o compartidas entre disciplinas. ESTÁ ESTRICTAMENTE PROHIBIDO incluir en tu respuesta: mundial, torneo, campeonato, competencia, seleccion, nacional, internacional, jugadores, equipo, deporte, historia, actualidad, destacados, eventos, producciones, plataformas.
-          REGLA 4: El objetivo es aislar semánticamente el tema para que no se confunda con otros. Si es un seleccionado (ej: leonas, pumas) inyectá la jerga de su deporte específico.
+          REGLA 2: Agregá de 2 a 4 palabras clave muy específicas que ayuden a aislar el tema. Si es un club, su estadio o apodo directo. Si es un político, su partido o cargo. Si es un país, su capital.
+          REGLA 3: PROHIBICIÓN ABSOLUTA de agregar nombres de rivales, opositores o conceptos contrarios. Si el tema es "River Plate", NO agregues "boca" ni "bosteros".
+          REGLA 4: NO uses palabras genéricas (deporte, equipo, actualidad, noticias).
           Devolvé ÚNICAMENTE una sola línea de texto en minúsculas, sin comas ni signos de puntuación.`
         },
         { role: 'user', content: topic }
       ],
-      temperature: 0, // Temperatura 0 para que sea analítico y no creativo
+      temperature: 0,
       max_tokens: 25,
     });
 
     const expanded = response.choices?.[0]?.message?.content?.trim() || topic;
-    console.log(`🧠 [Query Expansion IA] "${topic}" -> expandido a "${expanded}"`);
+    console.log(`[Query Expansion IA] "${topic}" -> expandido a "${expanded}"`);
     queryExpansionCache.set(normTopic, expanded);
     return expanded;
   } catch (error) {
-    console.warn(`⚠️ Falló expansión IA para "${topic}", usando original:`, error.message);
-    return topic; // Si falla, devolvemos el tópico limpio, sin agregar basura genérica.
+    console.warn(`Fallo expansion IA para "${topic}", usando original:`, error.message);
+    return topic;
   }
 }
 
@@ -88,7 +93,7 @@ function isUsableDigestArticle(article, usedUrls, seenEmbeddings = []) {
     const pubDate = new Date(article.publishedAt).getTime();
     const diffHours = (Date.now() - pubDate) / (1000 * 60 * 60);
     if (diffHours > MAX_ARTICLE_AGE_HOURS) {
-      console.log(`      ⛔ [CADUCIDAD ${Math.round(diffHours)} HS] BLOQUEADO POR EDAD: "${article.neutralTitle || article.title}"\n`);
+      console.log(`[CADUCIDAD ${Math.round(diffHours)} HS] BLOQUEADO POR EDAD: "${article.neutralTitle || article.title}"\n`);
       return false;
     }
   }
@@ -112,14 +117,14 @@ function isUsableDigestArticle(article, usedUrls, seenEmbeddings = []) {
   }
 
   if (maxSim >= 0.85) {
-    console.log(`      ⛔ [DUPLICADO SEMÁNTICO ${Math.round(maxSim*100)}%] BLOQUEADO:`);
-    console.log(`         ❌ Intentó entrar: "${candidateTitle}"`);
-    console.log(`         📄 Ya habías leído el evento: "${mostSimilarTitle}"\n`);
+    console.log(`[DUPLICADO SEMANTICO ${Math.round(maxSim*100)}%] BLOQUEADO:`);
+    console.log(`Intento entrar: "${candidateTitle}"`);
+    console.log(`Ya habias leido el evento: "${mostSimilarTitle}"\n`);
     return false;
   } else if (maxSim > 0.50) {
-    console.log(`      ✅ [TEMA RELACIONADO PERO EVENTO DISTINTO ${Math.round(maxSim*100)}%] PERMITIDO:`);
-    console.log(`         🆕 Entró: "${candidateTitle}"`);
-    console.log(`         🔍 Más cercano en historial: "${mostSimilarTitle}"\n`);
+    console.log(`[TEMA RELACIONADO PERO EVENTO DISTINTO ${Math.round(maxSim*100)}%] PERMITIDO:`);
+    console.log(`Entro: "${candidateTitle}"`);
+    console.log(`Mas cercano en historial: "${mostSimilarTitle}"\n`);
   }
 
   return true;
@@ -227,7 +232,12 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
     let bestUnused = null;
     let usedFallback = false;
     let fallbackCategory = null;
-    
+    let matchZone = null;
+    let matchScore = null;
+    let corralCategory = null;
+    let candidatesEvaluated = 0;
+    let matchReason = null;
+
     const queryForEmbedding = expandedQueriesMap.get(trimmedTopic) || trimmedTopic;
     const queryExpanded = queryForEmbedding;
 
@@ -238,11 +248,7 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
       strictCategoryFilter = TOPIC_TO_CATEGORY[topic]; 
     }
 
-    // -------------------------------------------------------------
-    // CONSULTA UNIFICADA: MOTOR HÍBRIDO (Vectores + BM25) CON 3 ZONAS
-    // -------------------------------------------------------------
     try {
-
       const searchOptions = { 
         limit: perTopicLimit * 2,
         minDate: getFreshnessCutoff() 
@@ -253,77 +259,47 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
       }
 
       const semanticCandidates = await searchArticlesBySimilarityAtlas(trimmedTopic, queryForEmbedding, searchOptions);
-      const usableSemantic = semanticCandidates.filter(a => isUsableDigestArticle(a, usedUrls, dynamicSeenEmbeddings));
 
-      if (usableSemantic.length > 0) {
-        const bestMatch = usableSemantic[0];
-        const score = bestMatch.score || 0;
+      // Se evalúan los candidatos EN ORDEN hasta encontrar uno valido (no solo el primero).
+      // Ancla lexica y corral de categoria se derivan de los propios candidatos (ver topicMatching.js).
+      const selection = selectBestCandidate(trimmedTopic, semanticCandidates, {
+        isUsable: (a) => isUsableDigestArticle(a, usedUrls, dynamicSeenEmbeddings),
+        strictCategory: strictCategoryFilter,
+      });
 
-        console.log(`🔍 [Motor Híbrido] "${trimmedTopic}" -> Match: "${bestMatch.title}" | Score: ${score.toFixed(3)} | Corral: ${strictCategoryFilter || 'Libre'}`);
+      corralCategory = selection.corral;
+      candidatesEvaluated = selection.candidatesEvaluated;
 
-        // 🟢 ZONA VERDE: Confianza Absoluta (Pasa directo)
-        if (score >= 0.94) {
-          console.log(`      🟢 [ZONA VERDE] Confianza absoluta. Pasa directo sin filtro léxico.`);
-          bestUnused = bestMatch;
-          usedFallback = false;
-        } 
-        // 🟡 ZONA AMARILLA: Dudoso (Filtro léxico estricto)
-        else if (score >= 0.80) {
-          console.log(`      🟡 [ZONA AMARILLA] Match dudoso. Verificando coincidencia léxica exacta...`);
-          
-          const topicClean = normalizeText(trimmedTopic);
-          const contentToSearch = normalizeText(
-            `${bestMatch.title} ${bestMatch.rawSummary} ${bestMatch.contentSnippet} ${(bestMatch.tags || []).join(' ')}`
-          );
+      console.log(
+        `[Motor Hibrido] "${trimmedTopic}" -> ${semanticCandidates.length} candidatos | ` +
+        `Corral: ${selection.corral || 'Libre'} | Anclas: [${selection.anchors.join(', ')}] (${selection.anchorMode}) | ` +
+        `Evaluados: ${selection.candidatesEvaluated}`
+      );
 
-          const wordsToMatch = topicClean.split(' ').filter(w => w.length >= 3);
-          let hasLexicalMatch = false;
-
-          if (wordsToMatch.length > 0) {
-            if (wordsToMatch.length <= 3) {
-              hasLexicalMatch = contentToSearch.includes(topicClean) || 
-                                wordsToMatch.every(word => contentToSearch.includes(word));
-            } else {
-              const matchedWords = wordsToMatch.filter(word => contentToSearch.includes(word));
-              hasLexicalMatch = (matchedWords.length >= Math.ceil(wordsToMatch.length * 0.75)) || 
-                                contentToSearch.includes(topicClean);
-            }
-          } else {
-            hasLexicalMatch = contentToSearch.includes(topicClean);
-          }
-
-          if (hasLexicalMatch) {
-            console.log(`         ✅ Léxico exitoso. Confirmado.`);
-            bestUnused = bestMatch;
-            usedFallback = false;
-          } else {
-            console.log(`         ❌ Léxico fallido. Se rechaza la noticia para evitar falsos positivos.`);
-            bestUnused = null; 
-          }
-        } 
-        // 🔴 ZONA ROJA: Rechazo absoluto
-        else {
-          console.log(`      🔴 [ZONA ROJA] Score muy bajo (${score.toFixed(3)}). Rechazo directo.`);
-          bestUnused = null;
-        }
+      if (selection.article) {
+        bestUnused = selection.article;
+        matchZone = selection.zone;
+        matchScore = selection.score;
+        usedFallback = false;
+        matchReason = `${selection.zone} score=${selection.score.toFixed(3)} (candidato #${selection.candidatesEvaluated})`;
+        console.log(`[MATCH ${selection.zone}] "${bestUnused.title}" | Score: ${selection.score.toFixed(3)} | candidato #${selection.candidatesEvaluated}`);
       } else {
-        console.warn(`⚠️ Cero resultados vectoriales válidos para "${trimmedTopic}".`);
-        bestUnused = null;
+        matchReason = semanticCandidates.length === 0 ? 'sin_candidatos' : 'ningun_candidato_valido';
+        console.warn(`Ningun candidato valido para "${trimmedTopic}" (${matchReason}).`);
+        // El corral inferido tambien sirve para que el rescate se quede en el mismo rubro.
+        if (!corralCategory) corralCategory = inferCorralCategory(semanticCandidates.filter((a) => (a.score || 0) >= 0.80).slice(0, 10));
       }
     } catch (error) {
-      console.error(`❌ Error en búsqueda semántica para "${trimmedTopic}":`, error);
+      console.error(`Error en busqueda semantica para "${trimmedTopic}":`, error);
       bestUnused = null;
+      matchReason = 'error_busqueda';
     }
 
-    // -------------------------------------------------------------
-    // DEGRADACIÓN ELEGANTE Y RESCATE SÓLO PARA TÓPICOS OFICIALES
-    // -------------------------------------------------------------
     if (!bestUnused) {
-      console.log(`🚨 [RESCATE] No hubo resultados para "${topic}". Activando rescate híbrido enfocado en Argentina...`);
+      console.log(`[RESCATE] No hubo resultados para "${topic}". Activando rescate hibrido enfocado en categoria general...`);
       try {
-        const emergencyCategory = fallbackCategory || strictCategoryFilter || 'Sociedad';
-        
-        // 💥 EL ANCLA GEOGRÁFICA: Forzamos al motor a buscar contexto argentino
+        // Rubro del rescate: el oficial, o el que votaron los candidatos del propio tema (sin listas manuales).
+        const emergencyCategory = fallbackCategory || strictCategoryFilter || corralCategory || 'Sociedad';
         const emergencyQuery = `${emergencyCategory} Argentina actualidad nacional`;
         
         const emergencySearchOptions = { 
@@ -332,29 +308,23 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
           category: emergencyCategory
         };
 
-        // Si el usuario pedía deportes, mantenemos el corral estricto
-        const topicLower = normalizeText(topic);
-        if (topicLower.includes('river') || topicLower.includes('boca') || topicLower.includes('champions') || topicLower.includes('seleccion') || topicLower.includes('futbol') || topicLower.includes('tenis')) {
-          emergencySearchOptions.category = 'Deportes';
-        }
-
-        // 💥 Llamamos al poderoso motor híbrido en lugar de un find() ciego
         const emergencyCandidates = await searchArticlesBySimilarityAtlas(
           emergencyQuery, 
           emergencyQuery, 
           emergencySearchOptions
         );
 
-        // Los candidatos ya vienen rankeados y normalizados. Solo buscamos el primero que no hayamos usado.
         bestUnused = emergencyCandidates.find((article) => isUsableDigestArticle(article, usedUrls, dynamicSeenEmbeddings));
         
         if (bestUnused) {
           usedFallback = true;
           fallbackCategory = bestUnused.category || emergencyCategory;
-          console.log(`   🆘 [RESCATE EXITOSO] Entregado: "${bestUnused.title}"`);
+          matchZone = 'RESCATE';
+          matchScore = bestUnused.score ?? null;
+          console.log(`[RESCATE EXITOSO] Entregado: "${bestUnused.title}"`);
         }
       } catch (emergencyErr) {
-        console.error(`❌ Error en rescate de emergencia híbrido para "${topic}":`, emergencyErr);
+        console.error(`Error en rescate de emergencia hibrido para "${topic}":`, emergencyErr);
       }
     }
 
@@ -365,6 +335,11 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
         article: null,
         usedFallback: false,
         fallbackCategory: null,
+        matchZone: null,
+        matchScore: null,
+        matchReason,
+        corralCategory,
+        candidatesEvaluated,
       });
       continue;
     }
@@ -385,6 +360,11 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
       article: bestUnused,
       usedFallback,
       fallbackCategory,
+      matchZone,
+      matchScore,
+      matchReason,
+      corralCategory,
+      candidatesEvaluated,
     });
   }
 

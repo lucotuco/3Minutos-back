@@ -1,4 +1,4 @@
-const { openai } = require('../config/openai');
+const { openaiEmbeddings } = require('../config/openai');
 const Article = require('../models/Article');
 
 const EMBEDDING_MODEL = 'text-embedding-3-small';
@@ -9,7 +9,7 @@ async function generateQueryEmbedding(query = '') {
   const text = String(query || '').trim();
   if (!text) throw new Error('Missing query text');
 
-  const response = await openai.embeddings.create({
+  const response = await openaiEmbeddings.embeddings.create({
     model: EMBEDDING_MODEL,
     input: text,
   });

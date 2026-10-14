@@ -1,20 +1,59 @@
 const { z } = require('zod');
 const { zodTextFormat } = require('openai/helpers/zod');
-const { openai, OPENAI_MODEL } = require('../config/openai');
+const { openaiReview, OPENAI_MODEL } = require('../config/openai');
 const { buildEmbeddingText } = require('../embeddings/buildEmbeddingsText');
 const GlobalContext = require('../models/GlobalContext');
-
 
 const BatchReviewSchema = z.object({
   reviews: z.array(
     z.object({
-      url: z.string().min(1),
+      id: z.number().int().min(0),
+      category: z.string(),
+      topic: z.string(),
+      geoScope: z.string(),
       tags: z.array(z.string().min(1).max(50)).max(5),
       importanceScore: z.number().min(0).max(100),
       aiConfidence: z.number().min(0).max(1),
     })
   ),
 });
+
+const CATEGORIES = {
+  'Política':       ['Gobierno Nacional', 'Justicia', 'Elecciones', 'Educación', 'Seguridad'],
+  'Economía':       ['Dólar y Mercados', 'Inflación y Consumo', 'Empresas y Negocios', 'Inversiones', 'Emprendedores'],
+  'Internacional':  ['EEUU', 'Medio Oriente', 'Europa', 'América Latina', 'Conflictos', 'Geopolítica'],
+  'Deportes':       ['Fútbol', 'F1', 'Básquet', 'Tenis', 'Rugby'],
+  'Sociedad':       ['Salud', 'Bienestar', 'Clima y Ambiente', 'Historias Humanas', 'Tendencias y Vida'],
+  'Tecnología':     ['Inteligencia Artificial', 'Ciencia y Espacio', 'Apps y Redes', 'Innovación', 'Videojuegos'],
+  'Entretenimiento/Cultura': ['Cine y Series', 'Música', 'Turismo y Viajes', 'Streaming', 'Autos', 'Viral y Trending', 'Teatro y Literatura'],
+};
+
+const ALL_CATEGORIES = Object.keys(CATEGORIES);
+const TOPIC_TO_CATEGORY = Object.fromEntries(
+  Object.entries(CATEGORIES).flatMap(([cat, topics]) => topics.map((t) => [t, cat]))
+);
+
+const LOWERCASE_WORDS = new Set(['y', 'de', 'del', 'la', 'el', 'los', 'las', 'en', 'a']);
+function normalizeFreeTopic(value) {
+  return String(value || '')
+    .trim()
+    .split(/\s+/)
+    .map((word, i) => {
+      const lower = word.toLowerCase();
+      if (i > 0 && LOWERCASE_WORDS.has(lower)) return lower;
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(' ');
+}
+
+function buildCategoryListText() {
+  return Object.entries(CATEGORIES)
+    .map(([cat, topics]) => {
+      const lines = topics.map((t, i) => `     ${i + 1}. "${t}"`).join('\n');
+      return `  Categoría: "${cat}"\n  Subtemas permitidos SOLO para esta categoría:\n${lines}`;
+    })
+    .join('\n\n');
+}
 
 function sanitizeTag(tag = '') {
   return String(tag).trim().toLowerCase().slice(0, 50);
@@ -28,21 +67,15 @@ function getImportanceLevel(score = 0) {
   return 'low';
 }
 
-function buildArticlePayload(article = {}) {
-  return {
-    url: article.url || '',
-    sourceName: article.sourceName || '',
-    sourceUrl: article.sourceUrl || '',
-    sourceType: article.sourceType || '',
-    title: article.title || '',
-    category: article.category || '',
-    rawSummary: article.rawSummary || '',
-    contentSnippet: article.contentSnippet || '',
-    normalizedTitle: article.normalizedTitle || '',
+function buildArticlePayload(article = {}, index) {
+  const summarySource = String(article.rawSummary || article.contentSnippet || '').trim();
+  const truncatedSummary = summarySource.substring(0, 150) + (summarySource.length > 150 ? '...' : '');
 
-    region: article.region || article.region || 'global',
-    tags: article.tags || article.tags || [],
-    tagScores: article.tagScores || article.tagScores || {},
+  return {
+    id: index,
+    sourceName: article.sourceName || '',
+    title: article.title || '',
+    summary: truncatedSummary,
   };
 }
 
@@ -51,41 +84,51 @@ async function reviewArticlesWithAIBatch(articles = []) {
     return [];
   }
 
-  const payload = articles.map(buildArticlePayload);
+  const payload = articles.map((article, index) => buildArticlePayload(article, index));
 
   const systemPrompt = `
-Sos un editor en jefe de un newsletter premium.
-Tu tarea es clasificar las noticias y asignarles un "importanceScore" basado en su FACTOR DE NOVEDAD Y VALOR CONVERSACIONAL.
+Sos el editor en jefe de un newsletter premium y un clasificador experto de noticias.
+Tu tarea es clasificar y evaluar cada noticia de forma integral.
 
-Reglas para el importanceScore (0 a 100):
-- PUNTÚA ALTO (80-100): Análisis profundos, detrás de escena, datos curiosos, revelaciones, internas, historias humanas, consecuencias inesperadas de un hecho. (Ej: "Por qué Messi no vuelve con el plantel", "El impacto oculto de la nueva ley").
-- PUNTÚA MEDIO (50-79): Noticias duras y hechos consumados muy mainstream que el usuario probablemente ya vio en redes sociales o en la tele. (Ej: "España salió campeón", "Se aprobó la ley en el Congreso", "Aumentó el dólar").
-- PUNTÚA BAJO (0-49): Artículos de "Minuto a minuto", previas, "A qué hora juegan", "Dónde ver el partido", "Formaciones", pronósticos del clima genéricos, notas de relleno o muy locales sin impacto general.
+REGLAS DE IMPORTANCE SCORE (0 a 100 basado en NOVEDAD y VALOR CONVERSACIONAL):
+- PUNTÚA ALTO (80-100): Análisis profundos, revelaciones, historias humanas, consecuencias inesperadas.
+- PUNTÚA MEDIO (50-79): Noticias duras y hechos consumados muy mainstream.
+- PUNTÚA BAJO (0-49): Minuto a minuto, previas, agenda, relleno, notas hiper-locales sin impacto general.
 
-Otras Reglas:
-- Devolvé exactamente una review por cada artículo recibido usando su "url".
-- Tags debe tener entre 0 y 5 tags, cortos y útiles.
-- aiConfidence va de 0 a 1.
+LISTA DE CATEGORÍAS Y SUBTEMAS OFICIALES:
+${buildCategoryListText()}
+
+REGLAS DE CLASIFICACIÓN:
+1. "category": DEBE ser una de las Categorías Oficiales.
+2. "topic": DEBE pertenecer a los Subtemas de LA MISMA "category" que elegiste. Solo si NO encaja en NINGÚN subtema oficial de su categoría, creá una etiqueta libre de 1 a 3 palabras.
+3. "geoScope": El país principal donde ocurren los hechos (ej: "Argentina", "México"). Usá "Global" SOLO si afecta a todo el mundo por igual.
+4. 🌍 REGLA GEOGRÁFICA ESTRICTA: Las categorías "Política" y "Economía" son EXCLUSIVAS para Argentina. Si el evento ocurre en OTRO PAÍS (ej: España, Brasil), DEBE ir a "Internacional".
+
+OTRAS REGLAS:
+- Devolvé exactamente una review por cada artículo recibido usando su "id" numérico.
+- "tags": Entre 0 y 5 etiquetas cortas y útiles.
+- "aiConfidence": Escala de 0 a 1 indicando tu grado de seguridad en la evaluación.
 `;
 
-const latestContext = await GlobalContext.findOne().sort({ createdAt: -1 });
-const contextText = latestContext ? latestContext.summary : "Sin contexto global reciente.";
+  const latestContext = await GlobalContext.findOne().sort({ createdAt: -1 });
+  const contextText = latestContext ? latestContext.summary : "Sin contexto global reciente.";
 
-const fechaActual = new Date().toLocaleDateString('es-AR', { 
-  weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
-});
+  const fechaActual = new Date().toLocaleDateString('es-AR', { 
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
+  });
 
   const userPrompt = `
-  DATOS DE CONTEXTO PARA TU EVALUACIÓN:
+DATOS DE CONTEXTO:
 - Fecha de hoy: ${fechaActual}
-- Contexto Mundial de las últimas horas: "${contextText}"
+- Contexto Mundial: "${contextText}"
 
-REGLA DE ANACRONISMO: Usá la fecha de hoy y el Contexto Mundial para detectar noticias desfasadas. Si una noticia habla en tiempo futuro de un evento que ya pasó, o anuncia un resultado que contradice el contexto actual, DEBÉS castigar su importanceScore drásticamente (puntuar entre 0 y 30).
-Artículos:
+REGLA DE ANACRONISMO: Si una noticia habla en tiempo futuro de un evento que ya pasó según el Contexto y la Fecha de Hoy, DEBÉS castigar su importanceScore drásticamente (0 a 30).
+
+Artículos a evaluar:
 ${JSON.stringify(payload, null, 2)}
 `;
 
-  const response = await openai.responses.parse({
+  const response = await openaiReview.responses.parse({
     model: OPENAI_MODEL,
     store: false,
     input: [
@@ -110,21 +153,47 @@ ${JSON.stringify(payload, null, 2)}
       return acc;
     }, {});
 
-    reviewMap.set(item.url, {
-      section: item.section,
-      region: item.region,
+    let category = ALL_CATEGORIES.includes(item.category) ? item.category : 'Sociedad';
+    let topic = String(item.topic || 'General').trim();
+    const geoScope = String(item.geoScope || 'Global').trim();
+
+    if (TOPIC_TO_CATEGORY[topic]) {
+      category = TOPIC_TO_CATEGORY[topic];
+    } else {
+      topic = normalizeFreeTopic(topic);
+    }
+    
+    const isForeign = geoScope !== 'Argentina' && geoScope !== 'Global';
+    const domesticCategories = ['Política', 'Economía'];
+    
+    if (isForeign && domesticCategories.includes(category)) {
+      category = 'Internacional';
+      const latamCountries = ['Brasil', 'Chile', 'Uruguay', 'Perú', 'Colombia', 'México', 'Venezuela', 'Bolivia', 'Paraguay', 'Ecuador'];
+      const europeCountries = ['España', 'Francia', 'Italia', 'Reino Unido', 'Alemania', 'Rusia', 'Ucrania'];
+      
+      if (latamCountries.includes(geoScope)) topic = 'América Latina';
+      else if (europeCountries.includes(geoScope)) topic = 'Europa';
+      else if (geoScope === 'Estados Unidos') topic = 'EEUU';
+      else topic = 'Geopolítica';
+    }
+
+    reviewMap.set(item.id, {
+      category,
+      topic,
+      geoScope,
+      topicStatus: 'done',
       tags,
       tagScores,
       importanceScore: Number(item.importanceScore),
       importanceLevel: getImportanceLevel(item.importanceScore),
       aiConfidence: Number(item.aiConfidence),
       aiReviewed: true,
-      classificationStatus: item.aiChangedClassification ? 'ai_corrected' : 'ai_reviewed',
+      classificationStatus: 'ai_reviewed',
     });
   }
 
-  return articles.map((article) => {
-    const review = reviewMap.get(article.url);
+  return articles.map((article, index) => {
+    const review = reviewMap.get(index);
 
     if (!review) {
       return {
@@ -139,25 +208,28 @@ ${JSON.stringify(payload, null, 2)}
     }
 
     const enrichedArticle = {
-  ...article,
-  section: review.section,
-  region: review.region,
-  tags: review.tags,
-  tagScores: review.tagScores,
-  importanceScore: review.importanceScore,
-  importanceLevel: review.importanceLevel,
-  aiConfidence: review.aiConfidence,
-  classificationStatus: review.classificationStatus,
-};
+      ...article,
+      category: review.category,
+      topic: review.topic,
+      geoScope: review.geoScope,
+      topicStatus: review.topicStatus,
+      tags: review.tags,
+      tagScores: review.tagScores,
+      importanceScore: review.importanceScore,
+      importanceLevel: review.importanceLevel,
+      aiConfidence: review.aiConfidence,
+      classificationStatus: review.classificationStatus,
+    };
 
-return {
-  ...enrichedArticle,
-  embeddingText: buildEmbeddingText(enrichedArticle),
-  embeddingStatus: 'pending',
-  embeddingModel: '',
-  embeddingGeneratedAt: null,
-  embeddingError: '',
-};
+    return {
+      ...enrichedArticle,
+      embeddingText: article.embeddingText || buildEmbeddingText(enrichedArticle),
+      embeddingStatus: article.embeddingStatus || 'pending',
+      embeddingModel: article.embeddingModel || '',
+      embeddingGeneratedAt: article.embeddingGeneratedAt || null,
+      embeddingError: article.embeddingError || '',
+      embedding: article.embedding || undefined,
+    };
   });
 }
 

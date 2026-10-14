@@ -1,11 +1,9 @@
-const Article = require('../models/Article');
-const { enrichArticleRanking } = require('./articleRanking');
 const { searchArticlesBySimilarityAtlas } = require('../embeddings/searchArticlesBySimilarityAtlas');
 const { openaiReview } = require('../config/openai');
 const { cosineSimilarity } = require('../embeddings/searchArticlesBySimilarity');
 const { selectBestCandidate, inferCorralCategory } = require('./topicMatching');
 
-const MAX_ARTICLE_AGE_HOURS = 48;
+const { MAX_ARTICLE_AGE_HOURS } = require('./freshness');
 
 const CATEGORIES = {
   'Política':       ['Gobierno Nacional', 'Justicia', 'Elecciones', 'Educación', 'Seguridad'],
@@ -143,49 +141,6 @@ function isOpinionArticle(article = {}) {
   if (includesOpinionKeyword(title)) return true;
 
   return false;
-}
-
-async function findCandidatesForTopic(topic, limit, useCutoff = true) {
-  const isMainCategory = ALL_CATEGORIES.includes(topic);
-
-  const baseQuery = {
-    country: 'ar',
-    ...(isMainCategory ? { category: topic } : { topic: new RegExp('^' + topic + '$', 'i') }),
-  };
-
-  if (useCutoff) {
-    baseQuery.publishedAt = { $gte: getFreshnessCutoff() };
-  }
-
-  const selectFields = [
-    '_id', 'title', 'url', 'sourceName', 'section', 'region', 'tags', 'category', 'topic',
-    'importanceScore', 'publishedAt', 'neutralTitle', 'neutralLead', 'neutralSummary',
-    'neutralityScore', 'politicalBiasRisk', 'curationStatus', 'rawSummary', 'contentSnippet', 'imageUrl', 'embedding'
-  ].join(' ');
-
-  let articles = await Article.find({ ...baseQuery, topicStatus: 'done' })
-    .sort({ importanceScore: -1, publishedAt: -1 })
-    .limit(limit * 10)
-    .select(selectFields)
-    .lean();
-
-  if (articles.length < limit) {
-    const missingCount = limit - articles.length;
-    const fallbackArticles = await Article.find({
-      ...baseQuery,
-      topicStatus: { $in: ['pending', 'error'] },
-    })
-      .sort({ importanceScore: -1, publishedAt: -1 })
-      .limit(missingCount * 4)
-      .select(selectFields)
-      .lean();
-
-    articles = articles.concat(fallbackArticles);
-  }
-
-  return articles
-    .map(enrichArticleRanking)
-    .sort((a, b) => b.rankingScore - a.rankingScore);
 }
 
 async function pickBestArticlePerTopic(topics = [], options = {}) {

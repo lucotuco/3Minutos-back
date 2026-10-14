@@ -2,55 +2,18 @@ function clamp(value, min = 0, max = 100) {
   return Math.max(min, Math.min(max, value));
 }
 
-function getHoursDiff(date) {
-  if (!date) return 9999;
-
-  const published = new Date(date).getTime();
-  const now = Date.now();
-
-  if (Number.isNaN(published)) return 9999;
-
-  return Math.max(0, (now - published) / (1000 * 60 * 60));
-}
-
-function getFreshnessScore(publishedAt) {
-  const hours = getHoursDiff(publishedAt);
-
-  // Curva de tiempo ajustada: Premia fuerte lo de hoy, pero no mata lo de anoche de inmediato.
-  if (hours <= 2) return 100;  // Recién salido del horno
-  if (hours <= 6) return 90;   // Muy fresco (esta mañana/tarde)
-  if (hours <= 12) return 80;  // De anoche o ayer a la tarde
-  if (hours <= 24) return 65;  // De hace exactamente un día
-  if (hours <= 36) return 50;  // Día y medio
-  if (hours <= 48) return 35;  // Dos días
-  if (hours <= 72) return 20;  // Tres días
-  if (hours <= 168) return 10; // Una semana
-  return 0;
-}
+const { getHoursSince, getFreshnessScore, isPreviewOrAgenda } = require('./freshness');
 
 function getRankingScore(article = {}) {
   let importanceScore = Number(article.importanceScore || 0);
   const freshnessScore = getFreshnessScore(article.publishedAt);
-  const hoursOld = getHoursDiff(article.publishedAt);
+  const hoursOld = getHoursSince(article.publishedAt);
 
-  // LA REGLA UNIVERSAL DE CADUCIDAD PARA PREVIAS
- const title = String(article.title || '').toLowerCase();
-  const isPreviewOrAgenda = title.includes('en vivo') || 
-                            title.includes('a qué hora') || 
-                            title.includes('a que hora') || 
-                            title.includes('dónde ver') || 
-                            title.includes('donde ver') || 
-                            title.includes('minuto a minuto') || 
-                            title.includes('formaciones') ||
-                            title.includes('agenda de partidos') ||
-                            title.includes('partidos de hoy') ||    
-                            title.includes('qué canal') ||          
-                            title.includes('que canal') ||          
-                            title.includes('tabla de posiciones') ||
-                            title.includes('fixture');              
+  // Regla universal de caducidad para previas/agenda (lista compartida en freshness.js)
+  const isPreview = isPreviewOrAgenda(article.title);
 
   // Eliminamos la condición "&& hoursOld > 4": si es agenda o previa, pierde el 80% del puntaje SIEMPRE.
-  if (isPreviewOrAgenda) {
+  if (isPreview) {
     importanceScore = importanceScore * 0.2; 
   }
 

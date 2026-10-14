@@ -8,7 +8,7 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
-const apiKey = process.env.OPENAI_API_KEY;
+const apiKey = process.env.OPENAI_API_KEY_REVIEW;
 
 if (!apiKey) {
   throw new Error('Falta OPENAI_API_KEY');

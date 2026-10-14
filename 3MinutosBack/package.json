@@ -8,7 +8,9 @@
     "dev": "nodemon src/server.js",
     "ingest:rss": "node src/ingestion/runRssIngestion.js",
     "ingest:newsapi": "node src/ingestion/runNewsApiIngestion.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npm run test:unit",
+    "test:unit": "node --test src/tests/unit/topicMatching.test.js src/tests/unit/freshness.test.js src/tests/unit/comparar.test.js",
+    "test:comparar": "node src/tests/comparar/cli.js"
   },
   "keywords": [],
   "author": "",

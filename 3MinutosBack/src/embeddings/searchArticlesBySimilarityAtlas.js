@@ -1,4 +1,5 @@
 const { openaiEmbeddings } = require('../config/openai');
+const { getFreshnessScore, isPreviewOrAgenda } = require('../utils/freshness');
 const Article = require('../models/Article');
 
 const EMBEDDING_MODEL = 'text-embedding-3-small';
@@ -139,51 +140,23 @@ async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options 
   return reranked.slice(0, limit);
 }
 
-function getFreshnessScore(publishedAt) {
-  if (!publishedAt) return 0;
-
-  const now = Date.now();
-  const published = new Date(publishedAt).getTime();
-  const diffHours = (now - published) / (1000 * 60 * 60);
-
-  if (diffHours <= 6) return 1;
-  if (diffHours <= 12) return 0.85;
-  if (diffHours <= 24) return 0.65;
-  if (diffHours <= 36) return 0.4;
-  if (diffHours <= 48) return 0.2;
-  if (diffHours <= 72) return 0.08;
-  return 0.02;
-}
+// Pesos del puntaje final (suman 1). La relevancia ya se controla aparte con las zonas
+// (score >= 0.80), el ancla lexica y el corral de categoria, que usan article.score,
+// no finalScore. Por eso la frescura puede pesar fuerte en el orden de los candidatos validos.
+const FINAL_WEIGHTS = { similarity: 0.55, importance: 0.05, freshness: 0.40 };
+const PREVIEW_PENALTY = 0.5; // previas/agenda/en vivo valen la mitad
 
 function computeFinalScore(article = {}) {
-  const vectorScore = Number(article.score || 0);
-  let normalizedImportance = Number(article.importanceScore || 0) / 100;
-  const freshnessScore = getFreshnessScore(article.publishedAt);
+  const similarity = Number(article.score || 0);
+  const importance = Number(article.importanceScore || 0) / 100;
+  const freshness = getFreshnessScore(article.publishedAt) / 100;
 
-  const title = String(article.title || '').toLowerCase();
-  const isPreviewOrAgenda = title.includes('en vivo') || 
-                            title.includes('a qué hora') || 
-                            title.includes('a que hora') || 
-                            title.includes('dónde ver') || 
-                            title.includes('donde ver') || 
-                            title.includes('minuto a minuto') || 
-                            title.includes('formaciones') ||
-                            title.includes('agenda de partidos') ||
-                            title.includes('partidos de hoy') ||
-                            title.includes('qué canal') ||
-                            title.includes('tabla de posiciones') ||
-                            title.includes('fixture');
+  const base =
+    similarity * FINAL_WEIGHTS.similarity +
+    importance * FINAL_WEIGHTS.importance +
+    freshness * FINAL_WEIGHTS.freshness;
 
-  if (isPreviewOrAgenda) {
-    normalizedImportance = normalizedImportance * 0.1;
-    return (vectorScore * 0.4 + normalizedImportance * 0.05 + freshnessScore * 0.05) * 100;
-  }
-
-  return (
-    vectorScore * 0.9 +
-    normalizedImportance * 0.05 +
-    freshnessScore * 0.05
-  ) * 100;
+  return (isPreviewOrAgenda(article.title) ? base * PREVIEW_PENALTY : base) * 100;
 }
 
 module.exports = {

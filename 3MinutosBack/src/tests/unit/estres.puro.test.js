@@ -312,12 +312,14 @@ test('invariantes: un resultado sano no tiene violaciones', () => {
   assert.deepEqual(verificar(vacio), [], 'sin nota y sin zona es un resultado válido');
 });
 
-test('I1: edad máxima (48 h, con un minuto de tolerancia), fecha faltante y fecha futura', () => {
+test('I1: edad máxima (24 h, con un minuto de tolerancia), fecha faltante y fecha futura', () => {
+  const MAX = 24; // MAX_ARTICLE_AGE_HOURS
   const viejo = verificar(resultado({}, nota({ publishedAt: new Date(AHORA - 60 * HORA) })));
   assert.ok(ids(viejo).includes('I1-EDAD'));
   assert.equal(viejo.find((v) => v.id === 'I1-EDAD').severidad, 'ALTA');
-  assert.deepEqual(ids(verificar(resultado({}, nota({ publishedAt: new Date(AHORA - 48 * HORA) })))), [], '48 h justas: ok');
-  assert.ok(ids(verificar(resultado({}, nota({ publishedAt: new Date(AHORA - 48.5 * HORA) })))).includes('I1-EDAD'));
+  assert.deepEqual(ids(verificar(resultado({}, nota({ publishedAt: new Date(AHORA - MAX * HORA) })))), [], '24 h justas: ok');
+  assert.ok(ids(verificar(resultado({}, nota({ publishedAt: new Date(AHORA - 24.5 * HORA) })))).includes('I1-EDAD'));
+  assert.ok(ids(verificar(resultado({}, nota({ publishedAt: new Date(AHORA - 36 * HORA) })))).includes('I1-EDAD'), 'una de 36 h (válida con el tope viejo de 48 h) ya no vale');
 
   const sinFecha = verificar(resultado({}, nota({ publishedAt: undefined })));
   assert.equal(sinFecha.find((v) => v.id === 'I1-EDAD').severidad, 'MEDIA');

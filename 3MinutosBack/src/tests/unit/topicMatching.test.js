@@ -198,3 +198,37 @@ test('selectBestCandidate: sin candidatos devuelve article null sin romper', () 
   assert.equal(r.article, null);
   assert.equal(r.candidatesEvaluated, 0);
 });
+
+// ---------------------------------------------------------------- accepted (todas las aceptadas, con su posición)
+
+test('selectBestCandidate: sin exhaustive corta en la primera y `accepted` trae solo esa', () => {
+  const r = selectBestCandidate('river plate', RIVER_SIN_EXPANSION);
+  assert.equal(r.accepted.length, 1);
+  assert.equal(r.accepted[0].article, r.article);
+  assert.equal(r.accepted[0].rank, 1);
+  assert.equal(r.accepted[0].zone, 'VERDE');
+  assert.equal(r.accepted[0].score, 0.968);
+});
+
+test('selectBestCandidate: con exhaustive `accepted` trae todas las válidas, en el orden de la búsqueda y con su posición', () => {
+  const r = selectBestCandidate('river plate', RIVER_SIN_EXPANSION, { exhaustive: true });
+  // Se cae la 9.ª (AMARILLA sin "River" en el título) y las dos ROJAS del final (0.787 y la de Iguazú).
+  assert.equal(r.accepted.length, 9);
+  assert.deepEqual(r.accepted.map((x) => x.rank), [1, 2, 3, 4, 5, 6, 7, 8, 10], 'rank = posición original en la búsqueda');
+  assert.equal(r.accepted[0].article, r.article, 'la "elegida" sigue siendo la primera de la búsqueda');
+  assert.ok(r.accepted.every((x) => x.zone === 'VERDE' || x.zone === 'AMARILLA'));
+});
+
+test('selectBestCandidate: `accepted` respeta isUsable y las anclas (lo rechazado no entra)', () => {
+  const primera = RIVER_CON_EXPANSION[0];
+  const r = selectBestCandidate('river plate', RIVER_CON_EXPANSION, { exhaustive: true, isUsable: (a) => a !== primera });
+  assert.ok(!r.accepted.some((x) => x.article === primera));
+  assert.ok(!r.accepted.some((x) => /San Lorenzo/.test(x.article.title)), 'AMARILLA sin ancla');
+  assert.ok(r.accepted.every((x) => x.rank > 1));
+});
+
+test('selectBestCandidate: sin candidatos o todo rojo, `accepted` queda vacío', () => {
+  assert.deepEqual(selectBestCandidate('lo que sea', []).accepted, []);
+  const rojas = RIVER_SIN_EXPANSION.map((a) => ({ ...a, score: 0.5 }));
+  assert.deepEqual(selectBestCandidate('river plate', rojas, { exhaustive: true }).accepted, []);
+});

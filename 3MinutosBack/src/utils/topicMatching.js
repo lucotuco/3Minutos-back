@@ -138,7 +138,11 @@ function inferCorralCategory(pool) {
  * @param {object}   opts
  * @param {(a:object)=>boolean} [opts.isUsable]  filtro de duplicados / edad / opinión
  * @param {string|null} [opts.strictCategory]    corral fijo (tópicos oficiales); si viene, no se infiere
- * @param {boolean} [opts.exhaustive]            evalúa todos (auditoría); por defecto corta en el primero válido
+ * @param {boolean} [opts.exhaustive]            evalúa todos; por defecto corta en el primero válido
+ *
+ * Devuelve además `accepted`: TODOS los candidatos aceptados, cada uno con su zona, su score y su
+ * posición (`rank`, desde 1) en la lista original. Con exhaustive=true el motor reordena `accepted`
+ * por calidad (eligibility.js) en vez de quedarse con el primero que dejó la búsqueda.
  */
 function selectBestCandidate(topic, candidates, { isUsable = () => true, strictCategory = null, exhaustive = false } = {}) {
   const pool = buildPool(candidates);
@@ -146,9 +150,12 @@ function selectBestCandidate(topic, candidates, { isUsable = () => true, strictC
   const corral = strictCategory || inferCorralCategory(pool);
 
   const evaluated = [];
+  const accepted = [];
   let picked = null;
+  let rank = 0;
 
   for (const a of candidates) {
+    rank++;
     const score = a.score || 0;
     const zone = zoneOf(score);
     const row = { title: a.title, score, zone, category: a.category, verdict: null };
@@ -164,8 +171,9 @@ function selectBestCandidate(topic, candidates, { isUsable = () => true, strictC
     }
 
     row.verdict = 'ACEPTADO';
+    accepted.push({ article: a, zone, score, rank });
     if (!picked) picked = { article: a, zone, score };
-    if (!exhaustive) break; // exhaustive=true solo para auditoría/tests
+    if (!exhaustive) break;
   }
 
   return {
@@ -175,6 +183,7 @@ function selectBestCandidate(topic, candidates, { isUsable = () => true, strictC
     anchorMode: mode,
     candidatesEvaluated: evaluated.length,
     evaluated,
+    accepted,
   };
 }
 

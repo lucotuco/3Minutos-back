@@ -5,15 +5,17 @@ const Article = require('../models/Article');
 const EMBEDDING_MODEL = 'text-embedding-3-small';
 const VECTOR_INDEX_NAME = 'articles_embedding_index';
 const HYBRID_INDEX_NAME = 'articles_hybrid_index';
+const QUERY_EMBEDDING_TIMEOUT_MS = 8000;
 
 async function generateQueryEmbedding(query = '') {
   const text = String(query || '').trim();
   if (!text) throw new Error('Missing query text');
 
-  const response = await openaiEmbeddings.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: text,
-  });
+  // Sin esto, una llamada colgada frena el digest hasta el timeout por defecto del SDK (10 min).
+  const response = await openaiEmbeddings.embeddings.create(
+    { model: EMBEDDING_MODEL, input: text },
+    { timeout: QUERY_EMBEDDING_TIMEOUT_MS, maxRetries: 1 }
+  );
 
   const vector = response.data?.[0]?.embedding;
   if (!Array.isArray(vector) || vector.length === 0) {
@@ -45,7 +47,7 @@ async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options 
 
   const projectFields = {
     _id: 1, title: 1, url: 1, sourceName: 1, section: 1, region: 1, tags: 1,
-    importanceScore: 1, importanceLevel: 1, publishedAt: 1, topic: 1, category: 1,
+    importanceScore: 1, importanceLevel: 1, publishedAt: 1, topic: 1, category: 1, geoScope: 1,
     imageUrl: 1, neutralTitle: 1, neutralLead: 1, neutralSummary: 1, rawSummary: 1,
     contentSnippet: 1, neutralityScore: 1, politicalBiasRisk: 1, curationStatus: 1,
   };
@@ -124,7 +126,7 @@ async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options 
   const MAX_RRF_SCORE = (1 / 61) + (1 / 61);
 
   const combinedResults = Array.from(rrfMap.values())
-    .sort((a, b) => b.rrfScore - a.rrfScore)
+    .sort((a, b) => (b.rrfScore - a.rrfScore) || compareIds(a.doc, b.doc))
     .map(item => {
       const article = item.doc;
       article.score = Math.min(item.rrfScore / MAX_RRF_SCORE, 1);
@@ -136,8 +138,16 @@ async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options 
     finalScore: computeFinalScore(article),
   }));
 
-  reranked.sort((a, b) => b.finalScore - a.finalScore);
+  reranked.sort((a, b) => (b.finalScore - a.finalScore) || compareIds(a, b));
   return reranked.slice(0, limit);
+}
+
+// Desempate estable: con los mismos datos, la misma consulta devuelve las mismas notas en el mismo orden
+// (los empates de RRF son comunes porque el puntaje depende solo de la posicion en cada lista).
+function compareIds(a, b) {
+  const x = String(a?._id ?? '');
+  const y = String(b?._id ?? '');
+  return x < y ? -1 : x > y ? 1 : 0;
 }
 
 // Pesos del puntaje final (suman 1). La relevancia ya se controla aparte con las zonas

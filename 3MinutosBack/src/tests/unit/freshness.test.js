@@ -13,15 +13,23 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  MAX_ARTICLE_AGE_HOURS, getFreshnessScore, isPreviewOrAgenda, getHoursSince,
+  MAX_ARTICLE_AGE_HOURS, IDEAL_ARTICLE_AGE_HOURS, getFreshnessScore, isPreviewOrAgenda, getHoursSince,
 } = require('../../utils/freshness');
 const { getRankingScore } = require('../../utils/articleRanking');
 const { computeFinalScore } = require('../../embeddings/searchArticlesBySimilarityAtlas');
 
 const hace = (horas) => new Date(Date.now() - horas * 3600 * 1000);
 
-test('el tope de antigüedad es de 48 h', () => {
-  assert.equal(MAX_ARTICLE_AGE_HOURS, 48);
+test('el tope de antigüedad es de 24 h y lo ideal 10 h', () => {
+  assert.equal(MAX_ARTICLE_AGE_HOURS, 24);
+  assert.equal(IDEAL_ARTICLE_AGE_HOURS, 10);
+  assert.ok(IDEAL_ARTICLE_AGE_HOURS < MAX_ARTICLE_AGE_HOURS);
+});
+
+test('el tope de 24 h no cambia la curva de frescura del ranking del listado', () => {
+  // articleRanking / getTopArticles siguen usando la curva completa (hasta una semana).
+  assert.equal(getFreshnessScore(hace(30)), 50);
+  assert.equal(getFreshnessScore(hace(60)), 20);
 });
 
 test('curva de frescura por tramos', () => {
@@ -55,6 +63,25 @@ test('isPreviewOrAgenda detecta previas aunque falten tildes', () => {
   assert.equal(isPreviewOrAgenda('River ganó con un golazo'), false);
   assert.equal(isPreviewOrAgenda(''), false);
   assert.equal(isPreviewOrAgenda(undefined), false);
+});
+
+test('isPreviewOrAgenda detecta las marcas "(Previa)", "Previa:" y "Previa del ..." al inicio del título', () => {
+  assert.equal(isPreviewOrAgenda('Previa del Valencia Basket - Olympiacos'), true);
+  assert.equal(isPreviewOrAgenda('Previa LNB: Olímpico quiere conocer la victoria ante un Boca que busca recuperarse'), true);
+  assert.equal(isPreviewOrAgenda('(Previa) El Sevilla quiere asentarse en Europa a costa del tocado Levante'), true);
+  assert.equal(isPreviewOrAgenda('PREVIA: cómo llegan los dos al clásico'), true);
+  assert.equal(isPreviewOrAgenda('  Previa de la fecha'), true);
+  assert.equal(isPreviewOrAgenda('Clásico del domingo (Previa)'), true);
+});
+
+test('isPreviewOrAgenda NO marca como previa las noticias que usan la palabra suelta', () => {
+  // Titulos reales de la muestra de auditoria: son noticias, no previas.
+  assert.equal(isPreviewOrAgenda('Francia: crecen los incidentes en las protestas estudiantiles y hay heridos en la previa de una huelga nacional'), false);
+  assert.equal(isPreviewOrAgenda('Wall Street opera de manera mixta, en la previa de resultados clave de los bancos y datos del IPC'), false);
+  assert.equal(isPreviewOrAgenda('Video: los dos errores del árbitro en la acción previa al 1-0 de Temperley a Chicago'), false);
+  assert.equal(isPreviewOrAgenda('Preocupación por la salud del papa: será operado, en la previa al viaje a la Argentina'), false);
+  assert.equal(isPreviewOrAgenda('Revisión previa: qué cambia con la nueva ley'), false);
+  assert.equal(isPreviewOrAgenda('Autorización previa: el Gobierno la eliminó para estudios de alto costo'), false);
 });
 
 test('ranking de temas oficiales: usa la misma curva y penaliza previas', () => {

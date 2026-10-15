@@ -98,6 +98,8 @@ async function buildUserNewsDigest({
             matchReason: pick.matchReason || null,
             corralCategory: pick.corralCategory || null,
             candidatesEvaluated: pick.candidatesEvaluated || 0,
+            tier: null,
+            ageHoursAtPick: null,
           };
         }
 
@@ -169,6 +171,11 @@ async function buildUserNewsDigest({
           matchReason:      pick.matchReason || null,
           corralCategory:   pick.corralCategory || null,
           candidatesEvaluated: pick.candidatesEvaluated || 0,
+
+          // Nivel con el que se eligió ('buena' | 'aceptable' | 'sugerida') y edad de la nota en ESE momento.
+          // La edad al abrir el digest se vuelve a medir con publishedAt (staleDigest.js).
+          tier:             pick.tier || null,
+          ageHoursAtPick:   pick.ageHours ?? null,
         };
       })
     );

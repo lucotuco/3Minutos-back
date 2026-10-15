@@ -9,7 +9,7 @@
     "ingest:rss": "node src/ingestion/runRssIngestion.js",
     "ingest:newsapi": "node src/ingestion/runNewsApiIngestion.js",
     "test": "npm run test:unit",
-    "test:unit": "node --test src/tests/unit/topicMatching.test.js src/tests/unit/freshness.test.js src/tests/unit/eligibility.test.js src/tests/unit/officialTopics.test.js src/tests/unit/motor.test.js src/tests/unit/historial.test.js src/tests/unit/comparar.test.js src/tests/unit/estres.puro.test.js src/tests/unit/estres.analisis.test.js src/tests/unit/estres.infra.test.js src/tests/unit/estres.escenarios.test.js",
+    "test:unit": "node --test src/tests/unit/topicMatching.test.js src/tests/unit/freshness.test.js src/tests/unit/eligibility.test.js src/tests/unit/officialTopics.test.js src/tests/unit/motor.test.js src/tests/unit/historial.test.js src/tests/unit/staleDigest.test.js src/tests/unit/digestParcial.test.js src/tests/unit/rutasDigest.test.js src/tests/unit/comparar.test.js src/tests/unit/estres.puro.test.js src/tests/unit/estres.analisis.test.js src/tests/unit/estres.infra.test.js src/tests/unit/estres.escenarios.test.js",
     "test:comparar": "node src/tests/comparar/cli.js",
     "test:estres": "node --expose-gc src/tests/estres/cli.js"
   },

@@ -4,18 +4,29 @@ const DigestTestLog = require('../models/DigestTestLog');
 
 const { buildUserNewsDigest } = require('./buildUserNewsDigest');
 const { getAlreadyShownHistoryForUser } = require('./getAlreadyShownUrlsForUser');
+const { exclusionsFromItems, mergeExclusions, lockKeyFor } = require('./digestExclusions');
 const { startTimer, timeAsync } = require('./timing');
 
 // 💥 CANDADO EN MEMORIA: Evita que el mismo usuario procese dos resúmenes en paralelo
 const activeGenerations = new Map();
 
-async function buildDigestForUser(userId) {
+/**
+ * Arma el digest de un usuario.
+ *
+ * Sin opciones arma el digest completo con los temas del usuario.
+ * Con `onlyTopics` arma SOLO esos temas (reposición de notas vencidas, ver staleDigest.js):
+ *   - onlyTopics: temas a armar, uno por nota (puede haber repetidos)
+ *   - keepItems:  notas del digest que se quedan; ni se repiten ni se trae su misma historia
+ */
+async function buildDigestForUser(userId, { onlyTopics = null, keepItems = [] } = {}) {
   const userIdStr = String(userId);
+  const partial = Array.isArray(onlyTopics);
+  const lockKey = lockKeyFor(userId, { onlyTopics, keepItems });
 
   // Si ya hay una generación corriendo, nos colgamos de esa promesa y evitamos gastar en la API
-  if (activeGenerations.has(userIdStr)) {
+  if (activeGenerations.has(lockKey)) {
     console.log(`🔒 [LOCK] Esperando generación en curso para user=${userIdStr}...`);
-    return activeGenerations.get(userIdStr);
+    return activeGenerations.get(lockKey);
   }
 
   // Envolvemos toda tu lógica original en una Promesa aislada
@@ -27,24 +38,30 @@ async function buildDigestForUser(userId) {
       if (!user || !user.isActive) throw new Error('User not found or inactive');
 
       const history = await getAlreadyShownHistoryForUser(user._id);
+      const kept = partial && keepItems.length > 0 ? await exclusionsFromItems(keepItems) : null;
 
-      const uniqueAlreadyShownUrls = [...new Set(history.urls)];
-      const uniqueAlreadyShownTitles = [...new Set(history.titles)];
-      const seenEmbeddings = history.seenEmbeddings || [];
+      const exclusions = mergeExclusions(
+        { urls: history.urls, titles: history.titles, seenEmbeddings: history.seenEmbeddings },
+        kept
+      );
+      const uniqueAlreadyShownUrls = exclusions.urls;
+      const uniqueAlreadyShownTitles = exclusions.titles;
+      const seenEmbeddings = exclusions.seenEmbeddings;
+      const topics = partial ? onlyTopics : (user.topics || []);
 
       console.log(`🛡️ [FILTRO ANTI-DUPLICADOS] Excluyendo ${uniqueAlreadyShownUrls.length} URLs y evaluando similitud vectorial contra ${seenEmbeddings.length} vectores.`);
 
       const digest = await timeAsync(
         'buildUserNewsDigest',
         () => buildUserNewsDigest({
-          topics: user.topics || [],
+          topics,
           alreadyShownUrls: uniqueAlreadyShownUrls,
           alreadyShownTitles: uniqueAlreadyShownTitles,
-          seenEmbeddings: seenEmbeddings, 
+          seenEmbeddings: seenEmbeddings,
         }),
         {
           userId: String(user._id),
-          topics: user.topics || [],
+          topics,
           alreadyShownUrlsCount: uniqueAlreadyShownUrls.length,
         }
       );
@@ -66,7 +83,7 @@ async function buildDigestForUser(userId) {
 
       DigestTestLog.create({
         idUsuario: user._id,
-        motivo: 'refresh_test',
+        motivo: partial ? 'reemplazo_vencidas' : 'refresh_test',
         noticias: (digest.items || []).map((item) => ({
           topicoUsuario: item.topic || '',
           queryExpanded: item.queryExpanded || null,
@@ -83,6 +100,8 @@ async function buildDigestForUser(userId) {
           motivoMatch: item.matchReason || null,
           corralCategoria: item.corralCategory || null,
           candidatosEvaluados: item.candidatesEvaluated || 0,
+          nivel: item.tier || null,
+          edadHoras: item.ageHoursAtPick ?? null,
         })),
       }).catch((logError) => {
         console.error('⚠️ [TEST LOG] No se pudo guardar el log de testing:', logError.message);
@@ -102,13 +121,13 @@ async function buildDigestForUser(userId) {
   })();
 
   // Guardamos la promesa en el candado
-  activeGenerations.set(userIdStr, generationPromise);
+  activeGenerations.set(lockKey, generationPromise);
 
   try {
     return await generationPromise;
   } finally {
     // Liberamos el candado SIEMPRE (incluso si falla)
-    activeGenerations.delete(userIdStr);
+    activeGenerations.delete(lockKey);
   }
 }
 

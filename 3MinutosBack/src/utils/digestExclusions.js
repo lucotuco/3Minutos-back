@@ -1,0 +1,68 @@
+'use strict';
+
+/**
+ * digestExclusions.js
+ *
+ * Qué notas NO se pueden elegir al armar (o reponer) un digest:
+ *   - lo que el usuario ya vio en las últimas 48 h (getAlreadyShownUrlsForUser.js)
+ *   - las notas que se quedan en el digest cuando solo se reponen algunas (staleDigest.js)
+ *
+ * Cada exclusión tiene tres partes: urls (no repetir la nota), titles (logs) y
+ * seenEmbeddings [{ title, vector }] (no repetir la misma historia contada por otro medio).
+ */
+
+const articleStore = require('./articleStore');
+
+const SEPARATOR = '␟';
+
+/** Exclusiones que salen de notas de un digest (por ejemplo, las que no se reemplazan). */
+async function exclusionsFromItems(items = [], { loadEmbeddings = articleStore.loadEmbeddings } = {}) {
+  const list = (Array.isArray(items) ? items : []).filter(Boolean);
+  const titleOf = (item) => item.neutralTitle || item.title || '';
+
+  const urls = [...new Set(list.map((i) => i.url).filter(Boolean))];
+  const titles = list.map(titleOf).filter(Boolean);
+  const ids = [...new Set(list.map((i) => i.articleId).filter(Boolean).map(String))];
+
+  const seenEmbeddings = [];
+  if (ids.length > 0) {
+    const vectors = await loadEmbeddings(ids);
+    for (const item of list) {
+      const vector = item.articleId ? vectors.get(String(item.articleId)) : null;
+      if (Array.isArray(vector) && vector.length > 0) seenEmbeddings.push({ title: titleOf(item), vector });
+    }
+  }
+  return { urls, titles, seenEmbeddings };
+}
+
+/** Junta varias exclusiones en una (urls y títulos sin repetir). */
+function mergeExclusions(...parts) {
+  const urls = new Set();
+  const titles = new Set();
+  const seenEmbeddings = [];
+  for (const part of parts) {
+    for (const url of part?.urls || []) urls.add(url);
+    for (const title of part?.titles || []) titles.add(title);
+    seenEmbeddings.push(...(part?.seenEmbeddings || []));
+  }
+  return { urls: [...urls], titles: [...titles], seenEmbeddings };
+}
+
+/**
+ * Clave del candado por usuario (buildDigestForUser). Un armado completo usa solo el usuario;
+ * una reposición parcial agrega los temas y las notas que se quedan, así dos aperturas simultáneas
+ * del mismo digest vencido comparten el trabajo pero no se pisan con un armado completo.
+ */
+function lockKeyFor(userId, { onlyTopics = null, keepItems = [] } = {}) {
+  const user = String(userId);
+  if (!Array.isArray(onlyTopics)) return user;
+  const topics = onlyTopics.map(String).join(SEPARATOR);
+  const keep = (Array.isArray(keepItems) ? keepItems : [])
+    .map((i) => i?.url || '')
+    .filter(Boolean)
+    .sort()
+    .join(SEPARATOR);
+  return `${user}|parcial|${topics}|${keep}`;
+}
+
+module.exports = { exclusionsFromItems, mergeExclusions, lockKeyFor };

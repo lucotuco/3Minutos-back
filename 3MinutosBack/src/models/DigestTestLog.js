@@ -25,11 +25,13 @@ const DigestTestLogSchema = new mongoose.Schema(
         // Trazabilidad de la busqueda (para medir calidad sin adivinar)
         usedFallback: { type: Boolean, default: false },
         fallbackCategory: { type: String, default: null },
-        zona: { type: String, default: null },            // VERDE | AMARILLA | RESCATE | null (sin noticia)
-        scoreBusqueda: { type: Number, default: null },   // score hibrido normalizado 0-1
+        zona: { type: String, default: null },            // ETIQUETA (tema oficial) | VERDE | AMARILLA | RESCATE | null (sin noticia)
+        scoreBusqueda: { type: Number, default: null },   // score hibrido normalizado 0-1 (null en temas oficiales: no hay busqueda)
         motivoMatch: { type: String, default: null },
         corralCategoria: { type: String, default: null }, // categoria oficial o inferida por voto
         candidatosEvaluados: { type: Number, default: 0 },
+        nivel: { type: String, default: null },           // buena | aceptable | sugerida (rescate)
+        edadHoras: { type: Number, default: null },       // edad de la nota al elegirla
       }
     ],
   },

@@ -157,7 +157,9 @@ ${JSON.stringify(payload, null, 2)}
     let topic = String(item.topic || 'General').trim();
     const geoScope = String(item.geoScope || 'Global').trim();
 
-    if (TOPIC_TO_CATEGORY[topic]) {
+    // hasOwn: con un objeto comun, un topic "constructor" o "__proto__" (aunque la IA casi nunca lo devuelva)
+    // daria como categoria una funcion o un objeto en vez de caer en la etiqueta libre.
+    if (Object.hasOwn(TOPIC_TO_CATEGORY, topic)) {
       category = TOPIC_TO_CATEGORY[topic];
     } else {
       topic = normalizeFreeTopic(topic);

@@ -123,6 +123,7 @@ Para interpretar bien los números:
 - La curación de OpenAI (que reescribe títulos y **escribe en `Article`**) y el `DigestTestLog` están **simulados**, para no escribir. Por eso `D-CAPACIDAD-CRON` es un techo: en producción es más lento.
 - Un "quiebre" de la rampa depende también de tu plan de Atlas (un cluster chico se satura antes) y de los límites (RPM/TPM) de tus claves de OpenAI. Si ves 429, el cuello de botella es OpenAI, no tu código.
 - Con `--cache-openai` se repite sin costo pero se pierden los 429 y la latencia real de OpenAI: no usarlo para medir carga.
+- El servidor guarda en memoria, 6 h y con tope de 500, el vector de cada consulta de búsqueda: la segunda vez que aparece un tópico en la misma corrida ya no llama a OpenAI (más rápido que en producción en frío, y `G-EMBEDDINGS-REPETIDOS` solo salta si algo los vuelve a pedir). La expansión de tópicos nuevos sigue siendo la parte cara en frío.
 - El reporte incluye **tópicos de usuarios reales** (tríos de `user_preferences`), sin sus ids y sin el host de Mongo. No lo compartas públicamente sin revisarlo.
 
 ## Seguridad

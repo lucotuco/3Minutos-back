@@ -13,10 +13,10 @@ const assert = require('node:assert/strict');
 const { CATEGORIES, ALL_CATEGORIES } = require('../../utils/officialTopics');
 const { TtlCache } = require('../../utils/llmJudge');
 const {
-  EXPANSION_MODEL, EXPANSION_TIMEOUT_MS, EXPANSION_MAX_RETRIES, LONG_TOPIC_WORDS, MAX_QUERY_CHARS,
+  EXPANSION_MODEL, EXPANSION_SEED, EXPANSION_TIMEOUT_MS, EXPANSION_MAX_RETRIES, LONG_TOPIC_WORDS, MAX_QUERY_CHARS,
   CACHE_TTL_MS, CACHE_MAX_ENTRIES,
   buildSystemPrompt, validCategory, validSubtopic, cleanQuery, parseExpansion, asExpansion,
-  createTopicExpander, expandTopic, expansionCache,
+  createTopicExpander, expandTopic, expansionCache, setExpansionStore,
 } = require('../../utils/topicExpansion');
 
 // ---------------------------------------------------------------- IA falsa
@@ -341,4 +341,203 @@ test('la IA se carga recién al usarla (importar el módulo no exige claves de O
   assert.ok(expansionCache instanceof TtlCache);
   assert.equal(expansionCache.maxEntries, 2000);
   assert.equal(expansionCache.ttlMs, 24 * 3600e3);
+});
+
+// ================================================================ copia persistente (el almacén de topicExpansionStore.js)
+/** Un almacén falso con la forma del real: get(clave, { topic, year }) -> { q, cat, sub } | null, set(clave, valor, { topic, year }). */
+function almacenFalso({ guardadas = new Map(), alLeer = null, alGuardar = null } = {}) {
+  const lecturas = [];
+  const escrituras = [];
+  return {
+    guardadas,
+    lecturas,
+    escrituras,
+    get: async (key, ctx) => {
+      lecturas.push({ key, ctx });
+      return alLeer ? alLeer(key, ctx) : (guardadas.get(key) ?? null);
+    },
+    set: (key, value, ctx) => {
+      escrituras.push({ key, value, ctx });
+      if (alGuardar) return alGuardar(key, value, ctx);
+      guardadas.set(key, value);
+      return Promise.resolve();
+    },
+  };
+}
+
+const RIVER = { q: 'river plate monumental millonario', cat: 'Deportes', sub: 'Fútbol' };
+
+test('copia guardada: si el tema ya está en el almacén no se llama a la IA, y desde ahí el pedido sale de la memoria', async () => {
+  const almacen = almacenFalso({ guardadas: new Map([['river plate', RIVER]]) });
+  const { expand, cliente, logs, cache } = nuevoExpansor({ store: almacen });
+
+  assert.deepEqual(await expand('River Plate'), RIVER);
+  assert.equal(cliente.llamadas.length, 0, 'ni una llamada a la IA');
+  assert.equal(almacen.lecturas.length, 1);
+  assert.equal(almacen.escrituras.length, 0, 'lo que ya estaba guardado no se vuelve a escribir');
+  assert.equal(cache.size, 1);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /^\[Query Expansion IA\] "River Plate" -> "river plate monumental millonario" \| categoría: Deportes \| subtema: Fútbol \(copia guardada\)$/);
+
+  await expand('river plate');
+  assert.equal(almacen.lecturas.length, 1, 'la segunda vez sale de la memoria, sin leer el almacén');
+});
+
+test('copia guardada: sin copia se pregunta a la IA y la respuesta se guarda una vez, con la clave normalizada y el año del reloj', async () => {
+  const orden = [];
+  const almacen = almacenFalso({
+    alLeer: async () => { orden.push('leer'); return null; },
+    alGuardar: async () => { orden.push('guardar'); },
+  });
+  const cliente = clienteFalso(() => { orden.push('IA'); return respuesta(RIVER); });
+  const { expand } = nuevoExpansor({ cliente, store: almacen });
+
+  assert.deepEqual(await expand('  RÍVER   plate '), RIVER);
+  assert.deepEqual(orden, ['leer', 'IA', 'guardar'], 'primero la copia, después la IA, y recién entonces se guarda');
+  assert.equal(almacen.lecturas.length, 1);
+  assert.equal(almacen.escrituras.length, 1);
+  assert.deepEqual(almacen.lecturas[0], { key: 'river plate', ctx: { topic: 'RÍVER   plate', year: 2026 } });
+  assert.deepEqual(almacen.escrituras[0], { key: 'river plate', value: RIVER, ctx: { topic: 'RÍVER   plate', year: 2026 } });
+});
+
+test('copia guardada: el año de la clave y el del pedido a la IA salen del mismo reloj', async () => {
+  const reloj = { t: Date.parse('2027-01-02T12:00:00.000Z') };
+  const almacen = almacenFalso();
+  const { expand, cliente } = nuevoExpansor({ store: almacen, reloj });
+  await expand('river plate');
+
+  assert.equal(almacen.lecturas[0].ctx.year, 2027);
+  assert.equal(almacen.escrituras[0].ctx.year, 2027);
+  assert.match(cliente.llamadas[0].body.messages[0].content, /\(2027\)/);
+});
+
+test('copia guardada: lo que devuelve y lo que entrega son copias (cambiarlas no contamina al almacén ni a la memoria)', async () => {
+  const guardada = { ...RIVER };
+  const almacen = almacenFalso({ guardadas: new Map([['river plate', guardada]]) });
+  const { expand } = nuevoExpansor({ store: almacen });
+
+  const a = await expand('river plate'); // del almacén
+  a.q = 'cambiado';
+  a.cat = 'Política';
+  assert.deepEqual(guardada, RIVER, 'el almacén no se contamina');
+  assert.deepEqual(await expand('river plate'), RIVER, 'la memoria tampoco');
+
+  guardada.q = 'cambiado por el almacén'; // y al revés: lo que el almacén haga con su objeto no toca la memoria
+  assert.deepEqual(await expand('river plate'), RIVER);
+
+  const entregado = almacenFalso({ alGuardar: async (_k, valor) => { valor.q = 'MUTADO POR EL ALMACÉN'; } });
+  const otro = nuevoExpansor({ store: entregado });
+  assert.deepEqual(await otro.expand('river plate'), RIVER);
+  assert.deepEqual(await otro.expand('river plate'), RIVER, 'lo que le llegó al almacén era una copia');
+});
+
+test('copia guardada: la escritura no se espera (ni cuelga ni rompe la respuesta si tarda o falla)', async () => {
+  const sinRespuesta = almacenFalso({ alGuardar: () => new Promise(() => {}) });
+  assert.deepEqual(await nuevoExpansor({ store: sinRespuesta }).expand('river plate'), RIVER);
+  assert.equal(sinRespuesta.escrituras.length, 1);
+
+  const rechazados = [];
+  const alRechazar = (e) => rechazados.push(e);
+  process.on('unhandledRejection', alRechazar);
+  try {
+    const rota = almacenFalso({ alGuardar: () => Promise.reject(new Error('Mongo caído')) });
+    const sincrona = almacenFalso({ alGuardar: () => { throw new Error('el almacén explotó'); } });
+    assert.deepEqual(await nuevoExpansor({ store: rota }).expand('river plate'), RIVER);
+    assert.deepEqual(await nuevoExpansor({ store: sincrona }).expand('river plate'), RIVER);
+    await pasarTurno();
+    await pasarTurno();
+  } finally {
+    process.off('unhandledRejection', alRechazar);
+  }
+  assert.deepEqual(rechazados, [], 'un rechazo de la escritura no queda sin atender');
+});
+
+test('copia guardada: un almacén que falla al leer es como no tener copia (se pregunta a la IA)', async () => {
+  const rechaza = almacenFalso({ alLeer: async () => { throw new Error('Mongo caído'); } });
+  const sincrono = almacenFalso({ alLeer: () => { throw new Error('el almacén explotó'); } });
+  for (const almacen of [rechaza, sincrono]) {
+    const { expand, cliente, avisos } = nuevoExpansor({ store: almacen });
+    assert.deepEqual(await expand('river plate'), RIVER);
+    assert.equal(cliente.llamadas.length, 1);
+    assert.equal(avisos.length, 0, 'no es una falla de la IA');
+    assert.equal(almacen.escrituras.length, 1, 'y la respuesta de la IA se guarda igual');
+  }
+});
+
+test('copia guardada: una lectura vacía (null, undefined, false, 0, "") es "no hay copia"', async () => {
+  for (const vacia of [null, undefined, false, 0, '']) {
+    const { expand, cliente } = nuevoExpansor({ store: almacenFalso({ alLeer: async () => vacia }) });
+    assert.deepEqual(await expand('river plate'), RIVER, String(vacia));
+    assert.equal(cliente.llamadas.length, 1, String(vacia));
+  }
+});
+
+test('copia guardada: lo que la IA no pudo contestar no se guarda (un fallo no se vuelve una respuesta de 7 días)', async () => {
+  const cliente = clienteFalso(() => { throw new Error('timeout de OpenAI'); });
+  const almacen = almacenFalso();
+  const { expand } = nuevoExpansor({ cliente, store: almacen });
+
+  assert.deepEqual(await expand('river plate'), { q: 'river plate', cat: '', sub: '' });
+  assert.equal(almacen.lecturas.length, 1);
+  assert.equal(almacen.escrituras.length, 0);
+});
+
+test('copia guardada: 20 usuarios que piden el mismo tema nuevo a la vez hacen UNA lectura y UNA llamada a la IA', async () => {
+  let soltarLectura;
+  const almacen = almacenFalso({ alLeer: () => new Promise((ok) => { soltarLectura = () => ok(null); }) });
+  const cliente = clienteManual(RIVER);
+  const { expand, inflight } = nuevoExpansor({ cliente, store: almacen });
+
+  const pedidos = Array.from({ length: 20 }, (_, i) => expand(i % 2 ? 'river plate' : 'River Plate'));
+  await pasarTurno();
+  assert.equal(almacen.lecturas.length, 1);
+  assert.equal(cliente.llamadas.length, 0, 'mientras se lee la copia todavía no se llamó a la IA');
+  assert.equal(inflight.size, 1);
+
+  soltarLectura();
+  await pasarTurno();
+  assert.equal(cliente.llamadas.length, 1);
+  cliente.liberar();
+  const resultados = await Promise.all(pedidos);
+
+  for (const r of resultados) assert.deepEqual(r, RIVER);
+  assert.equal(almacen.lecturas.length, 1);
+  assert.equal(almacen.escrituras.length, 1);
+  assert.equal(inflight.size, 0);
+});
+
+test('copia guardada: un tema de 5 palabras o más, o vacío, no consulta el almacén', async () => {
+  const almacen = almacenFalso();
+  const { expand } = nuevoExpansor({ store: almacen });
+  await expand('cotizacion del dolar blue hoy');
+  await expand('   ');
+  await expand(null);
+  assert.equal(almacen.lecturas.length, 0);
+  assert.equal(almacen.escrituras.length, 0);
+});
+
+test('copia guardada: sin almacén todo funciona como antes, y setStore lo conecta y lo desconecta', async () => {
+  const almacen = almacenFalso();
+  const { expand, cliente, setStore } = nuevoExpansor();
+
+  await expand('uno');
+  assert.equal(almacen.lecturas.length + almacen.escrituras.length, 0);
+
+  setStore(almacen);
+  await expand('dos');
+  assert.equal(almacen.lecturas.length, 1);
+  assert.equal(almacen.escrituras.length, 1);
+
+  setStore(null);
+  await expand('tres');
+  assert.equal(almacen.lecturas.length, 1, 'desconectado: no se lee');
+  assert.equal(almacen.escrituras.length, 1, 'ni se escribe');
+  assert.equal(cliente.llamadas.length, 3);
+});
+
+test('importar el expansor no carga el almacén ni el modelo de Mongo: las herramientas de prueba siguen sin escribir nada', () => {
+  assert.equal(typeof setExpansionStore, 'function');
+  assert.equal(EXPANSION_SEED, 7);
+  const cargados = Object.keys(require.cache).filter((archivo) => /topicExpansionStore\.js$|models[\\/]TopicExpansion\.js$/.test(archivo));
+  assert.deepEqual(cargados, []);
 });

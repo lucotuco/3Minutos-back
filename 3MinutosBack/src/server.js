@@ -8,6 +8,7 @@ const { startNotificationJob } = require('./sendNotificationCronJob');
 const { startHourlyIngestionJob, runHourlyIngestion } = require('./ingestionJob');
 const { startCleanupAudiosJob } = require('./cleanupAudiosJob');
 const { startGlobalContextCron } = require('./cronGlobalContextCron');
+const { enablePersistentExpansionCache } = require('./utils/topicExpansionStore');
 
 
 const PORT = Number(process.env.PORT || 3000);
@@ -50,6 +51,13 @@ async function connectDB() {
 async function start() {
   try {
     await connectDB();
+
+    // Las expansiones de temas libres sobreviven a los reinicios (solo el servidor las guarda; ver topicExpansionStore.js).
+    if (enablePersistentExpansionCache()) {
+      console.log('✅ Copia de expansiones de temas en Mongo activa');
+    } else {
+      console.log('⏸️ Copia de expansiones de temas en Mongo deshabilitada (TOPIC_EXPANSION_STORE=off)');
+    }
 
     startGlobalContextCron();
 

@@ -19,6 +19,9 @@
  *   - llamadas en curso compartidas: si 20 usuarios piden el mismo tema nuevo a la vez, hay UNA llamada (antes, 20)
  *   - si la IA falla, tarda o contesta cualquier cosa, el tema se busca tal cual (sin pista) y NO se guarda el fallo,
  *     así el próximo pedido lo vuelve a intentar.
+ *   - opcional: un almacén persistente (topicExpansionStore.js, en Mongo) detrás de la caché en memoria, para que un
+ *     reinicio del servidor no vuelva a pagar la llamada de cada tema. Solo lo activa el servidor (server.js): las
+ *     herramientas de prueba importan este módulo sin almacén y no escriben nada.
  */
 
 const { CATEGORIES, ALL_CATEGORIES, TOPIC_TO_CATEGORY, normalizeKey } = require('./officialTopics');
@@ -139,16 +142,38 @@ function createTopicExpander({
   warn = (m, e) => console.warn(m, e),
   cacheTtlMs = CACHE_TTL_MS,
   cacheMaxEntries = CACHE_MAX_ENTRIES,
+  store = null,
 } = {}) {
   const cache = new TtlCache({ maxEntries: cacheMaxEntries, ttlMs: cacheTtlMs, now });
   const inflight = new Map();
+  let persistent = store; // { get(key, { topic, year }) -> { q, cat, sub } | null, set(key, value, { topic, year }) }
 
-  async function askModel(topic) {
+  /** La copia guardada del tema, o null. Un almacén que falla o no contesta cuenta como "no hay copia": se pregunta a la IA. */
+  async function readStored(key, topic, year) {
+    if (!persistent) return null;
+    try {
+      return (await persistent.get(key, { topic, year })) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Guarda la expansión sin esperar: lo que ve el usuario no depende de que la escritura termine ni de que salga bien. */
+  function saveStored(key, topic, year, value) {
+    if (!persistent) return;
+    try {
+      Promise.resolve(persistent.set(key, { ...value }, { topic, year })).catch(() => {});
+    } catch {
+      // un almacén roto no rompe la expansión
+    }
+  }
+
+  async function askModel(topic, year) {
     const response = await getClient().chat.completions.create(
       {
         model: EXPANSION_MODEL,
         messages: [
-          { role: 'system', content: buildSystemPrompt(new Date(now()).getFullYear()) },
+          { role: 'system', content: buildSystemPrompt(year) },
           { role: 'user', content: topic },
         ],
         temperature: 0,
@@ -174,10 +199,19 @@ function createTopicExpander({
     if (cached) return { ...cached };
     if (inflight.has(key)) return { ...(await inflight.get(key)) };
 
+    const year = new Date(now()).getFullYear(); // la misma fecha para la clave del almacén y para el pedido a la IA
     const pending = (async () => {
       try {
-        const value = await askModel(topic);
+        const stored = await readStored(key, topic, year);
+        if (stored) {
+          const copy = asExpansion(stored, topic);
+          cache.set(key, copy);
+          log(`[Query Expansion IA] "${topic}" -> "${copy.q}" | categoría: ${copy.cat || '-'} | subtema: ${copy.sub || '-'} (copia guardada)`);
+          return copy;
+        }
+        const value = await askModel(topic, year);
         cache.set(key, value);
+        saveStored(key, topic, year, value);
         log(`[Query Expansion IA] "${topic}" -> "${value.q}" | categoría: ${value.cat || '-'} | subtema: ${value.sub || '-'}`);
         return value;
       } catch (error) {
@@ -193,13 +227,17 @@ function createTopicExpander({
     }
   }
 
-  return { expand, cache, inflight };
+  /** Conecta (o, con null, desconecta) el almacén persistente. Lo usa server.js al arrancar; las herramientas de prueba no. */
+  function setStore(next) { persistent = next || null; }
+
+  return { expand, cache, inflight, setStore };
 }
 
 const defaultExpander = createTopicExpander();
 
 module.exports = {
   EXPANSION_MODEL,
+  EXPANSION_SEED,
   EXPANSION_TIMEOUT_MS,
   EXPANSION_MAX_RETRIES,
   LONG_TOPIC_WORDS,
@@ -215,4 +253,5 @@ module.exports = {
   createTopicExpander,
   expandTopic: defaultExpander.expand,
   expansionCache: defaultExpander.cache,
+  setExpansionStore: defaultExpander.setStore,
 };

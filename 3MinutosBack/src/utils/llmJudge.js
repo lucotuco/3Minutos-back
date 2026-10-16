@@ -282,6 +282,8 @@ module.exports = {
   DEFAULT_CACHE_MAX_ENTRIES,
   isSwitchedOff,
   judgeWaitBudgetMs,
+  raceWithTimeout,
+  TIMED_OUT,
   TtlCache,
   JudgeSession,
   createLlmJudge,

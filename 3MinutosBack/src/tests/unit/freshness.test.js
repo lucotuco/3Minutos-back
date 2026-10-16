@@ -18,7 +18,13 @@ const {
 const { getRankingScore } = require('../../utils/articleRanking');
 const { computeFinalScore } = require('../../embeddings/searchArticlesBySimilarityAtlas');
 
-const hace = (horas) => new Date(Date.now() - horas * 3600 * 1000);
+// El reloj queda fijo: la curva tiene bordes exactos (<= 2 h, <= 12 h…) y con el reloj real un milisegundo
+// de diferencia entre armar la fecha y medirla la pasaba al tramo siguiente (el test fallaba una vez cada tantas corridas).
+const AHORA = Date.now();
+test.before(() => { test.mock.method(Date, 'now', () => AHORA); });
+test.after(() => { test.mock.restoreAll(); });
+
+const hace = (horas) => new Date(AHORA - horas * 3600 * 1000);
 
 test('el tope de antigüedad es de 24 h y lo ideal 10 h', () => {
   assert.equal(MAX_ARTICLE_AGE_HOURS, 24);

@@ -21,9 +21,9 @@ const { execFileSync } = require('child_process');
 
 const { parseArgs, norm, redondear } = require('./utilidades');
 const { instalarCacheOpenAI } = require('./cache');
-const { mencionaTema } = require('./metricas');
+const { mencionaTema, textosDeNota } = require('./metricas');
 
-const PER_TOPIC_LIMIT = 10; // igual que buildUserNewsDigest (busca perTopicLimit * 2 = 20)
+const PER_TOPIC_LIMIT = 10; // igual que buildUserNewsDigest (el motor nuevo busca perTopicLimit * 3 = 30; el anterior, * 2 = 20)
 const UMBRAL_VERDE = 0.94;
 const UMBRAL_AMARILLA = 0.8;
 
@@ -94,11 +94,12 @@ function armarRegistro(t, r, error, ms, logs) {
 
   let articulo = null;
   if (a) {
-    const cuerpo = `${a.title} ${a.rawSummary || ''} ${a.contentSnippet || ''} ${(a.tags || []).join(' ')}`;
+    // Texto plano: las bajadas traen HTML y eso ni lo entiende el juez ni dice si la nota menciona el tema.
+    const texto = textosDeNota(a);
     const publicada = a.publishedAt ? new Date(a.publishedAt) : null;
     articulo = {
       id: a._id ? String(a._id) : null,
-      titulo: a.title || '',
+      titulo: texto.titulo,
       url: a.url || null,
       fuente: a.sourceName || null,
       categoria: a.category || null,
@@ -108,10 +109,11 @@ function armarRegistro(t, r, error, ms, logs) {
       score: typeof a.score === 'number' ? redondear(a.score, 3) : null,
       finalScore: typeof a.finalScore === 'number' ? redondear(a.finalScore, 1) : null,
       importancia: a.importanceScore ?? null,
+      geoScope: a.geoScope || null,
       tags: (a.tags || []).slice(0, 8),
-      resumen: String(a.rawSummary || a.contentSnippet || '').replace(/\s+/g, ' ').trim().slice(0, 400),
-      menciona: t.tipo === 'libre' ? mencionaTema(t.tema, cuerpo) : null,
-      mencionaEnTitulo: t.tipo === 'libre' ? mencionaTema(t.tema, a.title || '') : null,
+      resumen: texto.resumen,
+      menciona: t.tipo === 'libre' ? mencionaTema(t.tema, texto.cuerpo) : null,
+      mencionaEnTitulo: t.tipo === 'libre' ? mencionaTema(t.tema, texto.titulo) : null,
       categoriaOk: t.tipo === 'oficial' ? norm(a.category) === norm(t.categoria) : null,
       subtemaOk: t.tipo === 'oficial' ? norm(a.topic) === norm(t.tema) : null,
     };
@@ -129,12 +131,13 @@ function armarRegistro(t, r, error, ms, logs) {
     entregada: Boolean(a),
     rescate,
     zona,
-    // En un rescate el score es contra la consulta genérica del rescate, no contra el tema: no se informa.
+    // En un rescate no hay score contra el tema (el motor nuevo lo lee por etiqueta; el viejo buscaba una consulta genérica): no se informa.
     scoreBusqueda: rescate ? null : (r?.matchScore ?? articulo?.score ?? null),
     motivo: r ? (r.matchReason ?? null) : undefined,
     corral: r?.corralCategory ?? null,
     candidatosEvaluados: r?.candidatesEvaluated ?? null,
     categoriaRescate: r?.fallbackCategory ?? null,
+    nivelNota: r?.tier ?? null, // buena | aceptable | sugerida (solo la versión nueva lo informa)
     articulo,
     juez: null,
     logs,
@@ -239,17 +242,21 @@ async function main() {
     concurrencia: conc,
     perTopicLimit: PER_TOPIC_LIMIT,
     juez: !sinJuez,
+    dbArticulos24h: null,
     dbArticulos48h: null,
     digestLog: null,
   };
-  try {
-    meta.dbArticulos48h = await Article.countDocuments({ publishedAt: { $gte: new Date(Date.now() - 48 * 36e5) } }).maxTimeMS(15000);
-  } catch (e) {
-    meta.dbArticulos48h = null;
+  // La versión nueva solo mira las últimas 24 h; la anterior, 48 h: se cuentan las dos para poder medir la deriva de la base.
+  for (const horas of [24, 48]) {
+    try {
+      meta[`dbArticulos${horas}h`] = await Article.countDocuments({ publishedAt: { $gte: new Date(Date.now() - horas * 36e5) } }).maxTimeMS(15000);
+    } catch (e) {
+      meta[`dbArticulos${horas}h`] = null;
+    }
   }
   meta.digestLog = verificarDigestTestLog(root, mongoose);
 
-  out(`▶ ${a.etiqueta}: ${temas.length} temas | commit ${meta.commit || '?'} (${meta.rama || '?'}) | base "${meta.baseDeDatos}" | notas 48 h: ${meta.dbArticulos48h ?? 'n/d'}`);
+  out(`▶ ${a.etiqueta}: ${temas.length} temas | commit ${meta.commit || '?'} (${meta.rama || '?'}) | base "${meta.baseDeDatos}" | notas 24 h: ${meta.dbArticulos24h ?? 'n/d'} (48 h: ${meta.dbArticulos48h ?? 'n/d'})`);
 
   const resultados = new Array(temas.length);
   let hechos = 0;
@@ -263,7 +270,7 @@ async function main() {
     await almacen.run(logs, async () => {
       try {
         const res = await conTimeout(
-          pickBestArticlePerTopic([t.tema], { perTopicLimit: PER_TOPIC_LIMIT, alreadyShownUrls: [], alreadyShownTitles: [], seenEmbeddings: [] }),
+          pickBestArticlePerTopic([t.tema], { perTopicLimit: PER_TOPIC_LIMIT, alreadyShownUrls: [], seenEmbeddings: [] }),
           timeoutMs
         );
         r = Array.isArray(res) ? res[0] || null : null;
@@ -301,7 +308,12 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((error) => {
-  consolaOriginal.error(`✖ ${error.stack || error.message}`);
-  process.exit(1);
-});
+// Se corre como proceso hijo (cli.js). Los tests lo cargan para probar armarRegistro y juzgar sin arrancar una corrida.
+if (require.main === module) {
+  main().catch((error) => {
+    consolaOriginal.error(`✖ ${error.stack || error.message}`);
+    process.exit(1);
+  });
+}
+
+module.exports = { armarRegistro, juzgar };

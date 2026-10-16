@@ -1,19 +1,22 @@
 const { openaiEmbeddings } = require('../config/openai');
 const { getFreshnessScore, isPreviewOrAgenda } = require('../utils/freshness');
+const { TtlCache } = require('../utils/llmJudge');
 const Article = require('../models/Article');
 
 const EMBEDDING_MODEL = 'text-embedding-3-small';
 const VECTOR_INDEX_NAME = 'articles_embedding_index';
 const HYBRID_INDEX_NAME = 'articles_hybrid_index';
+const QUERY_EMBEDDING_TIMEOUT_MS = 8000;
 
 async function generateQueryEmbedding(query = '') {
   const text = String(query || '').trim();
   if (!text) throw new Error('Missing query text');
 
-  const response = await openaiEmbeddings.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: text,
-  });
+  // Sin esto, una llamada colgada frena el digest hasta el timeout por defecto del SDK (10 min).
+  const response = await openaiEmbeddings.embeddings.create(
+    { model: EMBEDDING_MODEL, input: text },
+    { timeout: QUERY_EMBEDDING_TIMEOUT_MS, maxRetries: 1 }
+  );
 
   const vector = response.data?.[0]?.embedding;
   if (!Array.isArray(vector) || vector.length === 0) {
@@ -22,6 +25,57 @@ async function generateQueryEmbedding(query = '') {
 
   return vector;
 }
+
+// ---------------------------------------------------------------------------
+// Caché del embedding de la consulta
+// ---------------------------------------------------------------------------
+// El embedding de un texto no cambia (mismo modelo, mismo texto, mismo vector) y la consulta es la expansión de un tema,
+// que repiten todos los usuarios que lo tienen: sin caché cada búsqueda pagaba una llamada a OpenAI (~0,2-0,4 s) por el
+// mismo vector. El tope y el vencimiento son solo para acotar la memoria (500 vectores ≈ 6 MB).
+const QUERY_EMBEDDING_CACHE_TTL_MS = 6 * 3600e3;
+const QUERY_EMBEDDING_CACHE_MAX_ENTRIES = 500;
+
+/**
+ * @param {object} [p]
+ * @param {(query:string)=>Promise<number[]>} [p.fetch]  cómo se calcula el vector (por defecto, OpenAI)
+ * @returns {{ get:(query:string)=>Promise<number[]>, cache:TtlCache, inflight:Map, clear:()=>void }}
+ *   get comparte la llamada en curso entre pedidos simultáneos del mismo texto y NO guarda los fallos. El vector que
+ *   devuelve es el de la caché (no una copia): quien lo recibe no debe modificarlo.
+ */
+function createQueryEmbeddingCache({
+  fetch = (query) => generateQueryEmbedding(query),
+  ttlMs = QUERY_EMBEDDING_CACHE_TTL_MS,
+  maxEntries = QUERY_EMBEDDING_CACHE_MAX_ENTRIES,
+  now = Date.now,
+} = {}) {
+  const cache = new TtlCache({ maxEntries, ttlMs, now });
+  const inflight = new Map();
+
+  async function get(query) {
+    const key = String(query || '').trim();
+    if (!key) return fetch(query); // sin texto: falla como siempre ("Missing query text")
+
+    const cached = cache.get(key);
+    if (cached) return cached;
+    if (inflight.has(key)) return inflight.get(key);
+
+    const pending = (async () => {
+      const vector = await fetch(key);
+      cache.set(key, vector);
+      return vector;
+    })();
+    inflight.set(key, pending);
+    try {
+      return await pending;
+    } finally {
+      inflight.delete(key);
+    }
+  }
+
+  return { get, cache, inflight, clear: () => { cache.clear(); inflight.clear(); } };
+}
+
+const queryEmbeddings = createQueryEmbeddingCache();
 
 // 💥 NUEVO: Ahora recibimos la consulta exacta (texto) y la expandida (vector)
 async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options = {}) {
@@ -35,7 +89,7 @@ async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options 
     category
   } = options;
 
-  const queryVector = await generateQueryEmbedding(vectorQuery);
+  const queryVector = await queryEmbeddings.get(vectorQuery);
 
   const filter = {};
   if (category) filter.category = category;
@@ -45,7 +99,7 @@ async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options 
 
   const projectFields = {
     _id: 1, title: 1, url: 1, sourceName: 1, section: 1, region: 1, tags: 1,
-    importanceScore: 1, importanceLevel: 1, publishedAt: 1, topic: 1, category: 1,
+    importanceScore: 1, importanceLevel: 1, publishedAt: 1, topic: 1, category: 1, geoScope: 1, contentType: 1,
     imageUrl: 1, neutralTitle: 1, neutralLead: 1, neutralSummary: 1, rawSummary: 1,
     contentSnippet: 1, neutralityScore: 1, politicalBiasRisk: 1, curationStatus: 1,
   };
@@ -124,7 +178,7 @@ async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options 
   const MAX_RRF_SCORE = (1 / 61) + (1 / 61);
 
   const combinedResults = Array.from(rrfMap.values())
-    .sort((a, b) => b.rrfScore - a.rrfScore)
+    .sort((a, b) => (b.rrfScore - a.rrfScore) || compareIds(a.doc, b.doc))
     .map(item => {
       const article = item.doc;
       article.score = Math.min(item.rrfScore / MAX_RRF_SCORE, 1);
@@ -136,8 +190,16 @@ async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options 
     finalScore: computeFinalScore(article),
   }));
 
-  reranked.sort((a, b) => b.finalScore - a.finalScore);
+  reranked.sort((a, b) => (b.finalScore - a.finalScore) || compareIds(a, b));
   return reranked.slice(0, limit);
+}
+
+// Desempate estable: con los mismos datos, la misma consulta devuelve las mismas notas en el mismo orden
+// (los empates de RRF son comunes porque el puntaje depende solo de la posicion en cada lista).
+function compareIds(a, b) {
+  const x = String(a?._id ?? '');
+  const y = String(b?._id ?? '');
+  return x < y ? -1 : x > y ? 1 : 0;
 }
 
 // Pesos del puntaje final (suman 1). La relevancia ya se controla aparte con las zonas
@@ -162,5 +224,9 @@ function computeFinalScore(article = {}) {
 module.exports = {
   searchArticlesBySimilarityAtlas,
   generateQueryEmbedding,
+  createQueryEmbeddingCache,
+  queryEmbeddings,
+  QUERY_EMBEDDING_CACHE_TTL_MS,
+  QUERY_EMBEDDING_CACHE_MAX_ENTRIES,
   computeFinalScore,
 };

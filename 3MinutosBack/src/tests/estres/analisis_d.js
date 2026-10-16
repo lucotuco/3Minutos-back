@@ -139,16 +139,18 @@ function analizarLock(lock) {
 
 function analizarStampede(s) {
   if (!s) return [];
-  const mal = s.llamadasChat >= 2;
+  // Solo las expansiones: las preguntas de los jueces con IA también son llamadas de chat, pero no son una ráfaga repetida.
+  const expansiones = s.llamadasExpansion ?? s.llamadasChat;
+  const mal = expansiones >= 2;
   return [hallazgo({
     escenario: 'D',
     id: mal ? 'D-STAMPEDE-EXPANSION' : 'D-EXPANSION-OK',
     severidad: mal ? 'MEDIA' : 'INFO',
     titulo: mal
-      ? `${s.concurrentes} llamadas simultáneas con el mismo tópico nuevo hicieron ${s.llamadasChat} expansiones en OpenAI (debería ser 1)`
-      : `${s.concurrentes} llamadas simultáneas con el mismo tópico nuevo hicieron ${s.llamadasChat} expansión`,
-    detalle: mal ? 'queryExpansionCache se consulta antes de la llamada pero no guarda la promesa en vuelo: todos los pedidos simultáneos pagan la expansión.' : '',
-    evidencia: [`embeddings: ${s.llamadasEmbedding} · errores: ${s.errores} · ${s.ms} ms`],
+      ? `${s.concurrentes} llamadas simultáneas con el mismo tópico nuevo hicieron ${expansiones} expansiones en OpenAI (debería ser 1)`
+      : `${s.concurrentes} llamadas simultáneas con el mismo tópico nuevo hicieron ${expansiones} expansión`,
+    detalle: mal ? 'La expansión no comparte la llamada en curso: todos los pedidos simultáneos del mismo tópico nuevo pagan la expansión (topicExpansion.js debería compartir la promesa en vuelo).' : '',
+    evidencia: [`embeddings: ${s.llamadasEmbedding} · preguntas a jueces: ${s.llamadasJuez ?? 'n/d'} · errores: ${s.errores} · ${s.ms} ms`],
     sugerencia: mal ? 'Guardar la promesa (no el resultado) en el Map de expansiones.' : '',
   })];
 }
@@ -162,8 +164,8 @@ function analizarMega(m) {
   push(!m.error, {
     id: 'D-MEGA-SECUENCIAL', severidad: 'INFO',
     titulo: `${m.topics} tópicos en una sola llamada: ${m.ms} ms (≈${Math.round(m.ms / Math.max(1, m.topics))} ms por tópico)`,
-    detalle: 'Los tópicos se resuelven uno tras otro; las expansiones sí salen todas juntas (ráfaga de OpenAI).',
-    evidencia: [`expansiones en OpenAI: ${m.llamadasChat} · rescates: ${m.rescates}`],
+    detalle: 'La expansión y la búsqueda de los tópicos libres salen juntas (con un tope de 6 a la vez); la elección de la nota es tópico por tópico, en orden.',
+    evidencia: [`expansiones en OpenAI: ${m.llamadasExpansion ?? m.llamadasChat} · preguntas a jueces: ${m.llamadasJuez ?? 'n/d'} · rescates: ${m.rescates}`],
   });
   return out;
 }

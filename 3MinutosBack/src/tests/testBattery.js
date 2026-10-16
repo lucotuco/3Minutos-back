@@ -85,7 +85,6 @@ async function runBattery() {
     const digest = await buildUserNewsDigest({
       topics: profile.topics,
       alreadyShownUrls: [],
-      alreadyShownTitles: [],
       seenEmbeddings: [], // Arrancamos con historial limpio para la prueba
       perTopicLimit: 10,
     });

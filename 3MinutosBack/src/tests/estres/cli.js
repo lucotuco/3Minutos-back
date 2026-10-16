@@ -144,7 +144,7 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   const inicio = Date.now();
   const { ctx, cerrar } = await abrirEntorno({ nivel, args, log: out, presupuesto, control });
   const m = ctx.meta;
-  out(`\nConectado: base "${m.baseConectada}" · notas de las últimas 48 h: ${m.articulos48h ?? 'n/d'} · commit ${m.commit || '?'} (${m.rama || '?'})`);
+  out(`\nConectado: base "${m.baseConectada}" · notas de las últimas 24 h: ${m.articulos24h ?? 'n/d'} (48 h: ${m.articulos48h ?? 'n/d'}) · commit ${m.commit || '?'} (${m.rama || '?'})`);
   out(`Tópicos: ${ctx.temas.oficiales.length} oficiales + ${ctx.temas.libres.length} libres (${ctx.temas.origenLibres}) · usuarios activos: ${ctx.usuarios.length}` +
     ` · digest completo: ${ctx.tieneDigest ? 'sí' : `no (${ctx.motivoSinDigest})`}${m.cacheOpenAI ? ' · caché OpenAI en disco' : ''}`);
 

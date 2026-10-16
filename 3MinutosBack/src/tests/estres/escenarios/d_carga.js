@@ -13,6 +13,7 @@
  * memoria por escalón, y corta la rampa en el primer escalón que se quiebra.
  */
 
+const { performance } = require('node:perf_hooks');
 const { CONTRATO, CALENTAMIENTO_TOPICOS, tareasEscalon } = require('../config');
 const { muestrear, resumenLatencias } = require('../estadisticas');
 const { diferencia } = require('../instrumentos');
@@ -27,7 +28,7 @@ const suma = (xs, f) => xs.reduce((a, x) => a + (f(x) || 0), 0);
 
 const hacerPick = (ctx) => async (tema) => {
   const salida = await ctx.pick([tema.tema]);
-  const f = filaDeUnTopico({ salida, topic: tema.tema, esperado: { tipo: tema.tipo, categoria: tema.categoria } });
+  const f = filaDeUnTopico({ salida, topic: tema.tema, esperado: { tipo: tema.tipo, nivel: tema.nivel, categoria: tema.categoria } });
   return {
     ms: f.ms, error: f.error, timeout: f.timeout,
     rescates: f.clase === 'rescate' ? 1 : 0,
@@ -52,10 +53,11 @@ const hacerDigest = (ctx) => async (usuario) => {
 async function ejecutarPaso(ctx, c, items, hacer) {
   const antes = ctx.contar();
   ctx.lag.leerYReiniciar();
-  const t0 = Date.now();
+  const t0 = performance.now();
   const filas = [];
   const erroresInternos = await pool(items, c, async (item) => { filas.push(await hacer(item)); }, ctx.detener);
-  const duracionMs = Date.now() - t0;
+  // Reloj monotónico y de alta resolución: con Date.now() (1 ms) un escalón rápido medía 0 ms y no había rendimiento que calcular.
+  const duracionMs = Math.round((performance.now() - t0) * 1000) / 1000;
   const lag = ctx.lag.leerYReiniciar();
   const mem = ctx.memoria();
   return {
@@ -132,6 +134,9 @@ async function probarLock(ctx) {
   };
 }
 
+/** Preguntas a los jueces con IA (tema + misma historia) dentro de una diferencia de contadores. */
+const juecesDe = (d) => (d.openai.chat.tipos?.juezTema || 0) + (d.openai.chat.tipos?.juezHistoria || 0);
+
 async function probarStampede(ctx) {
   const K = ctx.nivel.D.stampede;
   const nonce = Math.floor(ctx.rng() * 36 ** 5).toString(36).padStart(5, '0');
@@ -143,6 +148,8 @@ async function probarStampede(ctx) {
   return {
     concurrentes: K, tema, ms: Date.now() - t0,
     llamadasChat: d.openai.chat.llamadas, llamadasEmbedding: d.openai.embeddings.llamadas,
+    // Las expansiones y las preguntas de los jueces son llamadas de chat distintas: solo las primeras cuentan acá.
+    llamadasExpansion: d.openai.chat.tipos?.expansion, llamadasJuez: juecesDe(d),
     errores: salidas.filter((s) => s.error).length,
   };
 }
@@ -161,6 +168,7 @@ async function probarMega(ctx) {
     rescates: rs.filter((r) => r.usedFallback).length,
     erroresBusqueda: rs.filter((r) => r.matchReason === 'error_busqueda').length,
     llamadasChat: d.openai.chat.llamadas,
+    llamadasExpansion: d.openai.chat.tipos?.expansion, llamadasJuez: juecesDe(d),
     violaciones: salida.resultados
       ? verificarLlamada({ topics, resultados: salida.resultados, esperados: topics.map((t) => clasificarTema(t)), ahora: salida.ahora })
       : [],

@@ -20,8 +20,10 @@ function guardarMuestra(arr, valor) {
   else arr[Math.floor(Math.random() * CAP_MUESTRAS)] = valor;
 }
 
+// `tipos` reparte las llamadas de chat según para qué son (ver clasificarChat); en embeddings queda en cero.
 const contadorOpenAI = () => ({
   llamadas: 0, ok: 0, err429: 0, err5xx: 0, errTimeout: 0, errOtros: 0, bloqueadas: 0, ms: [], unicos: new Set(),
+  tipos: { expansion: 0, juezTema: 0, juezHistoria: 0, otras: 0 },
 });
 
 function crearContadores() {
@@ -81,6 +83,25 @@ function crearControl({ maxMinutos = Infinity, presupuesto = null, ahora = Date.
 }
 
 // ---------------------------------------------------------------- OpenAI
+/**
+ * Para qué es una llamada de chat, según su instrucción de sistema:
+ *   'expansion'     expansión del tema libre (topicExpansion.js)
+ *   'juezTema'      "¿la nota es de este tema?" (topicJudge.js)
+ *   'juezHistoria'  "¿las dos notas cuentan el mismo hecho?" (sameEventJudge.js)
+ *   'otras'         cualquier otra cosa
+ * Se mira el texto, no el código del motor: el estrés mide desde afuera. Sirve para no contar las preguntas de los
+ * jueces como expansiones (D-STAMPEDE-EXPANSION).
+ */
+function clasificarChat(params) {
+  const mensajes = Array.isArray(params?.messages) ? params.messages : [];
+  const sistema = mensajes.find((m) => m?.role === 'system')?.content;
+  const texto = typeof sistema === 'string' ? sistema.slice(0, 600) : '';
+  if (/expansi[oó]n de consultas/i.test(texto)) return 'expansion';
+  if (/relevancia period[ií]stica/i.test(texto)) return 'juezTema';
+  if (/EL MISMO HECHO/.test(texto)) return 'juezHistoria';
+  return 'otras';
+}
+
 function envolverOpenAI(objetivo, metodo, tipo, contadores, presupuesto) {
   const original = objetivo[metodo].bind(objetivo);
   objetivo[metodo] = async (params, ...resto) => {
@@ -93,6 +114,7 @@ function envolverOpenAI(objetivo, metodo, tipo, contadores, presupuesto) {
     }
     presupuesto.gastar();
     c.llamadas++;
+    if (tipo === 'chat') c.tipos[clasificarChat(params)]++;
     if (tipo === 'embeddings' && c.unicos.size < 200000) c.unicos.add(String(params?.input));
     const t0 = performance.now();
     try {
@@ -234,7 +256,7 @@ function memoria() {
 function snapshot(c) {
   const o = (x) => ({
     llamadas: x.llamadas, ok: x.ok, err429: x.err429, err5xx: x.err5xx, errTimeout: x.errTimeout, errOtros: x.errOtros,
-    bloqueadas: x.bloqueadas, unicos: x.unicos.size,
+    bloqueadas: x.bloqueadas, unicos: x.unicos.size, tipos: { ...x.tipos },
   });
   const m = c.mongo;
   return {
@@ -257,6 +279,6 @@ function diferencia(a, b) {
 
 module.exports = {
   crearContadores, crearPresupuesto, crearControl, anotarError, topErrores, normalizarMensaje, clasificarErrorOpenAI,
-  instrumentarOpenAI, monitorearMongo, bloquearEscrituras, esEscritura,
+  instrumentarOpenAI, clasificarChat, monitorearMongo, bloquearEscrituras, esEscritura,
   crearCaptura, crearMonitorLag, memoria, snapshot, diferencia,
 };

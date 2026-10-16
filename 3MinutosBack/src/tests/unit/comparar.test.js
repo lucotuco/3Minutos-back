@@ -7,12 +7,17 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const { parseArgs } = require('../comparar/utilidades');
 const {
-  mencionaTema, relevanciaDe, particion, resumir, soloEnComun, compararVersiones, chequeosCordura, veredicto,
+  mencionaTema, textosDeNota, RESUMEN_MAX_CHARS, relevanciaDe, particion, resumir, soloEnComun, compararVersiones,
+  chequeosCordura, veredicto,
 } = require('../comparar/metricas');
-const { construirTemas, temasOficiales } = require('../comparar/temas');
+const { armarRegistro, juzgar } = require('../comparar/corrida');
+const { construirTemas, temasOficiales, verificarOficialesContraCodigo } = require('../comparar/temas');
 const { htmlReporte, csvComparacion, textoConsola } = require('../comparar/reporte');
 
 let n = 0;
@@ -65,6 +70,98 @@ test('mencionaTema: frase completa o al menos la mitad de las palabras', () => {
   assert.equal(mencionaTema('dólar blue', 'Sube el dolar'), true); // sin tildes
 });
 
+test('textosDeNota: título, resumen y cuerpo salen en texto plano, sin etiquetas ni entidades', () => {
+  const t = textosDeNota({
+    title: '<b>Milei</b> anunci&oacute; un plan &amp; nuevas medidas',
+    rawSummary: '<p>El Gobierno anunci&oacute; medidas &#8220;urgentes&#8221;.</p>',
+    contentSnippet: 'Otro texto &amp; m&aacute;s',
+    tags: ['econom\u00eda', 'gobierno'],
+  });
+  assert.equal(t.titulo, 'Milei anunció un plan & nuevas medidas');
+  assert.equal(t.resumen, 'El Gobierno anunció medidas “urgentes”.');
+  assert.equal(t.cuerpo, 'Milei anunció un plan & nuevas medidas El Gobierno anunció medidas “urgentes”. Otro texto & más economía gobierno');
+  for (const texto of Object.values(t)) assert.doesNotMatch(texto, /[<>]|&[a-z#0-9]+;/i, texto);
+});
+
+test('textosDeNota: una bajada que era solo una imagen se salta; sin ningún dato no queda "undefined"', () => {
+  const imagen = '<p><img src="https://x.test/foto.jpg?auth=abc" alt="" width="4000"/></p>';
+  assert.equal(textosDeNota({ title: 'T', rawSummary: imagen, contentSnippet: 'El snippet con la noticia.' }).resumen, 'El snippet con la noticia.');
+  assert.equal(textosDeNota({ title: 'T', rawSummary: imagen }).resumen, '');
+
+  assert.deepEqual(textosDeNota({}), { titulo: '', resumen: '', cuerpo: '' });
+  assert.deepEqual(textosDeNota(), { titulo: '', resumen: '', cuerpo: '' });
+});
+
+test('textosDeNota: la dirección de una imagen no cuenta como que la nota menciona el tema', () => {
+  const nota = { title: 'Sube el dólar', rawSummary: '<img src="https://cdn.test/milei-discurso.jpg" alt="foto"/><p>El blue cerró a $1.400.</p>' };
+  const { cuerpo } = textosDeNota(nota);
+  assert.equal(mencionaTema('milei', cuerpo), false);
+  // con el HTML crudo (como se leía antes) la dirección de la imagen sí "mencionaba" al presidente
+  assert.equal(mencionaTema('milei', `${nota.title} ${nota.rawSummary}`), true);
+});
+
+test('textosDeNota: el resumen que ve el juez tiene un tope y se corta en el límite de una palabra', () => {
+  const largo = Array.from({ length: 200 }, (_, i) => `palabra${i}`).join(' ');
+  const { resumen } = textosDeNota({ title: 'T', rawSummary: `<p>${largo}</p>` });
+  assert.ok(resumen.length <= RESUMEN_MAX_CHARS && resumen.length > RESUMEN_MAX_CHARS * 0.8, `largo ${resumen.length}`);
+  assert.ok(largo.startsWith(resumen) && /palabra\d+$/.test(resumen), 'termina en una palabra entera');
+});
+
+// Una nota como la devuelve el motor, con la bajada del feed tal cual (HTML y entidades).
+const notaDeFeed = (extra = {}) => ({
+  _id: 'n1', title: 'Sube el d&oacute;lar', url: 'https://x.test/n1', sourceName: 'Medio', category: 'Economía', topic: 'Dólar',
+  publishedAt: new Date(Date.now() - 3 * 36e5), score: 0.91, finalScore: 0.7, importanceScore: 70, geoScope: 'Argentina', tags: ['dólar'],
+  rawSummary: '<img src="https://cdn.test/milei-discurso.jpg" alt=""/><p>El blue cerr&oacute; a $1.400.</p>',
+  ...extra,
+});
+
+test('corrida: el registro guarda título y resumen en texto plano y mide "menciona" sobre ese texto', () => {
+  const t = { tema: 'milei', tipo: 'libre', nivel: 'libre' };
+  const { articulo } = armarRegistro(t, { article: notaDeFeed(), matchZone: 'VERDE' }, null, 120, []);
+
+  assert.equal(articulo.titulo, 'Sube el dólar');
+  assert.equal(articulo.resumen, 'El blue cerró a $1.400.');
+  assert.equal(articulo.menciona, false, 'la dirección de la imagen no es una mención');
+  assert.equal(articulo.mencionaEnTitulo, false);
+
+  const dolar = armarRegistro({ tema: 'dólar', tipo: 'libre', nivel: 'libre' }, { article: notaDeFeed(), matchZone: 'VERDE' }, null, 1, []).articulo;
+  assert.deepEqual([dolar.menciona, dolar.mencionaEnTitulo], [true, true], 'el título limpio ("dólar") sí menciona el tema');
+});
+
+test('corrida: si la bajada era solo una imagen, el resumen sale del snippet', () => {
+  const nota = notaDeFeed({ rawSummary: '<p><img src="https://x.test/1.jpg" alt=""/></p>', contentSnippet: 'El snippet con la noticia.' });
+  const { articulo } = armarRegistro({ tema: 'dólar', tipo: 'libre', nivel: 'libre' }, { article: nota }, null, 1, []);
+  assert.equal(articulo.resumen, 'El snippet con la noticia.');
+});
+
+test('corrida: al juez le llegan el título y el resumen en texto plano (y "(sin resumen)" si no hay)', async () => {
+  const pedidos = [];
+  const cfg = {
+    openaiReview: { chat: { completions: { create: async (args) => { pedidos.push(args); return { choices: [{ message: { content: 'Sí.' } }] }; } } } },
+  };
+  const t = { tema: 'dólar', tipo: 'libre', nivel: 'libre' };
+
+  const reg = armarRegistro(t, { article: notaDeFeed() }, null, 1, []);
+  assert.equal(await juzgar(cfg, reg), 'SI');
+  const mensaje = pedidos[0].messages[1].content;
+  assert.equal(mensaje, 'TEMA: dólar\nTÍTULO: Sube el dólar\nRESUMEN: El blue cerró a $1.400.');
+  assert.doesNotMatch(mensaje, /[<>]|&[a-z#0-9]+;/i);
+
+  const sinBajada = armarRegistro(t, { article: notaDeFeed({ rawSummary: '<img src="https://x.test/1.jpg"/>' }) }, null, 1, []);
+  await juzgar(cfg, sinBajada);
+  assert.match(pedidos[1].messages[1].content, /RESUMEN: \(sin resumen\)$/);
+});
+
+test('corrida: lo que contesta el juez se reduce a SI, PARCIAL, NO o nada', async () => {
+  const con = (content) => ({ openaiReview: { chat: { completions: { create: async () => ({ choices: [{ message: { content } }] }) } } } });
+  const reg = armarRegistro({ tema: 'dólar', tipo: 'libre', nivel: 'libre' }, { article: notaDeFeed() }, null, 1, []);
+  assert.equal(await juzgar(con('SI'), reg), 'SI');
+  assert.equal(await juzgar(con('Parcial.'), reg), 'PARCIAL');
+  assert.equal(await juzgar(con('no'), reg), 'NO');
+  assert.equal(await juzgar(con('quizás'), reg), null);
+  assert.equal(await juzgar(con(undefined), reg), null);
+});
+
 test('relevanciaDe: libres usan al juez; sin juez, el título; oficiales, categoría y subtema', () => {
   assert.equal(relevanciaDe(reg('milei', { juez: 'NO' })), 'NO');
   assert.equal(relevanciaDe(reg('milei', { juez: null }, { mencionaEnTitulo: true })), 'SI');
@@ -103,6 +200,24 @@ test('resumir: cuenta, porcentajes, edades y zonas', () => {
   assert.equal(r.zonas.ninguna, 1);
 });
 
+test('resumir: cuenta la zona ETIQUETA, las edades (ideal y tope) y la sustancia de lo entregado', () => {
+  const r = resumir([
+    reg('Fútbol', { tipo: 'oficial', nivel: 'subtema', zona: 'ETIQUETA', scoreBusqueda: null }, { edadHoras: 3, importancia: 80 }),
+    reg('Economía', { tipo: 'oficial', nivel: 'categoria', zona: 'ETIQUETA', scoreBusqueda: null }, { edadHoras: 10, importancia: 45 }),
+    reg('x', {}, { edadHoras: 20, importancia: 55 }),
+    reg('y', {}, { edadHoras: 26, importancia: 30 }),
+    reg('z', { rescate: true, zona: 'RESCATE' }, { edadHoras: 5, importancia: 90 }),
+  ]);
+  assert.equal(r.zonas.ETIQUETA, 2);
+  assert.equal(r.edad.n, 4, 'el rescate no cuenta como "en tema"');
+  assert.equal(r.edad.pctHasta10, 50, '3 y 10 h de [3, 10, 20, 26]');
+  assert.equal(r.edad.pctHasta24, 75);
+  assert.equal(r.edad.pctMasDe24, 25);
+  assert.equal(r.edad.maxTodas, 26);
+  assert.deepEqual(r.sustancia, { n: 4, mediana: 45, pctBuenas: 50, pctBajoElPiso: 25 });
+  assert.equal(resumir([reg('a')]).sustancia.n, 0, 'una corrida sin importancia no inventa datos');
+});
+
 test('compararVersiones: mejora, regresión, cambia e igual', () => {
   const mismaUrl = 'https://x.test/misma';
   const A = corrida([
@@ -138,14 +253,14 @@ test('soloEnComun: compara únicamente los temas presentes en las dos corridas',
 
 // ---------------------------------------------------------------- cordura y veredicto
 
-test('chequeosCordura: detecta noticias de más de 48 h, categoría equivocada y corral violado', () => {
+test('chequeosCordura: detecta noticias de más de 24 h, categoría equivocada y corral violado', () => {
   const A = corrida([reg('a')]);
   const mala = corrida([
     reg('Fútbol', { tipo: 'oficial', nivel: 'subtema' }, { categoriaOk: false }),
     reg('x', { corral: 'Deportes' }, { categoria: 'Sociedad', edadHoras: 60 }),
   ]);
   const fallos = chequeosCordura(A, mala).filter((c) => !c.ok && c.nivel === 'error').map((c) => c.nombre);
-  assert.ok(fallos.some((f) => /48 h/.test(f)));
+  assert.ok(fallos.some((f) => /24 h/.test(f)));
   assert.ok(fallos.some((f) => /categoría pedida/.test(f)));
   assert.ok(fallos.some((f) => /corral/.test(f)));
 });
@@ -154,6 +269,49 @@ test('chequeosCordura: todo en orden', () => {
   const A = corrida([reg('a')]);
   const B = corrida([reg('a')]);
   assert.deepEqual(chequeosCordura(A, B).filter((c) => !c.ok), []);
+});
+
+test('chequeosCordura: el tope de 24 h rige para la versión nueva; la anterior podía llegar a 48 h', () => {
+  const edad = (A, B) => chequeosCordura(A, B).find((c) => /no entrega noticias de más de 24 h/.test(c.nombre));
+  const vieja = corrida([reg('a', {}, { edadHoras: 47 })]);
+  const dentro = edad(vieja, corrida([reg('a', {}, { edadHoras: 23.9 })]));
+  assert.equal(dentro.ok, true, 'que la anterior llegara a 47 h no es una falla');
+  assert.match(dentro.detalle, /antes 47 h \(el código anterior permitía hasta 48 h\), después 23\.9 h/);
+  assert.equal(edad(vieja, corrida([reg('a', {}, { edadHoras: 30 })])).ok, false, 'una nota de 30 h en la nueva sí');
+  assert.equal(edad(vieja, corrida([reg('a', {}, { edadHoras: 24.4 })])).ok, true, 'medio punto de tolerancia por el reloj entre la base y la corrida');
+});
+
+test('chequeosCordura: piso de importancia (40; el rescate, 50) y país en Sociedad; sin esos datos no se miden', () => {
+  const A = corrida([reg('a')]);
+  const piso = (B) => chequeosCordura(A, B).find((c) => /piso de importancia/.test(c.nombre));
+  const pais = (B) => chequeosCordura(A, B).find((c) => /Sociedad solo/.test(c.nombre));
+  const rescate = (importancia) => corrida([reg('a', { rescate: true, zona: 'RESCATE' }, { importancia })]);
+
+  assert.equal(piso(corrida([reg('a', {}, { importancia: 40 })])).ok, true, '40 justo vale');
+  assert.equal(piso(corrida([reg('a', {}, { importancia: 39 })])).ok, false);
+  assert.equal(piso(rescate(49)).ok, false, 'el rescate pide 50');
+  assert.equal(piso(rescate(50)).ok, true);
+  assert.match(piso(corrida([reg('a', {}, { importancia: 10 })])).detalle, /a \(10\)/);
+  assert.equal(piso(corrida([reg('a')])), undefined, 'una corrida sin datos de importancia no se mide');
+
+  const sociedad = (geoScope) => corrida([reg('a', {}, { categoria: 'Sociedad', geoScope })]);
+  assert.equal(pais(sociedad('Argentina')).ok, true);
+  assert.equal(pais(sociedad('GLOBAL')).ok, true);
+  assert.equal(pais(sociedad('España')).ok, false);
+  assert.match(pais(sociedad('España')).detalle, /a \(España\)/);
+  assert.equal(pais(corrida([reg('a', {}, { categoria: 'Deportes', geoScope: 'Brasil' })])), undefined, 'la regla es solo de Sociedad');
+  assert.equal(pais(corrida([reg('a', {}, { categoria: 'Sociedad' })])), undefined, 'sin alcance guardado no se mide');
+});
+
+test('chequeosCordura: la deriva de la base se mide con las notas de 24 h si las dos corridas las guardaron', () => {
+  const deriva = (a, b) => chequeosCordura(corrida([reg('a')], a), corrida([reg('a')], b)).find((c) => /deriva/.test(c.nombre));
+  const con24 = deriva({ dbArticulos24h: 100 }, { dbArticulos24h: 110 });
+  assert.equal(con24.ok, false);
+  assert.match(con24.detalle, /últimas 24 h: antes 100, después 110/);
+  const sin24 = deriva({ dbArticulos48h: 1000 }, { dbArticulos48h: 1005 });
+  assert.equal(sin24.ok, true);
+  assert.match(sin24.detalle, /últimas 48 h/);
+  assert.match(deriva({ dbArticulos24h: 100 }, {}).detalle, /últimas 48 h/, 'si a una corrida le falta el dato de 24 h, se usa el de 48 h');
 });
 
 function escenario(antes, despues) {
@@ -228,6 +386,29 @@ test('veredicto: la frescura se mide en los mismos temas (pareada), no entre con
   assert.equal(rescate, undefined);
 });
 
+test('veredicto: vigencia — mejora si el código anterior pasaba las 24 h y el nuevo no; falla si el nuevo se pasa', () => {
+  const por = (R, tipo) => resumir(R.resultados.filter((r) => r.tipo === tipo));
+  const vigencia = (A, B) => veredicto({ oficiales: por(A, 'oficial'), libres: por(A, 'libre') }, { oficiales: por(B, 'oficial'), libres: por(B, 'libre') }, [], [])
+    .checks.find((c) => /Vigencia/.test(c.nombre));
+  const con = (h) => corrida([reg('a', {}, { edadHoras: h })]);
+  assert.equal(vigencia(con(40), con(20)).estado, 'ok');
+  assert.match(vigencia(con(40), con(20)).detalle, /antes 40 h → después 20 h/);
+  assert.equal(vigencia(con(20), con(20)).estado, 'igual');
+  assert.equal(vigencia(con(20), con(25)).estado, 'mal');
+  assert.equal(vigencia(corrida([]), corrida([])), undefined, 'sin noticias no hay nada que medir');
+});
+
+test('veredicto: la sustancia (importancia de 50 o más) solo avisa si baja, y no se mide sin datos', () => {
+  const por = (R, tipo) => resumir(R.resultados.filter((r) => r.tipo === tipo));
+  const sustancia = (A, B) => veredicto({ oficiales: por(A, 'oficial'), libres: por(A, 'libre') }, { oficiales: por(B, 'oficial'), libres: por(B, 'libre') }, [], [])
+    .checks.find((c) => /buenas/.test(c.nombre));
+  const con = (importancia) => corrida([reg('a', {}, { importancia })]);
+  assert.equal(sustancia(con(45), con(70)).estado, 'ok');
+  assert.equal(sustancia(con(70), con(70)).estado, 'igual');
+  assert.equal(sustancia(con(70), con(45)).estado, 'aviso');
+  assert.equal(sustancia(corrida([reg('a')]), corrida([reg('a')])), undefined);
+});
+
 // ---------------------------------------------------------------- reporte
 
 test('reporte: HTML, CSV y consola se generan y escapan el HTML de los títulos', () => {
@@ -248,7 +429,62 @@ test('reporte: HTML, CSV y consola se generan y escapan el HTML de los títulos'
   assert.match(txt, /VEREDICTO SUGERIDO/);
 });
 
+test('reporte: muestra la zona ETIQUETA, la edad ideal, la vigencia y la sustancia; el CSV trae importancia y nivel', () => {
+  const antes = reg('Fútbol', { tipo: 'oficial', nivel: 'subtema' }, { edadHoras: 40, importancia: 60 });
+  const despues = reg('Fútbol', { tipo: 'oficial', nivel: 'subtema', zona: 'ETIQUETA', scoreBusqueda: null, nivelNota: 'buena' }, { edadHoras: 4, importancia: 72 });
+  const e = escenario([antes], [despues]);
+  const html = htmlReporte(e);
+  for (const frag of ['Zona ETIQUETA', 'Hasta 10 h, lo ideal', 'Más de 24 h', 'Buenas, de importancia 50 o más', 'imp. 72 (buena)', 'Vigencia: ninguna noticia de más de 24 h']) {
+    assert.ok(html.includes(frag), `falta "${frag}" en el HTML`);
+  }
+  assert.doesNotMatch(html, /undefined|NaN|\[object/);
+
+  const csv = csvComparacion(e.filas);
+  assert.ok(csv.split('\n')[0].endsWith('antes_importancia;despues_importancia;despues_nivel'));
+  assert.ok(csv.includes('"60";"72";"buena"'));
+
+  const txt = textoConsola(e);
+  assert.match(txt, /Hasta 10 h \(lo ideal\)/);
+  assert.match(txt, /Buenas \(importancia 50\+\)/);
+  assert.match(txt, /Vigencia: ninguna noticia de más de 24 h/);
+});
+
+test('reporte: una corrida sin datos de importancia no muestra el bloque de sustancia ni celdas rotas', () => {
+  const e = escenario([reg('a')], [reg('a')]);
+  const html = htmlReporte(e);
+  assert.ok(!html.includes('Sustancia de la noticia entregada'));
+  assert.doesNotMatch(html, /undefined|NaN|\[object/);
+});
+
 // ---------------------------------------------------------------- temas
+
+test('verificarOficialesContraCodigo: lee la taxonomía de officialTopics.js (motor nuevo) o de pickBestArticlePerTopic.js (anterior)', () => {
+  const nombres = temasOficiales().map((t) => `'${t.tema}'`).join(', ');
+  const dirs = [];
+  const armar = (archivos) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oficiales-'));
+    dirs.push(root);
+    fs.mkdirSync(path.join(root, 'src', 'utils'), { recursive: true });
+    for (const [nombre, texto] of Object.entries(archivos)) fs.writeFileSync(path.join(root, 'src', 'utils', nombre), texto);
+    return root;
+  };
+  try {
+    const nuevo = armar({ 'pickBestArticlePerTopic.js': '// la lista vive en officialTopics.js', 'officialTopics.js': `const T = [${nombres}];` });
+    assert.deepEqual(verificarOficialesContraCodigo(nuevo).faltantes, []);
+
+    const anterior = armar({ 'pickBestArticlePerTopic.js': `const T = [${nombres}];` });
+    assert.deepEqual(verificarOficialesContraCodigo(anterior).faltantes, []);
+
+    const desactualizado = armar({ 'pickBestArticlePerTopic.js': '// sin lista', 'officialTopics.js': "const T = ['Fútbol'];" });
+    const faltantes = verificarOficialesContraCodigo(desactualizado).faltantes;
+    assert.equal(faltantes.length, temasOficiales().length - 1);
+    assert.ok(!faltantes.includes('Fútbol'));
+
+    assert.equal(verificarOficialesContraCodigo(path.join(os.tmpdir(), 'no-existe-oficiales-xyz')).faltantes, null);
+  } finally {
+    for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+  }
+});
 
 test('temas oficiales: 7 categorías + sus subtemas, sin repetidos', () => {
   const t = temasOficiales();

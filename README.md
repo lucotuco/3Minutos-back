@@ -75,6 +75,16 @@ CLOUDINARY_URL=your_cloudinary_url
 NEWSAPI_KEY=your_newsapi_key
 ```
 
+Optional switches for the article-picking engine (all default to *on*; no code change needed to turn them off):
+```env
+SAME_STORY_JUDGE=off          # AI check for "same story" pairs in the gray cosine zone (0.80-0.88)
+TOPIC_JUDGE=off               # AI check that a free-topic article is really about the topic
+JUDGE_WAIT_MS=1500            # max total wait for the judges in a digest someone is looking at (0 = cache only)
+JUDGE_WAIT_MS_BACKGROUND=4000 # same, for digests built by the background job
+TOPIC_EXPANSION_STORE=off     # keep free-topic expansions only in memory (default: also saved in Mongo, collection topic_expansions)
+```
+To force every free topic to be expanded again, empty the `topic_expansions` collection.
+
 ### 4. Running the Server
 Start the backend server:
 ```bash

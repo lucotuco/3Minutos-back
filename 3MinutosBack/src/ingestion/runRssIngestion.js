@@ -11,6 +11,8 @@ const { saveNormalizedArticle } = require('./saveNormalizedArticle');
 const { reviewArticlesWithAIBatch } = require('./reviewArticlesWithAIBatch');
 const { generateArticleEmbedding } = require('../embeddings/generateArticleEmbeddings');
 const { buildEmbeddingText } = require('../embeddings/buildEmbeddingsText');
+const { prepareRssItems } = require('./prepareRssItems');
+const { toPlainText } = require('../utils/plainText');
 
 const PostlightParser = require('@postlight/parser');
 
@@ -57,19 +59,21 @@ async function saveArticles(articles = []) {
   let created = 0;
   let skipped = 0;
   let errors = 0;
+  let embeddingsReused = 0;
 
   for (const article of articles) {
     try {
       const result = await saveNormalizedArticle(article);
       if (result.status === 'created') created++;
       else skipped++;
+      if (result.embeddingReused) embeddingsReused++;
     } catch (error) {
       errors++;
       console.log(`Error guardando articulo -> ${error.message}`);
     }
   }
 
-  return { created, skipped, errors };
+  return { created, skipped, errors, embeddingsReused };
 }
 
 async function filterExistingArticles(articles = []) {
@@ -187,6 +191,21 @@ async function filterVectorDuplicates(articles = []) {
   };
 }
 
+/** Descarga la nota completa y devuelve su texto plano. Lanza si no se pudo (lo maneja prepareRssItems). */
+async function rescueArticleBody(url) {
+  const parsed = await PostlightParser.parse(url, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    },
+  });
+  return toPlainText(parsed?.content || '');
+}
+
+function isDiscardedImage(adapted) {
+  return adapted.imageUrl === FALLBACK_IMAGE_URL || Boolean(adapted.imageUrl && adapted.imageUrl.includes('LOGO-AURORA'));
+}
+
 function buildFallbackReviewedArticles(chunk = [], errorMessage = '') {
   return chunk.map((article) => ({
     ...article,
@@ -211,73 +230,27 @@ async function runRssIngestion() {
       let skipped = 0;
       let errors = 0;
       let aiBatchCount = 0;
+      let embeddingsReused = 0;
 
       try {
         const feed = await parser.parseURL(source.url);
         const top50Items = feed.items.slice(0, 50);
         console.log(`${source.name} -> ${top50Items.length} items`);
 
-        const processedArticles = [];
-
-        for (const item of top50Items) {
-          try {
-            const adapted = adaptRssArticle(item, source);
-
-            const isFallbackImage = adapted.imageUrl === FALLBACK_IMAGE_URL;
-            const isAuroraLogo = adapted.imageUrl && adapted.imageUrl.includes('LOGO-AURORA');
-
-            if (isFallbackImage || isAuroraLogo) {
-              console.log(`Noticia descartada por no tener imagen valida: ${adapted.title}`);
-              continue;
-            }
-
-            let contentText = String(adapted.rawSummary || adapted.contentSnippet || '').trim();
-
-            if (contentText.length < 250) {
-              console.log(`Rescatando nota corta de ${source.name} (${contentText.length} chars)...`);
-
-              await new Promise((resolve) => setTimeout(resolve, 500));
-
-              try {
-                const parsed = await PostlightParser.parse(adapted.url, {
-                  headers: {
-                    'User-Agent':
-                      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                  },
-                });
-
-                const cleanExtracted = parsed.content
-                  ? parsed.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-                  : '';
-
-                if (cleanExtracted.length >= 250) {
-                  adapted.rawSummary = cleanExtracted;
-                  adapted.contentSnippet = cleanExtracted;
-                  console.log(`Rescate exitoso: ${cleanExtracted.length} chars recuperados.`);
-                } else {
-                  console.log(`Descartada: La nota extraida tiene solo ${cleanExtracted.length} chars.`);
-                  continue;
-                }
-              } catch (parseError) {
-                console.log(`Fallo el rescate de Postlight: ${parseError.message}`);
-                continue;
-              }
-            }
-
-            const processed = processArticle(adapted, {
-              defaultMinScore: 6,
-              maxTags: 3,
-            });
-            processedArticles.push(processed);
-          } catch (error) {
-            errors++;
-            console.log(`${source.name} -> ${error.message}`);
-          }
-        }
-
-        const { newArticles, duplicateArticles } = await filterExistingArticles(processedArticles);
-
-        skipped += duplicateArticles.length;
+        // Items -> notas, sin las ya guardadas, con el texto corto rescatado (ver prepareRssItems.js).
+        const prepared = await prepareRssItems({
+          items: top50Items,
+          source,
+          adapt: adaptRssArticle,
+          process: (adapted) => processArticle(adapted, { defaultMinScore: 6, maxTags: 3 }),
+          filterExisting: filterExistingArticles,
+          rescueBody: rescueArticleBody,
+          isDiscardedImage,
+          log: (message) => console.log(message),
+        });
+        const newArticles = prepared.articles;
+        skipped += prepared.duplicateArticles.length;
+        errors += prepared.stats.errores;
 
         const { uniqueArticles, vectorSkipped } = await filterVectorDuplicates(newArticles);
         skipped += vectorSkipped;
@@ -292,6 +265,7 @@ async function runRssIngestion() {
             created += batchSaveResult.created;
             skipped += batchSaveResult.skipped;
             errors += batchSaveResult.errors;
+            embeddingsReused += batchSaveResult.embeddingsReused || 0;
           } catch (error) {
             console.log(`${source.name} -> error batch IA: ${error.message}`);
 
@@ -301,11 +275,15 @@ async function runRssIngestion() {
             created += fallbackSaveResult.created;
             skipped += fallbackSaveResult.skipped;
             errors += fallbackSaveResult.errors;
+            embeddingsReused += fallbackSaveResult.embeddingsReused || 0;
           }
         }
 
         console.log(
-          `Guardado ${source.name} -> creados: ${created}, omitidos: ${skipped}, errores: ${errors}, IA batch: ${aiBatchCount}`
+          `Guardado ${source.name} -> creados: ${created}, omitidos: ${skipped}, errores: ${errors}, IA batch: ${aiBatchCount}, `
+          + `embeddings reusados: ${embeddingsReused}, `
+          + `rescatadas: ${prepared.stats.rescatadas}, cortas conservadas: ${prepared.stats.cortasConservadas}, `
+          + `descartadas por texto: ${prepared.stats.descartadas}`
         );
       } catch (error) {
         console.log(`Error procesando feed ${source.name}: ${error.message}`);

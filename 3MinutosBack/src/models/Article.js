@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { CONTENT_TYPE_VALUES } = require('../utils/contentTypes');
 
 const articleSchema = new mongoose.Schema(
   {
@@ -38,6 +39,13 @@ const articleSchema = new mongoose.Schema(
     geoScope: { 
       type: String, 
       default: 'Global' 
+    },
+    // Género de la nota según el clasificador (ver utils/contentTypes.js): noticia, analisis, opinion, entrevista,
+    // color, servicio, previa_agenda o publicidad. '' = nota anterior a este campo: se trata como noticia.
+    contentType: {
+      type: String,
+      enum: ['', ...CONTENT_TYPE_VALUES],
+      default: '',
     },
     section: {
       type: String,

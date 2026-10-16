@@ -1,7 +1,8 @@
 # Comparador antes / después
 
-Mide si los cambios de búsqueda (varios candidatos, ancla léxica, corral de categoría, frescura al 40 %)
-mejoran respecto de la versión anterior, **contra tu base real y sin escribir nada**.
+Mide si los cambios de búsqueda (varios candidatos, ancla léxica, corral de categoría, frescura al 40 %) y las reglas
+de elegibilidad (nada de más de 24 h, importancia mínima, temas oficiales por etiqueta, país en Sociedad, sin repetir
+la misma historia) mejoran respecto de la versión anterior, **contra tu base real y sin escribir nada**.
 
 ## Uso rápido
 
@@ -41,12 +42,20 @@ Cada tema termina en **una** de estas categorías (de mejor a peor):
 | **Fuera de tema, sin aviso** | Entregó como si fuera del tema algo que no lo es. **Es la falla más grave** |
 
 - **Temas libres:** la relevancia la juzga `gpt-4o-mini` con título y resumen (`--sin-juez` la reemplaza por una mención del
-  tema en el título). Es una guía: **revisá a mano** las secciones «Mejoran» y «Empeoran», que traen los logs de cada versión.
-- **Temas oficiales:** no usan juez; se compara la categoría y el subtema que le asignó el clasificador.
-- **Chequeos de cordura:** cosas que deben cumplirse siempre (nada de más de 48 h, categoría correcta, corral respetado,
-  `DigestTestLog` guarda los campos nuevos…). Si alguno falla es un bug, no una cuestión de gusto.
+  tema en el título). El título y el resumen van en texto plano (sin etiquetas ni entidades de la bajada del feed) y la
+  mención del tema se mide sobre ese mismo texto. Es una guía: **revisá a mano** las secciones «Mejoran» y «Empeoran», que
+  traen los logs de cada versión.
+- **Temas oficiales:** no usan juez; se compara la categoría y el subtema que le asignó el clasificador. La versión nueva los
+  lee por etiqueta (zona `ETIQUETA`, sin score); la anterior los resolvía con la búsqueda por significado.
+- **Chequeos de cordura:** cosas que deben cumplirse siempre (la versión nueva no entrega nada de más de 24 h — la anterior
+  permitía 48 h —, importancia de 40 o más y de 50 o más en el rescate, Sociedad solo de Argentina o Global, categoría
+  correcta, corral respetado, `DigestTestLog` guarda los campos nuevos…). Si alguno falla es un bug, no una cuestión de gusto.
+  Los de importancia y país solo se miden si la corrida guardó esos datos (las corridas viejas no los tienen).
 - **Veredicto:** criterio orientativo (`MEJORA`, `REVISAR`, `EMPEORA`, `SIN CAMBIOS`). Los números van al lado.
-- **Frescura:** se compara solo en los temas donde **las dos** versiones entregaron una noticia en tema.
+- **Frescura:** se compara solo en los temas donde **las dos** versiones entregaron una noticia en tema. El reporte muestra
+  cuántas quedan dentro de las 10 h ideales, cuántas pasan de 24 h y cuál es la más vieja de todas.
+- **Sustancia:** qué porcentaje de las noticias en tema son «buenas» (importancia de 50 o más) y cuántas quedaron por debajo del piso de 40.
+- **Vigencia (veredicto):** falla si la versión nueva entrega algo de más de 24 h; es una mejora si la anterior se pasaba y la nueva no.
 
 ## Probar otros valores (por ejemplo el peso de frescura)
 

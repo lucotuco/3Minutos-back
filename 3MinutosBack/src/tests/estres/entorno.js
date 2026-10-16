@@ -110,7 +110,7 @@ async function crearEntorno({ nivel, args = {}, log = () => {}, presupuesto, con
 
   async function pick(topics, opts = {}) {
     const t0 = Date.now();
-    const base = { perTopicLimit: CONTRATO.perTopicLimit, alreadyShownUrls: [], alreadyShownTitles: [], seenEmbeddings: [] };
+    const base = { perTopicLimit: CONTRATO.perTopicLimit, alreadyShownUrls: [], seenEmbeddings: [] };
     try {
       const { r, logs } = await captura.correr(() => conTimeout(pickBestArticlePerTopic(topics, { ...base, ...opts }), timeoutMs));
       return { resultados: r, ms: Date.now() - t0, error: null, timeout: false, logs, ahora: Date.now() };
@@ -157,7 +157,10 @@ async function crearEntorno({ nivel, args = {}, log = () => {}, presupuesto, con
       .map((u) => ({ id: String(u._id), topics: u.topics }));
   }
 
+  // Cuántas notas hay para elegir: el motor solo mira las últimas 24 h (las de 48 h quedan como referencia).
+  let articulos24h = null;
   let articulos48h = null;
+  try { articulos24h = await Article.countDocuments({ publishedAt: { $gte: new Date(Date.now() - 24 * 36e5) } }).maxTimeMS(15000); } catch { /* informativo */ }
   try { articulos48h = await Article.countDocuments({ publishedAt: { $gte: new Date(Date.now() - 48 * 36e5) } }).maxTimeMS(15000); } catch { /* informativo */ }
 
   const meta = {
@@ -166,6 +169,7 @@ async function crearEntorno({ nivel, args = {}, log = () => {}, presupuesto, con
     commit: git('rev-parse', '--short', 'HEAD'),
     rama: git('rev-parse', '--abbrev-ref', 'HEAD'),
     node: process.version,
+    articulos24h,
     articulos48h,
     usuariosActivosLeidos: usuarios.length,
     origenLibres: t.origenLibres,

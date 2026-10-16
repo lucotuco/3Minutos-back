@@ -78,19 +78,19 @@ function pick(topic, extra = {}) {
 test('le pasa al motor los temas, el historial (URLs, títulos y embeddings de lo ya visto) y el tamaño de ventana', async () => {
   const vistos = [{ title: 'ya vista', vector: [1, 0] }];
   await buildUserNewsDigest({
-    topics: ['Fútbol', 'river plate'], alreadyShownUrls: ['https://m.test/vista'], alreadyShownTitles: ['Vista'], seenEmbeddings: vistos, perTopicLimit: 7,
+    topics: ['Fútbol', 'river plate'], alreadyShownUrls: ['https://m.test/vista'], seenEmbeddings: vistos, perTopicLimit: 7,
   });
   assert.equal(llamadasMotor.length, 1);
   assert.deepEqual(llamadasMotor[0].topics, ['Fútbol', 'river plate']);
   assert.deepEqual(llamadasMotor[0].opts, {
-    perTopicLimit: 7, alreadyShownUrls: ['https://m.test/vista'], alreadyShownTitles: ['Vista'], seenEmbeddings: vistos, judgeWaitMs: null,
+    perTopicLimit: 7, alreadyShownUrls: ['https://m.test/vista'], seenEmbeddings: vistos, judgeWaitMs: null,
   });
 });
 
 test('por defecto: ventana de 10, sin historial y el presupuesto de espera de los jueces de un digest en vivo (null)', async () => {
   await buildUserNewsDigest({ topics: ['Fútbol'] });
   assert.deepEqual(llamadasMotor[0].opts, {
-    perTopicLimit: 10, alreadyShownUrls: [], alreadyShownTitles: [], seenEmbeddings: [], judgeWaitMs: null,
+    perTopicLimit: 10, alreadyShownUrls: [], seenEmbeddings: [], judgeWaitMs: null,
   });
 });
 

@@ -269,7 +269,7 @@ async function main() {
     await almacen.run(logs, async () => {
       try {
         const res = await conTimeout(
-          pickBestArticlePerTopic([t.tema], { perTopicLimit: PER_TOPIC_LIMIT, alreadyShownUrls: [], alreadyShownTitles: [], seenEmbeddings: [] }),
+          pickBestArticlePerTopic([t.tema], { perTopicLimit: PER_TOPIC_LIMIT, alreadyShownUrls: [], seenEmbeddings: [] }),
           timeoutMs
         );
         r = Array.isArray(res) ? res[0] || null : null;

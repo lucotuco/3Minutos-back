@@ -46,12 +46,6 @@ function auditarFuentes(f) {
     sugerencia: 'Proyectar embedding solo para el top-N final, o leer los vectores de los finalistas en otra etapa.',
   });
 
-  push(f.historial && f.digest && tiene(f.digest, /history\.titles/) && !tiene(f.historial, /\btitles\b/), {
-    id: 'S-TITULOS-DEL-HISTORIAL-NUNCA-LLEGAN', severidad: 'BAJA',
-    titulo: 'buildDigestForUser lee history.titles, pero getAlreadyShownHistoryForUser no lo devuelve',
-    detalle: 'alreadyShownTitles llega siempre vacío (y pickBestArticlePerTopic igual no lo usa para filtrar).',
-  });
-
   push(f.historial && tiene(f.historial, /\.limit\(\s*30\s*\)/), {
     id: 'S-VENTANA-HISTORIAL-30', severidad: 'INFO',
     titulo: 'El historial anti-repetidos mira solo las últimas 30 notas vistas',

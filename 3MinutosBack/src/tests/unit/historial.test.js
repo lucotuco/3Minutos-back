@@ -108,13 +108,13 @@ test('no mezcla notas de otros usuarios', async () => {
   assert.equal(h.seenEmbeddings.length, 1);
 });
 
-test('devuelve urls y títulos sin repetir, y los embeddings con su título', async () => {
+test('devuelve las urls sin repetir y los embeddings con su título', async () => {
   const Shown = modeloFalso([vista(1, 1), vista(1, 2, { shownAt: hace(2) }), vista(2, 3)]);
   const Art = modeloFalso([articulo(1, [1, 0]), articulo(2, [0, 1])]);
   const h = await getAlreadyShownHistoryForUser('u1', { now: NOW, models: { UserShownArticle: Shown, Article: Art } });
 
   assert.equal(h.urls.length, 2, 'la misma URL vista dos veces cuenta una');
-  assert.deepEqual(h.titles.sort(), ['Titulo 1', 'Titulo 2']);
+  assert.equal('titles' in h, false, 'la lista de títulos sueltos ya no existe: el título viaja con cada embedding');
   assert.deepEqual(h.seenEmbeddings.map((e) => e.vector), [[1, 0], [0, 1]]);
   assert.ok(h.seenEmbeddings.every((e) => typeof e.title === 'string' && e.title.length > 0));
   assert.deepEqual(Art.llamadas[0].filtro._id.$in.sort(), ['a1', 'a2'], 'cada id se pide una sola vez');
@@ -134,7 +134,7 @@ test('sin historial devuelve todo vacío y no consulta los artículos', async ()
   const Shown = modeloFalso([]);
   const Art = modeloFalso([articulo(1)]);
   const h = await getAlreadyShownHistoryForUser('u1', { now: NOW, models: { UserShownArticle: Shown, Article: Art } });
-  assert.deepEqual(h, { urls: [], titles: [], seenEmbeddings: [] });
+  assert.deepEqual(h, { urls: [], seenEmbeddings: [] });
   assert.equal(Art.llamadas.length, 0);
 });
 

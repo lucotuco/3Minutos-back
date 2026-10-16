@@ -70,7 +70,7 @@ Salen de leer el código, no de medir; los escenarios dinámicos muestran su efe
 | # | Hallazgo | ¿Sigue en el motor nuevo? |
 |---|---|---|
 | 1 | `searchArticlesBySimilarityAtlas` no proyecta `embedding` y el motor tampoco lo lee aparte: **el filtro de "misma historia" nunca bloquea nada** | No: el motor lee los embeddings de los finalistas |
-| 2 | `buildDigestForUser` lee `history.titles`, pero el historial no lo devuelve | No |
+| 2 | `buildDigestForUser` leía `history.titles`, pero el historial no lo devolvía (`alreadyShownTitles` llegaba siempre vacío y el motor no lo usaba) | Ya no hay hallazgo: se eliminó la lista de títulos sueltos (el título viaja con cada embedding) |
 | 3 | El historial mira solo las últimas **30** notas vistas | No: 48 h, hasta 150 notas |
 | 4 | Los clientes de OpenAI no tienen `timeout` ni `maxRetries` (rigen los del SDK: 10 min y 2 reintentos) | No en el camino del digest (la expansión y el embedding de la consulta llevan los suyos) |
 | 5 | La conexión a Mongo no fija `maxPoolSize` ni `socketTimeoutMS` | Sí |

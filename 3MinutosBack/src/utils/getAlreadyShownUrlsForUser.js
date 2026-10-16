@@ -14,7 +14,6 @@ async function getAlreadyShownUrlsForUser(userId) {
 /**
  * Lo que el usuario ya vio en las últimas `hours` horas (máximo `cap` notas, las más recientes primero):
  *   urls            para no repetir la misma nota
- *   titles          para los logs
  *   seenEmbeddings  [{ id, title, lead, vector }] para descartar "la misma historia" contada por otro medio
  *                   (id, título y bajada son lo que ve el juez de sameEventJudge.js cuando el coseno no alcanza)
  *
@@ -34,11 +33,10 @@ async function getAlreadyShownHistoryForUser(userId, {
   const shownItems = await Shown.find({ userId, shownAt: { $gte: since } })
     .sort({ shownAt: -1 })
     .limit(cap)
-    .select('articleUrl articleId title -_id')
+    .select('articleUrl articleId -_id')
     .lean();
 
   const urls = [...new Set(shownItems.map((i) => i.articleUrl).filter(Boolean))];
-  const titles = [...new Set(shownItems.map((i) => i.title).filter(Boolean))];
   const articleIds = [...new Set(shownItems.map((i) => i.articleId).filter(Boolean).map(String))];
 
   // 2. Los embeddings reales de esas notas
@@ -53,7 +51,7 @@ async function getAlreadyShownHistoryForUser(userId, {
       .map((a) => ({ ...noteForJudge(a), vector: a.embedding }));
   }
 
-  return { urls, titles, seenEmbeddings };
+  return { urls, seenEmbeddings };
 }
 
 module.exports = {

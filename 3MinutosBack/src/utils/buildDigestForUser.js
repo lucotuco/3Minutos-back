@@ -46,11 +46,10 @@ async function buildDigestForUser(userId, { onlyTopics = null, keepItems = [], b
       const kept = partial && keepItems.length > 0 ? await exclusionsFromItems(keepItems) : null;
 
       const exclusions = mergeExclusions(
-        { urls: history.urls, titles: history.titles, seenEmbeddings: history.seenEmbeddings },
+        { urls: history.urls, seenEmbeddings: history.seenEmbeddings },
         kept
       );
       const uniqueAlreadyShownUrls = exclusions.urls;
-      const uniqueAlreadyShownTitles = exclusions.titles;
       const seenEmbeddings = exclusions.seenEmbeddings;
       const topics = partial ? onlyTopics : (user.topics || []);
 
@@ -61,7 +60,6 @@ async function buildDigestForUser(userId, { onlyTopics = null, keepItems = [], b
         () => buildUserNewsDigest({
           topics,
           alreadyShownUrls: uniqueAlreadyShownUrls,
-          alreadyShownTitles: uniqueAlreadyShownTitles,
           seenEmbeddings: seenEmbeddings,
           judgeWaitMs: judgeWaitBudgetMs({ background }),
         }),

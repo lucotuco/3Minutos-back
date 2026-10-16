@@ -18,7 +18,7 @@ const { exclusionsFromItems, mergeExclusions, lockKeyFor } = require('../../util
 
 // ---------------------------------------------------------------- exclusionsFromItems / mergeExclusions / lockKeyFor
 
-test('exclusionsFromItems: urls, títulos y embeddings de las notas que se quedan', async () => {
+test('exclusionsFromItems: urls y embeddings de las notas que se quedan', async () => {
   const items = [
     { url: 'https://m.test/1', articleId: 'a1', neutralTitle: 'Uno', title: 'Original uno' },
     { url: 'https://m.test/2', articleId: 'a2', title: 'Dos' },
@@ -31,7 +31,7 @@ test('exclusionsFromItems: urls, títulos y embeddings de las notas que se queda
     loadEmbeddings: async (ids) => { pedidos = ids; return new Map([['a1', [1, 0]], ['a2', [0, 1]]]); },
   });
   assert.deepEqual(r.urls, ['https://m.test/1', 'https://m.test/2', 'https://m.test/3', 'https://m.test/4']);
-  assert.deepEqual(r.titles, ['Uno', 'Dos', 'Sin vector', 'Sin id']);
+  assert.equal('titles' in r, false, 'la lista de títulos sueltos ya no existe: el título viaja con cada embedding');
   assert.deepEqual(pedidos.sort(), ['a1', 'a2', 'a3']);
   // Además del vector, cada nota que se queda lleva id, título y bajada: es lo que ve el juez de misma historia.
   assert.deepEqual(r.seenEmbeddings, [
@@ -58,22 +58,21 @@ test('exclusionsFromItems: la bajada que ve el juez sale de la nota curada, limp
 test('exclusionsFromItems: sin notas no consulta nada', async () => {
   let consultas = 0;
   const r = await exclusionsFromItems([], { loadEmbeddings: async () => { consultas++; return new Map(); } });
-  assert.deepEqual(r, { urls: [], titles: [], seenEmbeddings: [] });
+  assert.deepEqual(r, { urls: [], seenEmbeddings: [] });
   assert.equal(consultas, 0);
-  assert.deepEqual(await exclusionsFromItems(undefined, { loadEmbeddings: async () => new Map() }), { urls: [], titles: [], seenEmbeddings: [] });
+  assert.deepEqual(await exclusionsFromItems(undefined, { loadEmbeddings: async () => new Map() }), { urls: [], seenEmbeddings: [] });
 });
 
-test('mergeExclusions: junta sin repetir urls ni títulos y acepta partes vacías o nulas', () => {
+test('mergeExclusions: junta sin repetir urls y acepta partes vacías o nulas', () => {
   const r = mergeExclusions(
-    { urls: ['a', 'b'], titles: ['A'], seenEmbeddings: [{ title: 'A', vector: [1] }] },
+    { urls: ['a', 'b'], seenEmbeddings: [{ title: 'A', vector: [1] }] },
     null,
-    { urls: ['b', 'c'], titles: ['A', 'C'], seenEmbeddings: [{ title: 'C', vector: [2] }] },
+    { urls: ['b', 'c'], seenEmbeddings: [{ title: 'C', vector: [2] }] },
     {}
   );
   assert.deepEqual(r.urls, ['a', 'b', 'c']);
-  assert.deepEqual(r.titles, ['A', 'C']);
   assert.equal(r.seenEmbeddings.length, 2);
-  assert.deepEqual(mergeExclusions(), { urls: [], titles: [], seenEmbeddings: [] });
+  assert.deepEqual(mergeExclusions(), { urls: [], seenEmbeddings: [] });
 });
 
 test('lockKeyFor: el armado completo es solo el usuario; el parcial suma temas y notas que se quedan', () => {
@@ -105,7 +104,7 @@ function montar({ usuario, historial, motor, embeddings = new Map() } = {}) {
   instalarStub('models/UserDeliveryRun.js', {});
   instalarStub('models/DigestTestLog.js', { create: async (doc) => { registro.logs.push(doc); } });
   instalarStub('utils/getAlreadyShownUrlsForUser.js', {
-    getAlreadyShownHistoryForUser: async () => historial || { urls: ['https://m.test/visto'], titles: ['Visto'], seenEmbeddings: [{ title: 'Visto', vector: [1, 0] }] },
+    getAlreadyShownHistoryForUser: async () => historial || { urls: ['https://m.test/visto'], seenEmbeddings: [{ title: 'Visto', vector: [1, 0] }] },
   });
   instalarStub('utils/articleStore.js', {
     loadEmbeddings: async (ids) => { registro.embeddingsPedidos.push(ids); return embeddings; },
@@ -138,7 +137,7 @@ test('armado completo: usa los temas del usuario y excluye solo lo que ya vio', 
 
   assert.deepEqual(registro.motor[0].topics, ['Fútbol', 'Economía', 'river plate']);
   assert.deepEqual(registro.motor[0].alreadyShownUrls, ['https://m.test/visto']);
-  assert.deepEqual(registro.motor[0].alreadyShownTitles, ['Visto']);
+  assert.equal('alreadyShownTitles' in registro.motor[0], false, 'el motor ya no recibe una lista de títulos que nadie usaba');
   assert.equal(registro.motor[0].seenEmbeddings.length, 1);
   assert.equal(registro.embeddingsPedidos.length, 0, 'sin notas que se quedan no hay nada que buscar');
 
@@ -149,7 +148,7 @@ test('armado completo: usa los temas del usuario y excluye solo lo que ya vio', 
   assert.equal(registro.logs[0].motivo, 'refresh_test');
 }));
 
-test('armado parcial: solo esos temas, y además excluye las notas que se quedan (url, título y misma historia)', () => sinRuido(async () => {
+test('armado parcial: solo esos temas, y además excluye las notas que se quedan (url y misma historia)', () => sinRuido(async () => {
   const keepItems = [
     { url: 'https://m.test/queda1', articleId: 'k1', neutralTitle: 'Se queda 1' },
     { url: 'https://m.test/queda2', articleId: 'k2', title: 'Se queda 2' },
@@ -162,7 +161,6 @@ test('armado parcial: solo esos temas, y además excluye las notas que se quedan
   const args = registro.motor[0];
   assert.deepEqual(args.topics, ['Economía'], 'no se rearman los otros temas');
   assert.deepEqual(args.alreadyShownUrls.sort(), ['https://m.test/queda1', 'https://m.test/queda2', 'https://m.test/visto']);
-  assert.deepEqual(args.alreadyShownTitles.sort(), ['Se queda 1', 'Se queda 2', 'Visto']);
   assert.equal(args.seenEmbeddings.length, 3, 'el historial + las dos que se quedan');
   assert.deepEqual(registro.embeddingsPedidos[0].sort(), ['k1', 'k2']);
 

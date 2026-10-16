@@ -231,7 +231,6 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
   const {
     perTopicLimit = 10,
     alreadyShownUrls = [],
-    alreadyShownTitles = [],
     seenEmbeddings = [],
     now = Date.now(),
     judgeWaitMs = null, // cuánto espera este digest, en total, a los jueces con IA (null = el de fábrica de un digest en vivo)
@@ -253,7 +252,6 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
     : (deps.createTopicJudge || createTopicJudge)({ session: judgeSession });
 
   const usedUrls = new Set(alreadyShownUrls);
-  const usedTitles = [...alreadyShownTitles];
   const dynamicSeenEmbeddings = [...seenEmbeddings];
   const results = [];
 
@@ -311,7 +309,6 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
     const article = picked.article;
     if (article) {
       usedUrls.add(article.url);
-      usedTitles.push(article.neutralTitle || article.title || '');
       if (Array.isArray(picked.embedding) && picked.embedding.length > 0) {
         // id y bajada, además del título: son lo que ve el juez cuando una nota de otro tópico cuenta lo mismo.
         dynamicSeenEmbeddings.push({ ...noteForJudge(article), vector: picked.embedding });

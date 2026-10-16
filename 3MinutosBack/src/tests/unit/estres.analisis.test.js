@@ -575,7 +575,7 @@ test('G: escrituras en Mongo (crítico), embeddings repetidos y corrida parcial'
 const FUENTES_CON_PROBLEMAS = {
   busqueda: 'const projectFields = { title: 1, url: 1 };',
   historial: 'UserShownArticle.find().limit(30).lean(); return { urls, seenEmbeddings };',
-  digest: 'const t = [...new Set(history.titles)];',
+  digest: 'const t = [...new Set(history.urls)];',
   openai: 'const cliente = new OpenAI({ apiKey });',
   server: 'await mongoose.connect(uri, { serverSelectionTimeoutMS: 10000 });',
   pick: 'const queryExpansionCache = new Map();\nconst TOPIC_TO_CATEGORY = Object.fromEntries(pares);\nconst c = TOPIC_TO_CATEGORY[topic];\nconst q = `${cat} Argentina actualidad nacional`;',
@@ -585,8 +585,8 @@ const FUENTES_CON_PROBLEMAS = {
 };
 const FUENTES_ARREGLADAS = {
   busqueda: 'const projectFields = { title: 1, url: 1, embedding: 1 };',
-  historial: 'find().limit(200); return { urls, titles, seenEmbeddings };',
-  digest: 'const t = [...new Set(history.titles)];',
+  historial: 'find().limit(200); return { urls, seenEmbeddings };',
+  digest: 'const t = [...new Set(history.urls)];',
   openai: 'new OpenAI({ apiKey, timeout: 20000, maxRetries: 1 })',
   server: 'await mongoose.connect(uri, { serverSelectionTimeoutMS: 10000, maxPoolSize: 20, socketTimeoutMS: 30000 });',
   pick: 'const queryExpansionCache = new Map(); queryExpansionCache.delete(k);\nconst c = Object.hasOwn(TOPIC_TO_CATEGORY, topic) ? TOPIC_TO_CATEGORY[topic] : null;\nconst TOPIC_TO_CATEGORY = Object.fromEntries(pares);',
@@ -595,12 +595,12 @@ const FUENTES_ARREGLADAS = {
   rutas: "router.get('/digest', async () => { const run = await UserDeliveryRun.findOne({ userId }); const { digest } = await ensureFreshDigest(run, deps); return res.json(digest); });",
 };
 
-test('estático: detecta los 10 problemas de diseño en un código que los tiene', () => {
+test('estático: detecta los 9 problemas de diseño en un código que los tiene', () => {
   const r = auditarFuentes(FUENTES_CON_PROBLEMAS);
   assert.deepEqual(r.map((h) => h.id).sort(), [
     'S-CACHE-EXPANSION-SIN-LIMITE', 'S-CRON-SECUENCIAL', 'S-DIGEST-GUARDADO-SIN-REVISAR-EDAD', 'S-LOOKUP-EN-OBJETO-COMUN',
     'S-MONGO-SIN-POOL-NI-SOCKET-TIMEOUT', 'S-OPENAI-SIN-TIMEOUT', 'S-RESCATE-CONSULTA-FIJA', 'S-SIN-EMBEDDING-EN-CANDIDATOS',
-    'S-TITULOS-DEL-HISTORIAL-NUNCA-LLEGAN', 'S-VENTANA-HISTORIAL-30',
+    'S-VENTANA-HISTORIAL-30',
   ]);
   assert.ok(r.every((h) => h.escenario === 'S'));
   assert.equal(r.find((h) => h.id === 'S-SIN-EMBEDDING-EN-CANDIDATOS').severidad, 'ALTA');

@@ -10,7 +10,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { toPlainText, pickReadableText, decodeEntities, MAX_INPUT_CHARS } = require('../../utils/plainText');
+const { toPlainText, pickReadableText, firstReadableText, decodeEntities, MAX_INPUT_CHARS } = require('../../utils/plainText');
 
 // ---------------------------------------------------------------- formas reales de cada medio
 const PERFIL_IMG_Y_TEXTO =
@@ -257,6 +257,24 @@ test('pickReadableText: justo 40 letras alcanzan', () => {
 test('pickReadableText respeta un piso distinto', () => {
   assert.equal(pickReadableText(['abcdef', 'abcdefghij'], { minChars: 8 }).index, 1);
 });
+
+// ---------------------------------------------------------------- firstReadableText
+test('firstReadableText: el primero con algo legible, ya limpio; una imagen sola no cuenta', () => {
+  const imagen = '<p><img src="https://x.test/1.jpg" alt="" width="10"/></p>';
+  assert.equal(firstReadableText(imagen, 'Texto del <b>snippet</b> &amp; más', 'otro'), 'Texto del snippet & más');
+  assert.equal(firstReadableText('', null, undefined, '   ', '<br>', 'Último'), 'Último');
+  assert.equal(firstReadableText('Uno', 'Dos'), 'Uno');
+  assert.equal(firstReadableText('Corto', 'Un texto bastante más largo que el anterior, pero segundo en la lista'), 'Corto',
+    'gana el primero con algo legible, no el más largo');
+});
+
+test('firstReadableText: un texto corto vale (no hay piso de largo) y sin nada legible devuelve vacío', () => {
+  assert.equal(firstReadableText('<i>Sí</i>'), 'Sí');
+  assert.equal(firstReadableText(), '');
+  assert.equal(firstReadableText(imagenSola(), '<br/>', ''), '');
+});
+
+function imagenSola() { return '<img src="https://x.test/1.jpg" alt=""/>'; }
 
 // ---------------------------------------------------------------- entradas patológicas
 test('entradas patológicas no cuelgan la ingesta (tiempo lineal)', () => {

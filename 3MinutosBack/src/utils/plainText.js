@@ -217,9 +217,19 @@ function pickReadableText(candidates, { minChars = 40 } = {}) {
   return best;
 }
 
+/**
+ * El primer texto de la lista que tiene algo legible una vez limpio ('' si ninguno). Una bajada que era solo una
+ * imagen o una etiqueta cuenta como vacía y se pasa a la siguiente (con `a || b` sobre el texto crudo, la imagen
+ * "ganaba" y el texto que quedaba era vacío).
+ */
+function firstReadableText(...candidates) {
+  return pickReadableText(candidates, { minChars: 1 }).text;
+}
+
 module.exports = {
   toPlainText,
   pickReadableText,
+  firstReadableText,
   decodeEntities,
   MAX_INPUT_CHARS,
 };

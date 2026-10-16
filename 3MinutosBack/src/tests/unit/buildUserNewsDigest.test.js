@@ -180,3 +180,49 @@ test('si la curación con IA falla, el ítem sale igual con textos de respaldo y
     curacion = async (id) => ({ neutralTitle: `Titulo ${id}`, neutralLead: `Bajada ${id}`, neutralSummary: `Resumen ${id}`, cached: false, neutralityScore: 80, politicalBiasRisk: 'low' });
   }
 });
+
+test('textos de respaldo: una bajada que era solo una imagen se saltea (snippet, y si no hay, el título)', async () => {
+  const imagen = '<p><img src="https://x.test/1.jpg" alt="" width="10"/></p>';
+  const sinCuracion = { neutralTitle: '', neutralLead: '', neutralSummary: '', cached: false, neutralityScore: 80, politicalBiasRisk: 'low' };
+  const original = curacion;
+  try {
+    // 1) la curación devuelve vacío: arma el digest con lo que dice la nota
+    curacion = async () => sinCuracion;
+    picks = [pick('Fútbol', { article: { title: 'Boca ganó 2 a 1', rawSummary: imagen, contentSnippet: 'El snippet con la noticia.' } })];
+    let { items } = await buildUserNewsDigest({ topics: ['Fútbol'] });
+    assert.equal(items[0].lead, 'El snippet con la noticia.');
+    assert.equal(items[0].summary, 'El snippet con la noticia.');
+
+    picks = [pick('Fútbol', { article: { title: 'Boca ganó 2 a 1', rawSummary: imagen } })];
+    ({ items } = await buildUserNewsDigest({ topics: ['Fútbol'] }));
+    assert.equal(items[0].lead, 'Boca ganó 2 a 1', 'sin otro texto, la bajada es el título');
+
+    // 2) la curación revienta: armado de respaldo completo
+    curacion = async () => { throw new Error('OpenAI 429'); };
+    picks = [pick('Fútbol', { article: { title: '<img src="https://x.test/2.jpg" alt=""/>', rawSummary: imagen, contentSnippet: 'El snippet con la noticia.' } })];
+    ({ items } = await buildUserNewsDigest({ topics: ['Fútbol'] }));
+    assert.equal(items[0].title, 'Noticia relevante del día', 'un título que era solo una etiqueta no queda vacío');
+    assert.equal(items[0].lead, 'El snippet con la noticia.');
+  } finally {
+    curacion = original;
+  }
+});
+
+test('si la curación con IA falla, los textos de respaldo salen en texto plano (sin etiquetas ni entidades)', async () => {
+  picks = [pick('Fútbol', {
+    article: {
+      title: '<b>Boca</b> gan&oacute; 2 a 1 en La Bombonera',
+      rawSummary: '<p><img src="https://x.test/1.jpg" alt="" width="10"/></p><p>El equipo se impuso &#8220;con autoridad&#8221; &amp; sigue arriba.</p>',
+    },
+  })];
+  curacion = async () => { throw new Error('OpenAI 429'); };
+  try {
+    const { items } = await buildUserNewsDigest({ topics: ['Fútbol'] });
+    assert.equal(items[0].curationFallback, true);
+    assert.equal(items[0].title, 'Boca ganó 2 a 1 en La Bombonera');
+    assert.equal(items[0].lead, 'El equipo se impuso “con autoridad” & sigue arriba.');
+    assert.equal(items[0].summary, 'El equipo se impuso “con autoridad” & sigue arriba.');
+  } finally {
+    curacion = async (id) => ({ neutralTitle: `Titulo ${id}`, neutralLead: `Bajada ${id}`, neutralSummary: `Resumen ${id}`, cached: false, neutralityScore: 80, politicalBiasRisk: 'low' });
+  }
+});

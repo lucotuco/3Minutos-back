@@ -15,6 +15,7 @@
 
 const { norm, redondear } = require('./utilidades');
 const { IMPORTANCE_GOOD_MIN, IMPORTANCE_ACCEPTABLE_MIN } = require('../../utils/eligibility');
+const { toPlainText, firstReadableText } = require('../../utils/plainText');
 
 // Lo que tiene que cumplir la versión NUEVA: nada de más de 24 h (la app no muestra la edad de la nota).
 // El código anterior permitía hasta 48 h: se usa solo como referencia al informar.
@@ -41,6 +42,29 @@ const ETIQUETAS = {
 };
 
 // ---------------------------------------------------------------- texto
+
+// Cuánto de la bajada ve el juez (y queda guardado en la corrida).
+const RESUMEN_MAX_CHARS = 400;
+
+/**
+ * Los textos de una nota que lee el comparador, en texto plano. Las bajadas de los feeds traen HTML
+ * ("<img src='…?auth=…'>", "&oacute;"): el juez no lo necesita y la métrica "menciona el tema" no tiene que contar
+ * la dirección de una imagen como si la nota nombrara el tema.
+ *
+ * @returns {{titulo:string, resumen:string, cuerpo:string}}
+ *   resumen = la primera bajada con texto legible (una que era solo una imagen se salta), hasta RESUMEN_MAX_CHARS;
+ *   cuerpo  = todo lo que se mira para saber si la nota menciona el tema: título, bajada, snippet y tags.
+ */
+function textosDeNota(a = {}) {
+  const titulo = toPlainText(a.title);
+  return {
+    titulo,
+    resumen: toPlainText(firstReadableText(a.rawSummary, a.contentSnippet), { maxChars: RESUMEN_MAX_CHARS }),
+    cuerpo: [titulo, toPlainText(a.rawSummary), toPlainText(a.contentSnippet), (a.tags || []).join(' ')]
+      .filter(Boolean)
+      .join(' '),
+  };
+}
 
 function tokens(texto) {
   return norm(texto).replace(/[^a-z0-9ñ]+/g, ' ').split(' ').filter(Boolean);
@@ -461,6 +485,8 @@ module.exports = {
   ETIQUETAS,
   palabrasTema,
   mencionaTema,
+  textosDeNota,
+  RESUMEN_MAX_CHARS,
   percentil,
   relevanciaDe,
   particion,

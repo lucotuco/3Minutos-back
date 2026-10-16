@@ -3,7 +3,7 @@
 /**
  * Escenario F - Soak (carga sostenida).
  * Mantiene `concurrencia` llamadas en paralelo durante N minutos, con ~10 % de tópicos únicos
- * (obligan a una expansión nueva y engordan queryExpansionCache). Cada 15 s toma una muestra de
+ * (obligan a una expansión nueva y engordan la caché de expansiones). Cada 15 s toma una muestra de
  * memoria, lag del event loop, latencia p95 y errores, y busca crecimiento sostenido de heap,
  * degradación de latencia y errores que aparecen con el tiempo.
  * Conviene correrlo con `node --expose-gc` (npm run test:estres ya lo hace) para que el heap sea comparable.

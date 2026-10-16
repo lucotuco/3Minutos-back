@@ -502,6 +502,24 @@ test('D ráfaga: cuántas expansiones paga un tópico nuevo pedido a la vez', ()
   assert.deepEqual(D.analizarStampede(null), []);
 });
 
+test('D ráfaga: las preguntas de los jueces con IA no cuentan como expansiones', () => {
+  // 1 expansión compartida + 3 preguntas del juez de tema: 4 llamadas de chat, pero una sola expansión.
+  const bien = D.analizarStampede({ concurrentes: 5, tema: 'x', ms: 10, llamadasChat: 4, llamadasExpansion: 1, llamadasJuez: 3, llamadasEmbedding: 1, errores: 0 });
+  assert.equal(bien[0].id, 'D-EXPANSION-OK');
+  assert.match(bien[0].titulo, /hicieron 1 expansión$/);
+  assert.match(bien[0].evidencia[0], /preguntas a jueces: 3/);
+  const mal = D.analizarStampede({ concurrentes: 5, tema: 'x', ms: 10, llamadasChat: 8, llamadasExpansion: 5, llamadasJuez: 3, llamadasEmbedding: 5, errores: 0 });
+  assert.equal(mal[0].id, 'D-STAMPEDE-EXPANSION');
+  assert.match(mal[0].titulo, /hicieron 5 expansiones/);
+  const sinDato = D.analizarStampede({ concurrentes: 5, tema: 'x', ms: 10, llamadasChat: 3, llamadasEmbedding: 1, errores: 0 });
+  assert.equal(sinDato[0].id, 'D-STAMPEDE-EXPANSION', 'sin el desglose (datos viejos) vale el total de llamadas de chat');
+});
+
+test('D llamada gigante: informa las expansiones por separado de las preguntas a los jueces', () => {
+  const r = D.analizarMega({ topics: 10, ms: 1000, error: null, timeout: false, resultados: 10, rescates: 0, erroresBusqueda: 0, llamadasChat: 40, llamadasExpansion: 10, llamadasJuez: 30, violaciones: [] });
+  assert.match(hallazgo(r, 'D-MEGA-SECUENCIAL').evidencia[0], /expansiones en OpenAI: 10 · preguntas a jueces: 30/);
+});
+
 test('D llamada gigante: falla, búsquedas tragadas, violaciones y tiempo por tópico', () => {
   const ok = D.analizarMega({ topics: 100, ms: 5000, error: null, timeout: false, resultados: 100, rescates: 4, erroresBusqueda: 0, llamadasChat: 90, violaciones: [] });
   assert.deepEqual(ids(ok), ['D-MEGA-SECUENCIAL']);

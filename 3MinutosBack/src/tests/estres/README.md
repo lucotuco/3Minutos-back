@@ -74,7 +74,7 @@ Salen de leer el código, no de medir; los escenarios dinámicos muestran su efe
 | 3 | El historial mira solo las últimas **30** notas vistas | No: 48 h, hasta 150 notas |
 | 4 | Los clientes de OpenAI no tienen `timeout` ni `maxRetries` (rigen los del SDK: 10 min y 2 reintentos) | No en el camino del digest (la expansión y el embedding de la consulta llevan los suyos) |
 | 5 | La conexión a Mongo no fija `maxPoolSize` ni `socketTimeoutMS` | Sí |
-| 6 | `queryExpansionCache` es un `Map` que solo crece (y no deduplica pedidos simultáneos del mismo tópico nuevo; el escenario D mide cuántas expansiones paga una ráfaga) | Sí |
+| 6 | La caché de expansiones era un `Map` que solo crecía (y no deduplicaba pedidos simultáneos del mismo tópico nuevo; el escenario D mide cuántas expansiones paga una ráfaga) | No: `topicExpansion.js` tiene tope, vencimiento y comparte la llamada en curso |
 | 7 | El rescate de los temas libres usa una consulta fija por categoría: todos los que fallan reciben la misma nota | Sí (los oficiales ya no usan esa consulta) |
 | 8 | `TOPIC_TO_CATEGORY[topic]` busca en un objeto común (`constructor`, `toString`… devuelven funciones), en el motor o en la ingesta | No |
 | 9 | La cron genera los digests uno tras otro | Sí |

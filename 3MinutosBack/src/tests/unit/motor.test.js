@@ -105,7 +105,9 @@ function expansionFalsa() {
   return fn;
 }
 
-async function correr(topics, { docs = [], busqueda = busquedaFalsa([]), historial = [], vistos = [], store = null, perTopicLimit = 10 } = {}) {
+// `juez: null` = sin juez con IA (solo el coseno). Los tests del juez de "misma historia" pasan uno falso
+// (mismaHistoria.test.js); ninguno de estos tests puede llamar a OpenAI.
+async function correr(topics, { docs = [], busqueda = busquedaFalsa([]), historial = [], vistos = [], store = null, perTopicLimit = 10, juez = null } = {}) {
   const st = store || storeFalso(docs);
   const expand = expansionFalsa();
   const resultados = await pickBestArticlePerTopic(topics, {
@@ -113,7 +115,7 @@ async function correr(topics, { docs = [], busqueda = busquedaFalsa([]), histori
     alreadyShownUrls: historial,
     seenEmbeddings: vistos,
     now: NOW,
-    deps: { search: busqueda, expand, store: st },
+    deps: { search: busqueda, expand, store: st, judge: juez },
   });
   return { resultados, store: st, expand, busqueda };
 }

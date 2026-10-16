@@ -92,7 +92,7 @@ async function prepareUpcomingDeliveryRuns({
         continue;
       }
 
-      const digest = await buildDigestForUser(user._id);
+      const digest = await buildDigestForUser(user._id, { background: true });
 
       const updatedRun = await UserDeliveryRun.findByIdAndUpdate(
         deliveryRun._id,

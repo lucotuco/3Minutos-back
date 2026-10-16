@@ -83,13 +83,22 @@ test('le pasa al motor los temas, el historial (URLs, títulos y embeddings de l
   assert.equal(llamadasMotor.length, 1);
   assert.deepEqual(llamadasMotor[0].topics, ['Fútbol', 'river plate']);
   assert.deepEqual(llamadasMotor[0].opts, {
-    perTopicLimit: 7, alreadyShownUrls: ['https://m.test/vista'], alreadyShownTitles: ['Vista'], seenEmbeddings: vistos,
+    perTopicLimit: 7, alreadyShownUrls: ['https://m.test/vista'], alreadyShownTitles: ['Vista'], seenEmbeddings: vistos, judgeWaitMs: null,
   });
 });
 
-test('por defecto: ventana de 10 y sin historial', async () => {
+test('por defecto: ventana de 10, sin historial y el presupuesto de espera de los jueces de un digest en vivo (null)', async () => {
   await buildUserNewsDigest({ topics: ['Fútbol'] });
-  assert.deepEqual(llamadasMotor[0].opts, { perTopicLimit: 10, alreadyShownUrls: [], alreadyShownTitles: [], seenEmbeddings: [] });
+  assert.deepEqual(llamadasMotor[0].opts, {
+    perTopicLimit: 10, alreadyShownUrls: [], alreadyShownTitles: [], seenEmbeddings: [], judgeWaitMs: null,
+  });
+});
+
+test('le pasa al motor el presupuesto de espera a los jueces que se le dio', async () => {
+  await buildUserNewsDigest({ topics: ['Fútbol'], judgeWaitMs: 4000 });
+  assert.equal(llamadasMotor[0].opts.judgeWaitMs, 4000);
+  await buildUserNewsDigest({ topics: ['Fútbol'], judgeWaitMs: 0 });
+  assert.equal(llamadasMotor[1].opts.judgeWaitMs, 0, 'cero (solo caché) no se confunde con "sin dato"');
 });
 
 test('sin temas devuelve un digest vacío y no llama al motor', async () => {

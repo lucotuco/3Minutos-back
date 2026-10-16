@@ -137,3 +137,24 @@ test('sin historial devuelve todo vacío y no consulta los artículos', async ()
   assert.deepEqual(h, { urls: [], titles: [], seenEmbeddings: [] });
   assert.equal(Art.llamadas.length, 0);
 });
+
+test('el historial entrega id, título y bajada de cada nota vista: es lo que ve el juez de misma historia', async () => {
+  const Shown = modeloFalso([vista(1, 1), vista(2, 2), vista(3, 3)]);
+  const Art = modeloFalso([
+    { _id: 'a1', title: 'Original 1', neutralTitle: 'Neutral 1', neutralLead: 'Bajada neutral 1', embedding: [1, 0] },
+    { _id: 'a2', title: 'Original 2', embedding: [0, 1] },
+    { _id: 'a3', title: '<b>Original</b> &amp; 3', neutralLead: '<p>Bajada con HTML</p>', embedding: [1, 1] },
+  ]);
+  const h = await getAlreadyShownHistoryForUser('u1', { now: NOW, models: { UserShownArticle: Shown, Article: Art } });
+  const porId = Object.fromEntries(h.seenEmbeddings.map((e) => [e.id, e]));
+
+  assert.deepEqual(porId.a1, { id: 'a1', title: 'Neutral 1', lead: 'Bajada neutral 1', vector: [1, 0] });
+  assert.deepEqual(porId.a2, { id: 'a2', title: 'Original 2', lead: '', vector: [0, 1] });
+  assert.deepEqual(porId.a3, { id: 'a3', title: 'Original & 3', lead: 'Bajada con HTML', vector: [1, 1] });
+
+  // y la consulta trae solo lo que hace falta (con el _id, que antes se descartaba)
+  const campos = Art.llamadas[0].select.split(/\s+/);
+  for (const campo of ['_id', 'title', 'neutralTitle', 'neutralLead', 'embedding']) assert.ok(campos.includes(campo), campo);
+  assert.ok(!campos.includes('-_id'));
+  assert.ok(!campos.includes('rawSummary'), 'no se trae el resumen entero de 150 notas');
+});

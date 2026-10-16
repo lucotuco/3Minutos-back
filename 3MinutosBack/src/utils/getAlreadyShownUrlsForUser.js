@@ -4,6 +4,7 @@ const Article = require('../models/Article');
 
 // Ventana (48 h) y tope (150 notas) del historial: ver eligibility.js. Antes: las últimas 30 notas de cualquier fecha.
 const { HISTORY_WINDOW_HOURS, HISTORY_MAX_NOTES } = require('./eligibility');
+const { noteForJudge } = require('./sameEventJudge');
 
 async function getAlreadyShownUrlsForUser(userId) {
   const items = await UserShownArticle.find({ userId }).select('articleUrl -_id').lean();
@@ -14,7 +15,8 @@ async function getAlreadyShownUrlsForUser(userId) {
  * Lo que el usuario ya vio en las últimas `hours` horas (máximo `cap` notas, las más recientes primero):
  *   urls            para no repetir la misma nota
  *   titles          para los logs
- *   seenEmbeddings  [{ title, vector }] para descartar "la misma historia" contada por otro medio
+ *   seenEmbeddings  [{ id, title, lead, vector }] para descartar "la misma historia" contada por otro medio
+ *                   (id, título y bajada son lo que ve el juez de sameEventJudge.js cuando el coseno no alcanza)
  *
  * `models` solo se usa en los tests ({ UserShownArticle, Article } falsos).
  */
@@ -43,12 +45,12 @@ async function getAlreadyShownHistoryForUser(userId, {
   let seenEmbeddings = [];
   if (articleIds.length > 0) {
     const pastArticles = await Articles.find({ _id: { $in: articleIds } })
-      .select('title embedding -_id')
+      .select('_id title neutralTitle neutralLead embedding')
       .lean();
 
     seenEmbeddings = pastArticles
       .filter((a) => Array.isArray(a.embedding) && a.embedding.length > 0)
-      .map((a) => ({ title: a.title, vector: a.embedding }));
+      .map((a) => ({ ...noteForJudge(a), vector: a.embedding }));
   }
 
   return { urls, titles, seenEmbeddings };

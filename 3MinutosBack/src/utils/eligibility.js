@@ -15,6 +15,7 @@
  *      ni publicidad  ni contenido patrocinado ("In House") ni notas de servicio (tutoriales, "dónde ver", recetas)
  *   5. no previa      ni agenda ni "en vivo" ni minuto a minuto
  *   6. no repetida    URL no vista, y no es "la misma historia" que algo visto en 48 h ni que algo ya elegido
+ *                     (coseno >= 0,88; entre 0,80 y 0,88 decide el juez de sameEventJudge.js)
  *
  * Entre las elegibles el orden es: nivel (buena antes que aceptable) -> [zona de similitud, solo
  * temas libres] -> banda de edad (hasta 10 h primero) -> importancia -> más nueva -> _id (desempate estable).
@@ -27,6 +28,12 @@ const { exclusionReasonOf } = require('./contentTypes');
 const IMPORTANCE_GOOD_MIN = 50;        // >= 50: nota "buena"
 const IMPORTANCE_ACCEPTABLE_MIN = 40;  // 40-49: "aceptable" (solo si no hay una buena)
 const SAME_STORY_COSINE = 0.88;        // coseno entre embeddings de notas: >= esto es la misma historia
+// Por debajo de 0,88 también hay notas que cuentan el MISMO hecho con otras palabras (otro medio, otro enfoque).
+// En la banda [0,80; 0,88) el coseno no alcanza para decidir y se le pregunta al juez (sameEventJudge.js);
+// por debajo de 0,80 son hechos distintos. El borde de 0,80 es una estimación: se afina con tests/medirCosenos.js,
+// que muestra el coseno real de las notas repetidas de un reporte.
+const SAME_STORY_JUDGE_MIN_COSINE = 0.80;
+const JUDGE_MAX_PAIRS_PER_CANDIDATE = 2; // contra cuántas notas vistas se compara una candidata como máximo
 const MAX_FUTURE_SKEW_HOURS = 3;       // una fecha más de 3 h en el futuro no es creíble
 
 // Cuánto mira hacia atrás el historial de lo que el usuario ya vio (getAlreadyShownUrlsForUser.js).
@@ -178,6 +185,23 @@ function findSameStory(embedding, seen = [], threshold = SAME_STORY_COSINE) {
   return best.similarity >= threshold ? best : null;
 }
 
+/**
+ * Las notas vistas que caen en la banda del juez: coseno en [min, max). Las más parecidas primero, hasta `limit`.
+ * Devuelve [{ similarity, entry }] con la entrada completa de `seen` (id, título y bajada para la pregunta).
+ */
+function seenInJudgeBand(embedding, seen = [], {
+  min = SAME_STORY_JUDGE_MIN_COSINE, max = SAME_STORY_COSINE, limit = JUDGE_MAX_PAIRS_PER_CANDIDATE,
+} = {}) {
+  if (!Array.isArray(embedding) || embedding.length === 0) return [];
+  const near = [];
+  for (const entry of seen) {
+    const similarity = cosine(embedding, entry?.vector);
+    if (similarity >= min && similarity < max) near.push({ similarity, entry });
+  }
+  near.sort((a, b) => b.similarity - a.similarity);
+  return near.slice(0, limit);
+}
+
 // ---------------------------------------------------------------- elegibilidad
 /**
  * Chequeos baratos (no necesitan embedding). La comparación "misma historia" va aparte
@@ -291,6 +315,8 @@ module.exports = {
   IMPORTANCE_GOOD_MIN,
   IMPORTANCE_ACCEPTABLE_MIN,
   SAME_STORY_COSINE,
+  SAME_STORY_JUDGE_MIN_COSINE,
+  JUDGE_MAX_PAIRS_PER_CANDIDATE,
   MAX_FUTURE_SKEW_HOURS,
   HISTORY_WINDOW_HOURS,
   HISTORY_MAX_NOTES,
@@ -309,6 +335,7 @@ module.exports = {
   isForeignInLocalCategory,
   mostSimilarSeen,
   findSameStory,
+  seenInJudgeBand,
   checkEligibility,
   compareCandidates,
   rankEligible,

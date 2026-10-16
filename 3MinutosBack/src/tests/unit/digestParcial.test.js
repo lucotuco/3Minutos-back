@@ -33,7 +33,26 @@ test('exclusionsFromItems: urls, títulos y embeddings de las notas que se queda
   assert.deepEqual(r.urls, ['https://m.test/1', 'https://m.test/2', 'https://m.test/3', 'https://m.test/4']);
   assert.deepEqual(r.titles, ['Uno', 'Dos', 'Sin vector', 'Sin id']);
   assert.deepEqual(pedidos.sort(), ['a1', 'a2', 'a3']);
-  assert.deepEqual(r.seenEmbeddings, [{ title: 'Uno', vector: [1, 0] }, { title: 'Dos', vector: [0, 1] }]);
+  // Además del vector, cada nota que se queda lleva id, título y bajada: es lo que ve el juez de misma historia.
+  assert.deepEqual(r.seenEmbeddings, [
+    { id: 'a1', title: 'Uno', lead: '', vector: [1, 0] },
+    { id: 'a2', title: 'Dos', lead: '', vector: [0, 1] },
+  ]);
+});
+
+test('exclusionsFromItems: la bajada que ve el juez sale de la nota curada, limpia y recortada', async () => {
+  const items = [
+    { url: 'https://m.test/1', articleId: 'a1', neutralTitle: 'Uno', neutralLead: 'Bajada curada de uno', lead: 'otra' },
+    { url: 'https://m.test/2', articleId: 'a2', title: 'Dos', lead: '<p>Bajada &amp; <b>dos</b></p>' },
+    { url: 'https://m.test/3', articleId: 'a3', title: 'Tres', neutralLead: 'palabra '.repeat(200) },
+  ];
+  const r = await exclusionsFromItems(items, {
+    loadEmbeddings: async () => new Map([['a1', [1, 0]], ['a2', [0, 1]], ['a3', [1, 1]]]),
+  });
+  assert.equal(r.seenEmbeddings[0].lead, 'Bajada curada de uno', 'prefiere la bajada neutral');
+  assert.equal(r.seenEmbeddings[1].lead, 'Bajada & dos', 'sin HTML ni entidades');
+  assert.ok(r.seenEmbeddings[2].lead.length <= 320, 'recortada');
+  assert.ok(r.seenEmbeddings[2].lead.startsWith('palabra palabra'));
 });
 
 test('exclusionsFromItems: sin notas no consulta nada', async () => {
@@ -236,4 +255,67 @@ test('un usuario inexistente o inactivo no arma nada', () => sinRuido(async () =
     await assert.rejects(() => buildDigestForUser(USER_ID), /User not found or inactive/);
     assert.equal(registro.motor.length, 0);
   }
+}));
+
+// ---------------------------------------------------------------- presupuesto de espera a los jueces con IA
+test('presupuesto de espera a los jueces: 1,5 s si el digest lo pide alguien en vivo, 4 s si lo arma el proceso de fondo', () => sinRuido(async () => {
+  const { buildDigestForUser, registro } = montar();
+  await buildDigestForUser(USER_ID);
+  await buildDigestForUser(USER_ID, { background: true });
+  await buildDigestForUser(USER_ID, { onlyTopics: ['Fútbol'], keepItems: [] });
+  assert.deepEqual(registro.motor.map((a) => a.judgeWaitMs), [1500, 4000, 1500]);
+}));
+
+test('presupuesto de espera a los jueces: se cambia por variable de entorno (JUDGE_WAIT_MS / JUDGE_WAIT_MS_BACKGROUND)', () => sinRuido(async () => {
+  const antes = { v: process.env.JUDGE_WAIT_MS, b: process.env.JUDGE_WAIT_MS_BACKGROUND };
+  process.env.JUDGE_WAIT_MS = '700';
+  process.env.JUDGE_WAIT_MS_BACKGROUND = '9000';
+  try {
+    const { buildDigestForUser, registro } = montar();
+    await buildDigestForUser(USER_ID);
+    await buildDigestForUser(USER_ID, { background: true });
+    assert.deepEqual(registro.motor.map((a) => a.judgeWaitMs), [700, 9000]);
+  } finally {
+    for (const [clave, valor] of [['JUDGE_WAIT_MS', antes.v], ['JUDGE_WAIT_MS_BACKGROUND', antes.b]]) {
+      if (valor === undefined) delete process.env[clave]; else process.env[clave] = valor;
+    }
+  }
+}));
+
+test('un armado en vivo y uno de fondo del mismo usuario comparten el candado (una sola generación)', () => sinRuido(async () => {
+  const { buildDigestForUser, registro } = montar();
+  const [a, b] = await Promise.all([buildDigestForUser(USER_ID), buildDigestForUser(USER_ID, { background: true })]);
+  assert.equal(registro.motor.length, 1);
+  assert.equal(a, b);
+}));
+
+// ---------------------------------------------------------------- la preparación previa arma el digest "en segundo plano"
+test('la preparación previa a la entrega arma el digest en segundo plano (presupuesto largo para los jueces)', () => sinRuido(async () => {
+  const { getMinutesNow } = require('../../utils/dateHelpers');
+  const ahora = new Date('2026-10-15T15:00:00.000Z');
+  const minutos = (getMinutesNow(ahora) + 5) % 1440;
+  const deliveryTime = `${String(Math.floor(minutos / 60)).padStart(2, '0')}:${String(minutos % 60).padStart(2, '0')}`;
+
+  const pedidos = [];
+  const corrida = { _id: 'run1', status: 'preparing' };
+  instalarStub('models/UserPreference.js', {
+    find: () => ({ lean: async () => [{ _id: USER_ID, name: 'Lucas', isActive: true, deliveryTime, topics: ['Fútbol'] }] }),
+  });
+  instalarStub('models/UserDeliveryRun.js', {
+    findOneAndUpdate: async () => ({ value: corrida, lastErrorObject: { upserted: 'run1' } }),
+    findByIdAndUpdate: async (id, update) => ({ _id: id, status: update.$set.status }),
+  });
+  instalarStub('utils/buildDigestForUser.js', {
+    buildDigestForUser: async (userId, opciones) => { pedidos.push({ userId, opciones }); return { digest: { items: [] } }; },
+  });
+
+  const archivo = require.resolve(path.join(SRC, 'utils', 'prepareUpcomingDeliveryRuns.js'));
+  delete require.cache[archivo];
+  const { prepareUpcomingDeliveryRuns } = require(archivo);
+  const resultados = await prepareUpcomingDeliveryRuns({ now: ahora });
+
+  assert.equal(resultados.length, 1);
+  assert.equal(resultados[0].status, 'prepared');
+  assert.equal(pedidos.length, 1);
+  assert.deepEqual(pedidos[0].opciones, { background: true });
 }));

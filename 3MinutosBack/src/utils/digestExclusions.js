@@ -8,10 +8,12 @@
  *   - las notas que se quedan en el digest cuando solo se reponen algunas (staleDigest.js)
  *
  * Cada exclusión tiene tres partes: urls (no repetir la nota), titles (logs) y
- * seenEmbeddings [{ title, vector }] (no repetir la misma historia contada por otro medio).
+ * seenEmbeddings [{ id, title, lead, vector }] (no repetir la misma historia contada por otro medio; el id, el título
+ * y la bajada son lo que ve el juez de sameEventJudge.js cuando el coseno no alcanza).
  */
 
 const articleStore = require('./articleStore');
+const { noteForJudge } = require('./sameEventJudge');
 
 const SEPARATOR = '␟';
 
@@ -29,7 +31,7 @@ async function exclusionsFromItems(items = [], { loadEmbeddings = articleStore.l
     const vectors = await loadEmbeddings(ids);
     for (const item of list) {
       const vector = item.articleId ? vectors.get(String(item.articleId)) : null;
-      if (Array.isArray(vector) && vector.length > 0) seenEmbeddings.push({ title: titleOf(item), vector });
+      if (Array.isArray(vector) && vector.length > 0) seenEmbeddings.push({ ...noteForJudge(item), vector });
     }
   }
   return { urls, titles, seenEmbeddings };

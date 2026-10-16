@@ -45,7 +45,8 @@ async function buildUserNewsDigest({
   alreadyShownUrls = [],
   perTopicLimit   = 10,
   alreadyShownTitles = [],
-  seenEmbeddings   = []
+  seenEmbeddings   = [],
+  judgeWaitMs      = null   // cuánto espera este digest, en total, a los jueces con IA (null = el de un digest en vivo)
 } = {}) {
   const totalTimer = startTimer('buildUserNewsDigest total', {
     topics,
@@ -61,7 +62,7 @@ async function buildUserNewsDigest({
 
     const picks = await timeAsync(
       'pickBestArticlePerTopic',
-      () => pickBestArticlePerTopic(topics, { perTopicLimit, alreadyShownUrls,alreadyShownTitles, seenEmbeddings}),
+      () => pickBestArticlePerTopic(topics, { perTopicLimit, alreadyShownUrls, alreadyShownTitles, seenEmbeddings, judgeWaitMs }),
       { topics, perTopicLimit }
     );
 

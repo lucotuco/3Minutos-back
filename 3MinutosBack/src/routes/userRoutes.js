@@ -163,7 +163,7 @@ function serveFreshStoredDigest(user, run) {
 
 async function triggerBackgroundDigestRefresh(user, deliveryDate) {
   try {
-    const digest = await buildDigestForUser(user._id);
+    const digest = await buildDigestForUser(user._id, { background: true });
     await savePreparedDigestRun(user, digest, deliveryDate);
 
     console.log(

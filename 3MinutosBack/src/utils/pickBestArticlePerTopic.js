@@ -5,6 +5,8 @@ const { MAX_ARTICLE_AGE_HOURS } = require('./freshness');
 const { resolveOfficialTopic } = require('./officialTopics');
 const { checkEligibility, rankEligible, normalizeText } = require('./eligibility');
 const { pickOfficialArticle, firstNotRepeated } = require('./officialPick');
+const { JudgeSession, judgeWaitBudgetMs } = require('./llmJudge');
+const { createSameStoryJudge, noteForJudge } = require('./sameEventJudge');
 const articleStore = require('./articleStore');
 
 /**
@@ -18,7 +20,11 @@ const articleStore = require('./articleStore');
  *
  * En los dos, una nota solo puede entregarse si es elegible (eligibility.js): 24 h como máximo,
  * importancia >= 40, no opinión, no previa, país (Sociedad), URL no vista y no ser "la misma historia"
- * (coseno >= 0,88) que algo visto en 48 h o ya elegido en este mismo digest.
+ * (coseno >= 0,88, o entre 0,80 y 0,88 si el juez de sameEventJudge.js dice que es el mismo hecho) que algo
+ * visto en 48 h o ya elegido en este mismo digest.
+ *
+ * El juez espera, como máximo, `judgeWaitMs` en total por digest (llmJudge.js); pasado ese presupuesto, o si falla o
+ * está apagado (SAME_STORY_JUDGE=off), las notas se eligen como si no existiera.
  */
 
 // Una consulta de expansión que tarda más que esto se abandona: el tópico se busca tal cual.
@@ -88,7 +94,7 @@ const redondear = (n) => Math.round(n * 10) / 10;
  * Camino de los tópicos LIBRES: búsqueda -> zonas/ancla/corral -> elegibilidad -> orden por calidad ->
  * descartar "misma historia" -> (si no queda nada) rescate dentro del rubro.
  */
-async function pickFreeTopic(trimmedTopic, queryForEmbedding, { perTopicLimit, now, usedUrls, seenEmbeddings, search, store }) {
+async function pickFreeTopic(trimmedTopic, queryForEmbedding, { perTopicLimit, now, usedUrls, seenEmbeddings, search, store, judge = null }) {
   const since = new Date(now - MAX_ARTICLE_AGE_HOURS * 3600e3);
   const ctx = { now, usedUrls };
   const loadDocs = embeddingLoader(store);
@@ -132,7 +138,7 @@ async function pickFreeTopic(trimmedTopic, queryForEmbedding, { perTopicLimit, n
 
     const zonas = new Map(selection.accepted.map((x) => [x.article, x]));
     const { eligible } = rankEligible(selection.accepted.map((x) => x.article), ctx, { zoneOf: (a) => zonas.get(a).zone });
-    const found = await firstNotRepeated(eligible, { seenEmbeddings, loadDocs, needsDoc: false });
+    const found = await firstNotRepeated(eligible, { seenEmbeddings, loadDocs, needsDoc: false, judge });
 
     if (found.hit) {
       const { entry, embedding } = found.hit;
@@ -176,7 +182,7 @@ async function pickFreeTopic(trimmedTopic, queryForEmbedding, { perTopicLimit, n
 
     // En el rescate solo valen notas de nivel "buena" (importancia >= 50).
     const { eligible } = rankEligible(emergencyCandidates, ctx, { goodOnly: true });
-    const found = await firstNotRepeated(eligible, { seenEmbeddings, loadDocs, needsDoc: false });
+    const found = await firstNotRepeated(eligible, { seenEmbeddings, loadDocs, needsDoc: false, judge });
 
     if (found.hit) {
       const { entry, embedding } = found.hit;
@@ -205,12 +211,18 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
     alreadyShownTitles = [],
     seenEmbeddings = [],
     now = Date.now(),
-    deps = {}, // solo para tests: { search, expand, store }
+    judgeWaitMs = null, // cuánto espera este digest, en total, a los jueces con IA (null = el de fábrica de un digest en vivo)
+    deps = {}, // solo para tests: { search, expand, store, judge, createJudge }  (judge: undefined = el real, null = sin juez)
   } = options;
 
   const search = deps.search || searchArticlesBySimilarityAtlas;
   const expand = deps.expand || expandTopicForEmbedding;
   const store = deps.store || articleStore;
+
+  // El presupuesto de espera a los jueces es POR DIGEST: todos los tópicos descuentan del mismo.
+  const budgetMs = Number.isFinite(judgeWaitMs) && judgeWaitMs >= 0 ? judgeWaitMs : judgeWaitBudgetMs();
+  const judgeSession = new JudgeSession({ budgetMs });
+  const judge = deps.judge !== undefined ? deps.judge : (deps.createJudge || createSameStoryJudge)({ session: judgeSession });
 
   const usedUrls = new Set(alreadyShownUrls);
   const usedTitles = [...alreadyShownTitles];
@@ -236,10 +248,12 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
     let picked;
     if (official) {
       try {
-        picked = await pickOfficialArticle(official, { now, usedUrls, seenEmbeddings: dynamicSeenEmbeddings, store });
+        picked = await pickOfficialArticle(official, { now, usedUrls, seenEmbeddings: dynamicSeenEmbeddings, store, judge });
+        const porJuez = picked.mismaHistoria.filter((m) => m.by === 'juez').length;
         console.log(
           `[Motor Oficial] "${topic}" (${official.kind}) -> ${picked.matchReason} | ` +
-          `rechazadas: ${JSON.stringify(picked.rechazadas)} | misma historia: ${picked.mismaHistoria.length}`
+          `rechazadas: ${JSON.stringify(picked.rechazadas)} | misma historia: ${picked.mismaHistoria.length}` +
+          `${porJuez ? ` (${porJuez} por el juez)` : ''}`
         );
         if (!picked.article) console.warn(`Ningun candidato valido para "${topic}" (${picked.matchReason}).`);
       } catch (error) {
@@ -252,7 +266,7 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
       }
     } else {
       picked = await pickFreeTopic(trimmedTopic, queryExpanded, {
-        perTopicLimit, now, usedUrls, seenEmbeddings: dynamicSeenEmbeddings, search, store,
+        perTopicLimit, now, usedUrls, seenEmbeddings: dynamicSeenEmbeddings, search, store, judge,
       });
     }
 
@@ -261,7 +275,8 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
       usedUrls.add(article.url);
       usedTitles.push(article.neutralTitle || article.title || '');
       if (Array.isArray(picked.embedding) && picked.embedding.length > 0) {
-        dynamicSeenEmbeddings.push({ title: article.neutralTitle || article.title || '', vector: picked.embedding });
+        // id y bajada, además del título: son lo que ve el juez cuando una nota de otro tópico cuenta lo mismo.
+        dynamicSeenEmbeddings.push({ ...noteForJudge(article), vector: picked.embedding });
       }
     }
 
@@ -281,6 +296,7 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
     });
   }
 
+  if (judgeSession.used) console.log(judgeSession.summary());
   return results;
 }
 

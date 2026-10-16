@@ -6,6 +6,7 @@ const { buildUserNewsDigest } = require('./buildUserNewsDigest');
 const { getAlreadyShownHistoryForUser } = require('./getAlreadyShownUrlsForUser');
 const { exclusionsFromItems, mergeExclusions, lockKeyFor } = require('./digestExclusions');
 const { startTimer, timeAsync } = require('./timing');
+const { judgeWaitBudgetMs } = require('./llmJudge');
 
 // 💥 CANDADO EN MEMORIA: Evita que el mismo usuario procese dos resúmenes en paralelo
 const activeGenerations = new Map();
@@ -17,8 +18,12 @@ const activeGenerations = new Map();
  * Con `onlyTopics` arma SOLO esos temas (reposición de notas vencidas, ver staleDigest.js):
  *   - onlyTopics: temas a armar, uno por nota (puede haber repetidos)
  *   - keepItems:  notas del digest que se quedan; ni se repiten ni se trae su misma historia
+ *
+ * `background: true` es para los digests que arma el proceso de fondo (preparación previa, refresco): nadie está
+ * mirando la pantalla, así que los jueces con IA pueden tomarse más tiempo (llmJudge.js). Un digest que pide
+ * el usuario, o que se repone al abrirlo, usa el presupuesto corto.
  */
-async function buildDigestForUser(userId, { onlyTopics = null, keepItems = [] } = {}) {
+async function buildDigestForUser(userId, { onlyTopics = null, keepItems = [], background = false } = {}) {
   const userIdStr = String(userId);
   const partial = Array.isArray(onlyTopics);
   const lockKey = lockKeyFor(userId, { onlyTopics, keepItems });
@@ -58,6 +63,7 @@ async function buildDigestForUser(userId, { onlyTopics = null, keepItems = [] } 
           alreadyShownUrls: uniqueAlreadyShownUrls,
           alreadyShownTitles: uniqueAlreadyShownTitles,
           seenEmbeddings: seenEmbeddings,
+          judgeWaitMs: judgeWaitBudgetMs({ background }),
         }),
         {
           userId: String(user._id),

@@ -139,3 +139,5 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 #google credentials
 google-credentials.json
+# Resultados del comparador antes/despues (src/tests/comparar)
+3MinutosBack/test-resultados/

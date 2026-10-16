@@ -143,12 +143,17 @@ function inferCorralCategory(pool) {
  * @param {(a:object)=>boolean} [opts.isUsable]  filtro de duplicados / edad / opinión
  * @param {string|null} [opts.strictCategory]    corral fijo (tópicos oficiales); si viene, no se infiere
  * @param {boolean} [opts.exhaustive]            evalúa todos; por defecto corta en el primero válido
+ * @param {boolean} [opts.softCorral]            el corral deja de descartar: una nota de otra categoría se acepta marcada
+ *                                               `outOfCorral` y la decide el juez de tema (topicJudge.js). Sin juez el
+ *                                               corral sigue siendo un descarte duro.
  *
- * Devuelve además `accepted`: TODOS los candidatos aceptados, cada uno con su zona, su score y su
- * posición (`rank`, desde 1) en la lista original. Con exhaustive=true el motor reordena `accepted`
+ * Devuelve además `accepted`: TODOS los candidatos aceptados, cada uno con su zona, su score, su
+ * posición (`rank`, desde 1) en la lista original y `outOfCorral`. Con exhaustive=true el motor reordena `accepted`
  * por calidad (eligibility.js) en vez de quedarse con el primero que dejó la búsqueda.
  */
-function selectBestCandidate(topic, candidates, { isUsable = () => true, strictCategory = null, exhaustive = false } = {}) {
+function selectBestCandidate(topic, candidates, {
+  isUsable = () => true, strictCategory = null, exhaustive = false, softCorral = false,
+} = {}) {
   const pool = buildPool(candidates);
   const { anchors, mode } = extractAnchorWords(topic, pool);
   const corral = strictCategory || inferCorralCategory(pool);
@@ -167,15 +172,16 @@ function selectBestCandidate(topic, candidates, { isUsable = () => true, strictC
 
     if (zone === 'ROJA') { row.verdict = 'rechazo: score bajo'; continue; }
     if (!isUsable(a)) { row.verdict = 'rechazo: ya visto/vencido/opinión'; continue; }
-    if (corral && a.category && a.category !== corral) { row.verdict = `rechazo: fuera del corral ${corral}`; continue; }
+    const outOfCorral = Boolean(corral && a.category && a.category !== corral);
+    if (outOfCorral && !softCorral) { row.verdict = `rechazo: fuera del corral ${corral}`; continue; }
 
     if (zone === 'AMARILLA' && !matchesAnchors(a, anchors)) {
       row.verdict = `rechazo: sin ancla léxica [${anchors.join(', ')}]`;
       continue;
     }
 
-    row.verdict = 'ACEPTADO';
-    accepted.push({ article: a, zone, score, rank });
+    row.verdict = outOfCorral ? `ACEPTADO (fuera del corral ${corral}: lo decide el juez)` : 'ACEPTADO';
+    accepted.push({ article: a, zone, score, rank, outOfCorral });
     if (!picked) picked = { article: a, zone, score };
     if (!exhaustive) break;
   }

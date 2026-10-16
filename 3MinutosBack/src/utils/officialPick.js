@@ -21,9 +21,10 @@
 
 const { MAX_ARTICLE_AGE_HOURS } = require('./freshness');
 const {
-  IMPORTANCE_GOOD_MIN, IMPORTANCE_ACCEPTABLE_MIN, rankEligible,
+  IMPORTANCE_GOOD_MIN, IMPORTANCE_ACCEPTABLE_MIN, rankEligible, findSameStory,
 } = require('./eligibility');
-const { noteForJudge, prefetchSameStory, resolveSameStory, PREFETCH_MAX_CANDIDATES } = require('./sameEventJudge');
+const { noteForJudge } = require('./judgeNote');
+const { prefetchSameStory, resolveSameStory, PREFETCH_MAX_CANDIDATES } = require('./sameEventJudge');
 
 const BATCH_SIZE = 8;   // finalistas cuyo documento completo se trae por vez
 const MAX_BATCHES = 4;  // como mucho 32 finalistas por tópico antes de rendirse
@@ -33,7 +34,8 @@ const redondear = (n) => Math.round(n * 10) / 10;
 const embeddingOf = (doc) => (Array.isArray(doc?.embedding) && doc.embedding.length ? doc.embedding : null);
 
 /**
- * Recorre `ranked` (ya ordenado) y devuelve la primera nota que NO es la misma historia que algo visto.
+ * Recorre `ranked` (ya ordenado) y devuelve la primera nota que sirve: que NO sea la misma historia que algo visto y,
+ * en los temas libres, que el juez de tema la dé por buena.
  *
  * @param {object[]} ranked  salida de rankEligible().eligible
  * @param {object} p
@@ -42,20 +44,25 @@ const embeddingOf = (doc) => (Array.isArray(doc?.embedding) && doc.embedding.len
  * @param {boolean} [p.needsDoc]  true si el resultado debe ser el documento cargado (si falta, se saltea)
  * @param {object|null} [p.judge] juez de misma historia atado al digest (sameEventJudge.createSameStoryJudge); sin juez
  *                                solo vale el coseno
- * @returns {Promise<{hit:{entry:object, doc:object|null, embedding:number[]|null}|null, examined:number, skipped:object[]}>}
+ * @param {object|null} [p.topicCheck] juez de tema de un tópico libre (topicJudge.createTopicCheck):
+ *                                { prefetch(entry, doc), check(entry, doc) -> { ok, verdict, reason } }
+ * @returns {Promise<{hit:{entry:object, doc:object|null, embedding:number[]|null, topicVerdict:string|null}|null,
+ *                    examined:number, skipped:object[], offTopic:object[]}>}
  */
-async function firstNotRepeated(ranked, { seenEmbeddings = [], loadDocs, needsDoc = false, judge = null }) {
+async function firstNotRepeated(ranked, { seenEmbeddings = [], loadDocs, needsDoc = false, judge = null, topicCheck = null }) {
   const skipped = [];
+  const offTopic = [];
   let examined = 0;
-  if (!ranked.length) return { hit: null, examined, skipped };
+  if (!ranked.length) return { hit: null, examined, skipped, offTopic };
 
-  // Sin historial ni notas ya elegidas no hay con qué comparar: alcanza con traer la primera
+  // Sin historial ni notas ya elegidas (ni juez de tema) no hay con qué comparar: alcanza con traer la primera
   // (su embedding igual se necesita para comparar contra los tópicos que vienen después).
   // Si esa única nota se borró entre la lectura liviana y la completa, se prueba con las siguientes.
-  const batchSize = seenEmbeddings.length ? BATCH_SIZE : 1;
-  const maxBatches = seenEmbeddings.length ? MAX_BATCHES : 4;
+  const compares = seenEmbeddings.length > 0 || Boolean(topicCheck);
+  const batchSize = compares ? BATCH_SIZE : 1;
+  const maxBatches = compares ? MAX_BATCHES : 4;
 
-  // La candidata tal como la ve el juez: los campos livianos de la lista + lo que trajo la lectura completa.
+  // La candidata tal como la ven los jueces: los campos livianos de la lista + lo que trajo la lectura completa.
   const candidateOf = (entry, doc) => noteForJudge({ ...entry.article, ...(doc || {}) });
 
   for (let b = 0; b < maxBatches; b++) {
@@ -63,20 +70,25 @@ async function firstNotRepeated(ranked, { seenEmbeddings = [], loadDocs, needsDo
     if (!batch.length) break;
     const docs = await loadDocs(batch.map((e) => e.article._id));
 
-    // Las preguntas al juez de las primeras candidatas en banda salen JUNTAS, antes de mirarlas una por una:
-    // el digest espera lo que tarda la más lenta, no la suma. Se corta en la primera que pasa sin juez (esa, si
-    // ninguna anterior queda, es la que se entrega) y en PREFETCH_MAX_CANDIDATES.
-    if (judge && seenEmbeddings.length) {
+    // Las preguntas a los jueces de las primeras candidatas salen JUNTAS, antes de mirarlas una por una: el digest
+    // espera lo que tarda la más lenta, no la suma. Las repetidas por coseno no gastan preguntas; con juez de tema
+    // se pregunta por toda candidata que sigue en pie, y sin él se corta en la primera que pasa sin juez (esa, si
+    // ninguna anterior queda, es la que se entrega). Tope: PREFETCH_MAX_CANDIDATES.
+    if ((judge && seenEmbeddings.length) || topicCheck) {
       let launched = 0;
       for (const entry of batch) {
         if (launched >= PREFETCH_MAX_CANDIDATES) break;
         const doc = docs.get(String(entry.article._id)) || null;
         if (needsDoc && !doc) continue;
-        const kind = prefetchSameStory({
-          embedding: embeddingOf(doc), candidate: candidateOf(entry, doc), seen: seenEmbeddings, judge,
-        });
-        if (kind === 'banda') launched++;
-        else if (kind === 'limpia') break;
+        const embedding = embeddingOf(doc);
+        // (prefetchSameStory sin juez solo mira el coseno: una repetida no gasta preguntas ni siquiera al juez de tema)
+        const kind = seenEmbeddings.length
+          ? prefetchSameStory({ embedding, candidate: candidateOf(entry, doc), seen: seenEmbeddings, judge })
+          : 'limpia';
+        if (kind === 'coseno') continue;
+        if (topicCheck) topicCheck.prefetch(entry, doc);
+        if (kind === 'banda' || topicCheck) launched++;
+        else break;
       }
     }
 
@@ -85,6 +97,26 @@ async function firstNotRepeated(ranked, { seenEmbeddings = [], loadDocs, needsDo
       const doc = docs.get(String(entry.article._id)) || null;
       if (needsDoc && !doc) continue; // se borró entre la lectura liviana y la completa
       const embedding = embeddingOf(doc);
+
+      // 1) la misma historia que algo visto, por coseno (no cuesta nada)
+      const hard = embedding ? findSameStory(embedding, seenEmbeddings) : null;
+      if (hard) {
+        skipped.push({ title: entry.article.title, similarity: hard.similarity, con: hard.title, by: 'coseno' });
+        continue;
+      }
+
+      // 2) ¿es del tema? (solo tópicos libres)
+      let topicVerdict = null;
+      if (topicCheck) {
+        const topic = await topicCheck.check(entry, doc);
+        if (!topic.ok) {
+          offTopic.push({ title: entry.article.title, verdict: topic.verdict, reason: topic.reason });
+          continue;
+        }
+        topicVerdict = topic.verdict;
+      }
+
+      // 3) la misma historia, en la banda donde el coseno no alcanza y decide el juez
       const same = embedding
         ? await resolveSameStory({ embedding, candidate: judge ? candidateOf(entry, doc) : null, seen: seenEmbeddings, judge })
         : null;
@@ -92,10 +124,10 @@ async function firstNotRepeated(ranked, { seenEmbeddings = [], loadDocs, needsDo
         skipped.push({ title: entry.article.title, similarity: same.similarity, con: same.title, by: same.by });
         continue;
       }
-      return { hit: { entry, doc, embedding }, examined, skipped };
+      return { hit: { entry, doc, embedding, topicVerdict }, examined, skipped, offTopic };
     }
   }
-  return { hit: null, examined, skipped };
+  return { hit: null, examined, skipped, offTopic };
 }
 
 function withoutEmbedding(doc) {

@@ -4,7 +4,7 @@ const Article = require('../models/Article');
 
 // Ventana (48 h) y tope (150 notas) del historial: ver eligibility.js. Antes: las últimas 30 notas de cualquier fecha.
 const { HISTORY_WINDOW_HOURS, HISTORY_MAX_NOTES } = require('./eligibility');
-const { noteForJudge } = require('./sameEventJudge');
+const { noteForJudge } = require('./judgeNote');
 
 async function getAlreadyShownUrlsForUser(userId) {
   const items = await UserShownArticle.find({ userId }).select('articleUrl -_id').lean();

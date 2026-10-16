@@ -1,12 +1,15 @@
 const { searchArticlesBySimilarityAtlas } = require('../embeddings/searchArticlesBySimilarityAtlas');
-const { openaiReview } = require('../config/openai');
 const { selectBestCandidate, inferCorralCategory } = require('./topicMatching');
 const { MAX_ARTICLE_AGE_HOURS } = require('./freshness');
 const { resolveOfficialTopic } = require('./officialTopics');
-const { checkEligibility, rankEligible, normalizeText } = require('./eligibility');
+const { checkEligibility, rankEligible, hintLevel } = require('./eligibility');
 const { pickOfficialArticle, firstNotRepeated } = require('./officialPick');
 const { JudgeSession, judgeWaitBudgetMs } = require('./llmJudge');
-const { createSameStoryJudge, noteForJudge } = require('./sameEventJudge');
+const { createSameStoryJudge, PREFETCH_MAX_CANDIDATES } = require('./sameEventJudge');
+const { createTopicJudge, createTopicCheck } = require('./topicJudge');
+const { expandTopic, asExpansion } = require('./topicExpansion');
+const { noteForJudge } = require('./judgeNote');
+const { createGate } = require('./concurrencyGate');
 const articleStore = require('./articleStore');
 
 /**
@@ -16,69 +19,31 @@ const articleStore = require('./articleStore');
  *   - OFICIAL (categoría o subtema, sin importar mayúsculas ni tildes): se lee `articles` por etiqueta,
  *     sin búsqueda por significado ni IA (officialPick.js).
  *   - LIBRE ("river plate", "Zverev"): búsqueda híbrida (significado + palabras) con zonas, ancla léxica
- *     y corral de categoría (topicMatching.js); entre las notas aceptadas se elige por calidad.
+ *     y corral de categoría (topicMatching.js); entre las notas aceptadas se elige por calidad y el juez de tema
+ *     (topicJudge.js) confirma que la nota es DE ese tema.
  *
  * En los dos, una nota solo puede entregarse si es elegible (eligibility.js): 24 h como máximo,
  * importancia >= 40, no opinión, no previa, país (Sociedad), URL no vista y no ser "la misma historia"
  * (coseno >= 0,88, o entre 0,80 y 0,88 si el juez de sameEventJudge.js dice que es el mismo hecho) que algo
  * visto en 48 h o ya elegido en este mismo digest.
  *
- * El juez espera, como máximo, `judgeWaitMs` en total por digest (llmJudge.js); pasado ese presupuesto, o si falla o
- * está apagado (SAME_STORY_JUDGE=off), las notas se eligen como si no existiera.
+ * Los jueces con IA esperan, como máximo, `judgeWaitMs` en total por digest (llmJudge.js); pasado ese presupuesto, o si
+ * fallan o están apagados (SAME_STORY_JUDGE=off, TOPIC_JUDGE=off), las notas se eligen como si no existieran.
+ *
+ * Dos fases, para que los tópicos libres no se esperen entre sí:
+ *   1. (en paralelo) por cada tópico libre: expandir con IA -> buscar -> dejar corriendo las preguntas del juez de tema
+ *      de sus primeras candidatas.
+ *   2. (en orden, como siempre) por cada tópico: elegir la nota con lo ya elegido para los anteriores. La elección es
+ *      idéntica a hacerlo todo en fila; la fase 1 solo adelanta el trabajo de red.
  */
-
-// Una consulta de expansión que tarda más que esto se abandona: el tópico se busca tal cual.
-const EXPANSION_TIMEOUT_MS = 8000;
-const EXPANSION_MAX_RETRIES = 1;
 
 // Cuántas veces perTopicLimit se pide a la búsqueda como ventana de candidatos (antes 2; ahora 30 con el límite por defecto).
 const SEARCH_WINDOW_FACTOR = 3;
 
-const queryExpansionCache = new Map();
-
-async function expandTopicForEmbedding(rawTopic) {
-  const topic = String(rawTopic || '').trim();
-
-  if (topic.split(/\s+/).length >= 5) return topic;
-
-  const normTopic = normalizeText(topic);
-  if (queryExpansionCache.has(normTopic)) {
-    return queryExpansionCache.get(normTopic);
-  }
-
-  const currentYear = new Date().getFullYear();
-
-  try {
-    const response = await openaiReview.chat.completions.create(
-      {
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'system',
-            content: `Sos un experto en expansión de consultas para un motor de búsqueda vectorial periodístico (${currentYear}).
-          REGLA 1: Tu respuesta DEBE EMPEZAR con las palabras exactas del usuario. NUNCA las elimines ni las modifiques.
-          REGLA 2: Agregá de 2 a 4 palabras clave muy específicas que ayuden a aislar el tema. Si es un club, su estadio o apodo directo. Si es un político, su partido o cargo. Si es un país, su capital.
-          REGLA 3: PROHIBICIÓN ABSOLUTA de agregar nombres de rivales, opositores o conceptos contrarios. Si el tema es "River Plate", NO agregues "boca" ni "bosteros".
-          REGLA 4: NO uses palabras genéricas (deporte, equipo, actualidad, noticias).
-          Devolvé ÚNICAMENTE una sola línea de texto en minúsculas, sin comas ni signos de puntuación.`
-          },
-          { role: 'user', content: topic }
-        ],
-        temperature: 0,
-        max_tokens: 25,
-      },
-      { timeout: EXPANSION_TIMEOUT_MS, maxRetries: EXPANSION_MAX_RETRIES }
-    );
-
-    const expanded = response.choices?.[0]?.message?.content?.trim() || topic;
-    console.log(`[Query Expansion IA] "${topic}" -> expandido a "${expanded}"`);
-    queryExpansionCache.set(normTopic, expanded);
-    return expanded;
-  } catch (error) {
-    console.warn(`Fallo expansion IA para "${topic}", usando original:`, error.message);
-    return topic;
-  }
-}
+// Cuántos tópicos libres hacen su trabajo de red (expansión + búsqueda) a la vez en la fase 1. Un usuario tiene 3 tópicos
+// (userRoutes.normalizeTopics), así que nunca espera; el tope evita una ráfaga de decenas de llamadas a OpenAI y a Atlas si
+// alguien invoca el motor con una lista larga.
+const MAX_PARALLEL_FREE_TOPICS = 6;
 
 /** loadDocs para firstNotRepeated en el camino libre: solo hace falta el embedding. */
 function embeddingLoader(store) {
@@ -91,13 +56,68 @@ function embeddingLoader(store) {
 const redondear = (n) => Math.round(n * 10) / 10;
 
 /**
- * Camino de los tópicos LIBRES: búsqueda -> zonas/ancla/corral -> elegibilidad -> orden por calidad ->
- * descartar "misma historia" -> (si no queda nada) rescate dentro del rubro.
+ * Candidatos de un tópico libre -> los que se pueden entregar, en orden de calidad. Sirve para la elección y para
+ * adelantar las preguntas al juez (con las exclusiones que haya en ese momento).
  */
-async function pickFreeTopic(trimmedTopic, queryForEmbedding, { perTopicLimit, now, usedUrls, seenEmbeddings, search, store, judge = null }) {
+function rankFreeCandidates(topic, expansion, candidates, ctx, { softCorral }) {
+  const selection = selectBestCandidate(topic, candidates, {
+    isUsable: (a) => checkEligibility(a, ctx).ok,
+    exhaustive: true,
+    softCorral,
+  });
+  const accepted = new Map(selection.accepted.map((x) => [x.article, x]));
+  const { eligible } = rankEligible(selection.accepted.map((x) => x.article), ctx, {
+    zoneOf: (a) => accepted.get(a).zone,
+    hintOf: (a) => hintLevel(a, expansion),
+  });
+  return { selection, accepted, eligible };
+}
+
+/**
+ * FASE 1 de un tópico libre: expansión, búsqueda y preguntas por adelantado al juez de tema. Nunca rechaza:
+ * si la expansión falla se busca el tópico tal cual, y el error de la búsqueda lo ve la fase 2 al esperarla.
+ * La expansión y la búsqueda esperan su turno en `gate` (como mucho MAX_PARALLEL_FREE_TOPICS a la vez).
+ */
+async function startFreeTopic(topic, { expand, search, perTopicLimit, since, now, usedUrls, topicJudge, gate }) {
+  const { expansion, searchPromise } = await gate(async () => {
+    let found;
+    try {
+      found = asExpansion(await expand(topic), topic);
+    } catch (error) {
+      console.warn(`Fallo la expansion de "${topic}", se busca tal cual:`, error.message);
+      found = asExpansion(null, topic);
+    }
+
+    const pending = Promise.resolve().then(() => search(topic, found.q, {
+      limit: perTopicLimit * SEARCH_WINDOW_FACTOR,
+      minDate: since,
+    }));
+    pending.catch(() => {}); // el error se ve en la fase 2, al esperar la búsqueda dentro de su try
+    await pending.catch(() => {}); // el lugar se libera cuando la búsqueda terminó, bien o mal
+    return { expansion: found, searchPromise: pending };
+  });
+
+  if (topicJudge?.enabled()) {
+    try {
+      const candidates = await searchPromise;
+      const { eligible } = rankFreeCandidates(topic, expansion, candidates, { now, usedUrls }, { softCorral: true });
+      for (const entry of eligible.slice(0, PREFETCH_MAX_CANDIDATES)) topicJudge.prefetch(topic, noteForJudge(entry.article));
+    } catch { /* sin adelanto: las preguntas salen en la fase 2 */ }
+  }
+  return { expansion, searchPromise };
+}
+
+/**
+ * FASE 2 de un tópico libre: zonas/ancla/corral -> elegibilidad -> orden por calidad -> juez de tema -> descartar
+ * "misma historia" -> (si no queda nada) rescate dentro del rubro.
+ */
+async function pickFreeTopic(trimmedTopic, prepared, {
+  perTopicLimit, now, usedUrls, seenEmbeddings, search, store, judge = null, topicJudge = null,
+}) {
   const since = new Date(now - MAX_ARTICLE_AGE_HOURS * 3600e3);
   const ctx = { now, usedUrls };
   const loadDocs = embeddingLoader(store);
+  const { expansion } = prepared;
 
   const out = {
     article: null,
@@ -113,36 +133,38 @@ async function pickFreeTopic(trimmedTopic, queryForEmbedding, { perTopicLimit, n
     ageHours: null,
   };
 
+  // Con juez de tema el corral de categoría deja de ser un descarte: una nota de otra categoría la decide el juez.
+  const softCorral = Boolean(topicJudge?.enabled());
+
   let semanticCandidates = [];
   try {
-    semanticCandidates = await search(trimmedTopic, queryForEmbedding, {
-      limit: perTopicLimit * SEARCH_WINDOW_FACTOR,
-      minDate: since,
-    });
+    semanticCandidates = await prepared.searchPromise;
 
     // Zona, ancla léxica y corral se derivan de los propios candidatos (ver topicMatching.js).
     // Se evalúan TODOS: el orden final lo decide la calidad, no la posición que dejó la búsqueda.
-    const selection = selectBestCandidate(trimmedTopic, semanticCandidates, {
-      isUsable: (a) => checkEligibility(a, ctx).ok,
-      exhaustive: true,
-    });
+    const { selection, accepted, eligible } = rankFreeCandidates(trimmedTopic, expansion, semanticCandidates, ctx, { softCorral });
 
     out.corralCategory = selection.corral;
     out.candidatesEvaluated = selection.candidatesEvaluated;
 
+    const pista = expansion.cat ? `${expansion.cat}${expansion.sub ? `/${expansion.sub}` : ''}` : '-';
     console.log(
       `[Motor Hibrido] "${trimmedTopic}" -> ${semanticCandidates.length} candidatos | ` +
       `Corral: ${selection.corral || 'Libre'} | Anclas: [${selection.anchors.join(', ')}] (${selection.anchorMode}) | ` +
-      `Aceptados: ${selection.accepted.length} de ${selection.candidatesEvaluated}`
+      `Pista: ${pista} | Aceptados: ${selection.accepted.length} de ${selection.candidatesEvaluated}`
     );
 
-    const zonas = new Map(selection.accepted.map((x) => [x.article, x]));
-    const { eligible } = rankEligible(selection.accepted.map((x) => x.article), ctx, { zoneOf: (a) => zonas.get(a).zone });
-    const found = await firstNotRepeated(eligible, { seenEmbeddings, loadDocs, needsDoc: false, judge });
+    const topicCheck = softCorral
+      ? createTopicCheck({ judge: topicJudge, topic: trimmedTopic, isOutOfCorral: (a) => Boolean(accepted.get(a)?.outOfCorral) })
+      : null;
+    const found = await firstNotRepeated(eligible, { seenEmbeddings, loadDocs, needsDoc: false, judge, topicCheck });
+    if (found.offTopic.length) {
+      console.log(`[Juez tema] "${trimmedTopic}": ${found.offTopic.length} descartadas por no ser del tema (${found.offTopic.map((o) => o.verdict || o.reason).join(', ')})`);
+    }
 
     if (found.hit) {
-      const { entry, embedding } = found.hit;
-      const aceptado = zonas.get(entry.article);
+      const { entry, embedding, topicVerdict } = found.hit;
+      const aceptado = accepted.get(entry.article);
       out.article = entry.article;
       out.embedding = embedding;
       out.matchZone = aceptado.zone;
@@ -150,10 +172,11 @@ async function pickFreeTopic(trimmedTopic, queryForEmbedding, { perTopicLimit, n
       out.tier = entry.tier;
       out.ageHours = redondear(entry.ageHours);
       out.candidatesEvaluated = aceptado.rank;
-      out.matchReason = `${aceptado.zone} score=${aceptado.score.toFixed(3)} (candidato #${aceptado.rank})`;
+      const juez = topicCheck ? ` | tema: ${topicVerdict || 'sin veredicto'}` : '';
+      out.matchReason = `${aceptado.zone} score=${aceptado.score.toFixed(3)} (candidato #${aceptado.rank})${juez}`;
       console.log(
         `[MATCH ${aceptado.zone}] "${out.article.title}" | Score: ${aceptado.score.toFixed(3)} | ` +
-        `${entry.tier} ${out.ageHours} h imp=${entry.importance} | candidato #${aceptado.rank}`
+        `${entry.tier} ${out.ageHours} h imp=${entry.importance} | candidato #${aceptado.rank}${juez}`
       );
       return out;
     }
@@ -212,39 +235,52 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
     seenEmbeddings = [],
     now = Date.now(),
     judgeWaitMs = null, // cuánto espera este digest, en total, a los jueces con IA (null = el de fábrica de un digest en vivo)
-    deps = {}, // solo para tests: { search, expand, store, judge, createJudge }  (judge: undefined = el real, null = sin juez)
+    // solo para tests: { search, expand, store, judge, topicJudge, createJudge, createTopicJudge }
+    // (judge / topicJudge: undefined = el real, null = sin ese juez)
+    deps = {},
   } = options;
 
   const search = deps.search || searchArticlesBySimilarityAtlas;
-  const expand = deps.expand || expandTopicForEmbedding;
+  const expand = deps.expand || expandTopic;
   const store = deps.store || articleStore;
 
-  // El presupuesto de espera a los jueces es POR DIGEST: todos los tópicos descuentan del mismo.
+  // El presupuesto de espera a los jueces es POR DIGEST: todos los tópicos y los dos jueces descuentan del mismo.
   const budgetMs = Number.isFinite(judgeWaitMs) && judgeWaitMs >= 0 ? judgeWaitMs : judgeWaitBudgetMs();
   const judgeSession = new JudgeSession({ budgetMs });
   const judge = deps.judge !== undefined ? deps.judge : (deps.createJudge || createSameStoryJudge)({ session: judgeSession });
+  const topicJudge = deps.topicJudge !== undefined
+    ? deps.topicJudge
+    : (deps.createTopicJudge || createTopicJudge)({ session: judgeSession });
 
   const usedUrls = new Set(alreadyShownUrls);
   const usedTitles = [...alreadyShownTitles];
   const dynamicSeenEmbeddings = [...seenEmbeddings];
   const results = [];
 
-  // La expansión con IA es solo para los tópicos LIBRES: los oficiales se leen por etiqueta y no la necesitan.
-  const expandedQueriesMap = new Map();
-  await Promise.all(topics.map(async (rawTopic) => {
+  // FASE 1. La expansión con IA y la búsqueda son solo para los tópicos LIBRES (los oficiales se leen por etiqueta) y
+  // no dependen de lo que se elija antes: salen todas juntas. Las exclusiones que se usan para adelantar las preguntas
+  // al juez son una COPIA de las del arranque, así la fase 1 no depende de en qué punto está la fase 2.
+  const since = new Date(now - MAX_ARTICLE_AGE_HOURS * 3600e3);
+  const startUrls = new Set(alreadyShownUrls);
+  const freeWork = new Map();
+  const gate = createGate(MAX_PARALLEL_FREE_TOPICS);
+  for (const rawTopic of topics) {
     const trimmed = String(rawTopic || '').trim();
-    if (!trimmed || resolveOfficialTopic(trimmed)) return;
-    expandedQueriesMap.set(trimmed, await expand(trimmed));
-  }));
+    if (!trimmed || resolveOfficialTopic(trimmed) || freeWork.has(trimmed)) continue;
+    const work = startFreeTopic(trimmed, { expand, search, perTopicLimit, since, now, usedUrls: startUrls, topicJudge, gate });
+    work.catch(() => {});
+    freeWork.set(trimmed, work);
+  }
 
+  // FASE 2. En orden, con lo ya elegido para los tópicos anteriores.
   for (const rawTopic of topics) {
     const trimmedTopic = String(rawTopic || '').trim();
     if (!trimmedTopic) continue;
 
     const official = resolveOfficialTopic(trimmedTopic);
     const topic = official ? official.name : trimmedTopic;
-    const queryExpanded = official ? trimmedTopic : (expandedQueriesMap.get(trimmedTopic) || trimmedTopic);
 
+    let queryExpanded = trimmedTopic;
     let picked;
     if (official) {
       try {
@@ -265,8 +301,10 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
         };
       }
     } else {
-      picked = await pickFreeTopic(trimmedTopic, queryExpanded, {
-        perTopicLimit, now, usedUrls, seenEmbeddings: dynamicSeenEmbeddings, search, store, judge,
+      const prepared = await freeWork.get(trimmedTopic);
+      queryExpanded = prepared.expansion.q;
+      picked = await pickFreeTopic(trimmedTopic, prepared, {
+        perTopicLimit, now, usedUrls, seenEmbeddings: dynamicSeenEmbeddings, search, store, judge, topicJudge,
       });
     }
 
@@ -300,4 +338,4 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
   return results;
 }
 
-module.exports = { pickBestArticlePerTopic, expandTopicForEmbedding, queryExpansionCache };
+module.exports = { pickBestArticlePerTopic, expandTopicForEmbedding: expandTopic };

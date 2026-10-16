@@ -13,7 +13,7 @@
  */
 
 const articleStore = require('./articleStore');
-const { noteForJudge } = require('./sameEventJudge');
+const { noteForJudge } = require('./judgeNote');
 
 const SEPARATOR = '␟';
 

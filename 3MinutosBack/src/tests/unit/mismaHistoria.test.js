@@ -516,7 +516,9 @@ function storeFalso(docs) {
 const busquedaFalsa = (...respuestas) => async () => (respuestas.shift() || []).map((d) => ({ ...d }));
 
 async function correr(topics, { docs = [], vistos = [], juez, createJudge, busqueda = busquedaFalsa([]), judgeWaitMs } = {}) {
-  const deps = { search: busqueda, expand: async (t) => `${t} expandido`, store: storeFalso(docs) };
+  // `topicJudge: null` = sin juez de tema: acá se prueba el de "misma historia" y ninguna prueba puede llamar a OpenAI
+  // (el juez de tema tiene sus pruebas en temaLibre.test.js).
+  const deps = { search: busqueda, expand: async (t) => `${t} expandido`, store: storeFalso(docs), topicJudge: null };
   if (juez !== undefined) deps.judge = juez;
   if (createJudge) deps.createJudge = createJudge;
   return pickBestArticlePerTopic(topics, { seenEmbeddings: vistos, now: NOW, judgeWaitMs, deps });

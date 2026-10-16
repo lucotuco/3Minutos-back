@@ -21,11 +21,9 @@
  */
 
 const { createLlmJudge, parseYesNo, JudgeSession } = require('./llmJudge');
-const { toPlainText } = require('./plainText');
+const { noteForJudge, canJudge } = require('./judgeNote');
 const { normalizeText, findSameStory, seenInJudgeBand } = require('./eligibility');
 
-const TITLE_MAX_CHARS = 200;
-const LEAD_MAX_CHARS = 320;
 const PREFETCH_MAX_CANDIDATES = 3; // de cuántas candidatas en banda se lanzan las preguntas por adelantado
 
 const SYSTEM_PROMPT = [
@@ -42,26 +40,7 @@ const SYSTEM_PROMPT = [
   'Respondé con una sola palabra: SI o NO.',
 ].join('\n');
 
-// ---------------------------------------------------------------- la nota tal como la ve el juez
-/**
- * Lo que se le muestra al juez de una nota: { id, title, lead }. Sirve para una nota de `articles`, para un item de
- * digest (articleId, bajada ya curada) o para una entrada del historial. Siempre texto limpio y recortado.
- */
-function noteForJudge(source = {}) {
-  const id = source._id ?? source.id ?? source.articleId ?? '';
-  return {
-    id: id ? String(id) : '',
-    title: toPlainText(source.neutralTitle || source.title || '', { maxChars: TITLE_MAX_CHARS }),
-    lead: toPlainText(
-      source.neutralLead || source.lead || source.rawSummary || source.contentSnippet || '',
-      { maxChars: LEAD_MAX_CHARS },
-    ),
-  };
-}
-
-/** Una nota sin título ni bajada no tiene nada que comparar: no se le pregunta nada al juez. */
-const canJudge = (note) => Boolean(note && (note.title || note.lead));
-
+// ---------------------------------------------------------------- la pareja de notas (clave de caché y pregunta)
 function identityOf(note) {
   if (note.id) return `id:${note.id}`;
   return `txt:${normalizeText(note.title)}~${normalizeText(note.lead).slice(0, 100)}`;
@@ -164,8 +143,8 @@ async function resolveSameStory({ embedding, candidate, seen = [], judge = null,
 module.exports = {
   PREFETCH_MAX_CANDIDATES,
   SYSTEM_PROMPT,
-  noteForJudge,
-  canJudge,
+  noteForJudge, // de judgeNote.js
+  canJudge,     // de judgeNote.js
   pairKey,
   sameEventLlm,
   createSameEventLlm,

@@ -105,9 +105,10 @@ function expansionFalsa() {
   return fn;
 }
 
-// `juez: null` = sin juez con IA (solo el coseno). Los tests del juez de "misma historia" pasan uno falso
-// (mismaHistoria.test.js); ninguno de estos tests puede llamar a OpenAI.
-async function correr(topics, { docs = [], busqueda = busquedaFalsa([]), historial = [], vistos = [], store = null, perTopicLimit = 10, juez = null } = {}) {
+// `juez: null` = sin juez de "misma historia" (solo el coseno); `juezTema: null` = sin juez de tema (el corral de
+// categoría descarta, como siempre). Los tests de cada juez pasan uno falso (mismaHistoria.test.js, temaLibre.test.js);
+// ninguno de estos tests puede llamar a OpenAI.
+async function correr(topics, { docs = [], busqueda = busquedaFalsa([]), historial = [], vistos = [], store = null, perTopicLimit = 10, juez = null, juezTema = null } = {}) {
   const st = store || storeFalso(docs);
   const expand = expansionFalsa();
   const resultados = await pickBestArticlePerTopic(topics, {
@@ -115,7 +116,7 @@ async function correr(topics, { docs = [], busqueda = busquedaFalsa([]), histori
     alreadyShownUrls: historial,
     seenEmbeddings: vistos,
     now: NOW,
-    deps: { search: busqueda, expand, store: st, judge: juez },
+    deps: { search: busqueda, expand, store: st, judge: juez, topicJudge: juezTema },
   });
   return { resultados, store: st, expand, busqueda };
 }
@@ -473,17 +474,29 @@ test('libre: una sola expansión por tópico libre, ventana de 30 candidatos y f
   assert.equal(r.resultados[0].queryExpanded, 'river plate expandido');
 });
 
-test('libre: la zona VERDE gana aunque la AMARILLA sea más nueva e importante', async () => {
+test('libre: la zona (VERDE/AMARILLA) solo informa, no ordena: una AMARILLA fresca e importante le gana a una VERDE vieja', async () => {
+  // La zona sale del puntaje de la búsqueda híbrida, que es una suma de posiciones en dos listas: el salto de 0,94 a
+  // 0,93 es un escalón de ranking, no una diferencia de calidad. Entre notas del tema manda la calidad (edad e importancia).
   const c = candidatosRiver();
-  const r = await correr(['river plate'], { busqueda: busquedaFalsa([c.amarillaFresca, c.verdeVieja, c.amarilla2, c.amarilla3, c.roja]) });
+  const r = await correr(['river plate'], { busqueda: busquedaFalsa([c.verdeVieja, c.amarillaFresca, c.amarilla2, c.amarilla3, c.roja]) });
   const x = r.resultados[0];
-  assert.equal(x.article.url, c.verdeVieja.url);
-  assert.equal(x.matchZone, 'VERDE');
-  assert.equal(x.matchScore, 0.97);
+  assert.equal(x.article.url, c.amarillaFresca.url, '1 h e importancia 90 contra 18 h e importancia 55');
+  assert.equal(x.matchZone, 'AMARILLA', 'la zona queda en el resultado, pero informativa');
+  assert.equal(x.matchScore, 0.86);
   assert.equal(x.tier, 'buena');
   assert.equal(x.usedFallback, false);
   assert.equal(x.candidatesEvaluated, 2, 'posición de la nota elegida en la lista de la búsqueda');
-  assert.match(x.matchReason, /^VERDE score=0\.970 \(candidato #2\)/);
+  assert.match(x.matchReason, /^AMARILLA score=0\.860 \(candidato #2\)/);
+});
+
+test('libre: a igual banda de edad e importancia gana la más nueva, sea VERDE o AMARILLA (la zona no desempata)', async () => {
+  const base = { category: 'Deportes', topic: 'Fútbol', tags: [], rawSummary: '', contentSnippet: '', importanceScore: 70 };
+  const verde = nota({ ...base, title: 'River cerró el fichaje', score: 0.97, publishedAt: hace(6) });
+  const amarillaMasNueva = nota({ ...base, title: 'River presentó al refuerzo', score: 0.85, publishedAt: hace(2) });
+  const amarilla3 = nota({ ...base, title: 'River entrenó a puertas cerradas', score: 0.83, publishedAt: hace(9), importanceScore: 55 });
+  const r = await correr(['river plate'], { busqueda: busquedaFalsa([verde, amarillaMasNueva, amarilla3]) });
+  assert.equal(r.resultados[0].article.url, amarillaMasNueva.url);
+  assert.equal(r.resultados[0].matchZone, 'AMARILLA');
 });
 
 test('libre: sin VERDE, entre las AMARILLAS válidas manda la banda de edad y después la importancia', async () => {
@@ -500,7 +513,7 @@ test('libre: la elegibilidad también aplica (vencida, floja, en vivo, opinión,
   const vivo = nota({ title: 'River EN VIVO | minuto a minuto', category: 'Deportes', score: 0.99, importanceScore: 90 });
   const columna = nota({ title: 'River: una columna', url: 'https://medio.test/opinion/river', score: 0.99, importanceScore: 90 });
   const r = await correr(['river plate'], { busqueda: busquedaFalsa([vencida, floja, vivo, columna, c.verdeVieja, c.amarilla2, c.amarilla3]) });
-  assert.equal(r.resultados[0].article.url, c.verdeVieja.url);
+  assert.equal(r.resultados[0].article.url, c.amarilla2.url, 'las 4 primeras no valen; de las tres que quedan, 6 h e importancia 60 es la mejor');
 });
 
 test('libre: el tipo de nota que puso la IA también descarta opinión, servicio, previas y publicidad', async () => {
@@ -509,7 +522,7 @@ test('libre: el tipo de nota que puso la IA también descarta opinión, servicio
   const tutorial = nota({ title: 'River: cómo ver el partido', category: 'Deportes', score: 0.98, importanceScore: 90, contentType: 'servicio' });
   const patrocinada = nota({ title: 'River: beneficios del club', category: 'Deportes', score: 0.97, importanceScore: 90, contentType: 'publicidad' });
   const r = await correr(['river plate'], { busqueda: busquedaFalsa([columna, tutorial, patrocinada, c.verdeVieja, c.amarilla2, c.amarilla3]) });
-  assert.equal(r.resultados[0].article.url, c.verdeVieja.url);
+  assert.equal(r.resultados[0].article.url, c.amarilla2.url, 'las 3 primeras tienen el tipo excluido, por más puntaje e importancia que tengan');
 });
 
 test('libre: lo ya visto (URL o misma historia) se saltea y se entrega la siguiente de calidad', async () => {
@@ -549,6 +562,7 @@ test('libre: sin ningún candidato válido hay rescate en el rubro, solo con not
   const segunda = r.busqueda.llamadas[1];
   assert.equal(segunda.exacta, 'Sociedad Argentina actualidad nacional', 'sin corral inferido el rescate cae en Sociedad');
   assert.equal(segunda.opts.category, 'Sociedad');
+  assert.equal(segunda.opts.limit, 30, 'el rescate también mira una ventana de 30 candidatos');
   assert.equal(segunda.opts.minDate.getTime(), NOW - 24 * 3600e3);
 });
 
@@ -612,7 +626,7 @@ test('mezcla: oficial y libre en un mismo digest, sin repetir nota', async () =>
     busqueda: busquedaFalsa([c.verdeVieja, c.amarilla2, c.amarilla3]),
   });
   assert.equal(r.resultados[0].article.url, oficial.url);
-  assert.equal(r.resultados[1].article.url, c.verdeVieja.url);
+  assert.equal(r.resultados[1].article.url, c.amarilla2.url);
   assert.equal(new Set(urls(r)).size, 2);
 });
 

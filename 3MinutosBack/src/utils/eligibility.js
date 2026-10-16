@@ -17,8 +17,12 @@
  *   6. no repetida    URL no vista, y no es "la misma historia" que algo visto en 48 h ni que algo ya elegido
  *                     (coseno >= 0,88; entre 0,80 y 0,88 decide el juez de sameEventJudge.js)
  *
- * Entre las elegibles el orden es: nivel (buena antes que aceptable) -> [zona de similitud, solo
- * temas libres] -> banda de edad (hasta 10 h primero) -> importancia -> más nueva -> _id (desempate estable).
+ * Entre las elegibles el orden es: nivel (buena antes que aceptable) -> [pista de subtema, solo temas libres] ->
+ * banda de edad (hasta 10 h primero) -> importancia -> más nueva -> _id (desempate estable).
+ *
+ * La zona de similitud de la búsqueda (VERDE / AMARILLA) NO ordena: sale del puesto que ocupó la nota en dos listas
+ * (puntaje por posición, no por parecido real), así que dos notas de calidad muy distinta quedaban separadas por un
+ * escalón arbitrario. La relevancia la deciden el ancla léxica, el corral y el juez de tema; el orden, la calidad.
  */
 
 const { MAX_ARTICLE_AGE_HOURS, IDEAL_ARTICLE_AGE_HOURS, isPreviewOrAgenda } = require('./freshness');
@@ -49,7 +53,6 @@ const LOCAL_SCOPES = new Set(['argentina', 'global']);
 
 const TIER = Object.freeze({ GOOD: 'buena', ACCEPTABLE: 'aceptable' });
 const TIER_RANK = { [TIER.GOOD]: 0, [TIER.ACCEPTABLE]: 1 };
-const ZONE_RANK = { VERDE: 0, AMARILLA: 1 };
 
 // Opinión y publicidad se reconocen por PALABRA COMPLETA, nunca por "contiene": con "contiene", un título como
 // "Análisis de sangre: qué mide", "La opinión pública y la inflación" o "Editorial Planeta lanzó..." quedaba
@@ -248,9 +251,10 @@ function checkEligibility(article, { now = Date.now(), usedUrls = new Set() } = 
 
 // ---------------------------------------------------------------- orden
 /**
- * Comparador de candidatos ya elegibles. Cada entrada: { article, tier, zone?, ageHours, importance }.
+ * Comparador de candidatos ya elegibles. Cada entrada: { article, tier, hint?, ageHours, importance }.
  *   1. nivel      buena antes que aceptable
- *   2. zona       VERDE antes que AMARILLA (solo temas libres; si no hay zona, no desempata)
+ *   2. pista      (solo temas libres) 2 = la nota tiene el subtema que se esperaba del tema, 1 = solo la categoría, 0 = ninguna;
+ *                 la mayor primero. Sin pista (temas oficiales) no desempata.
  *   3. banda      hasta 10 h antes que 10-24 h
  *   4. importancia la mayor primero
  *   5. edad       la más nueva primero
@@ -260,8 +264,8 @@ function compareCandidates(a, b) {
   const byTier = (TIER_RANK[a.tier] ?? 9) - (TIER_RANK[b.tier] ?? 9);
   if (byTier) return byTier;
 
-  const byZone = (ZONE_RANK[a.zone] ?? 0) - (ZONE_RANK[b.zone] ?? 0);
-  if (byZone) return byZone;
+  const byHint = (b.hint || 0) - (a.hint || 0);
+  if (byHint) return byHint;
 
   const bandA = a.ageHours <= IDEAL_ARTICLE_AGE_HOURS ? 0 : 1;
   const bandB = b.ageHours <= IDEAL_ARTICLE_AGE_HOURS ? 0 : 1;
@@ -276,16 +280,29 @@ function compareCandidates(a, b) {
 }
 
 /**
+ * Cuánto coincide una nota con la pista { cat, sub } de la expansión del tema: 2 = mismo subtema (y categoría),
+ * 1 = misma categoría, 0 = ninguna o sin pista. Es una pista de orden, nunca un filtro.
+ */
+function hintLevel(article, hint) {
+  if (!hint || (!hint.cat && !hint.sub)) return 0;
+  const sameCategory = !hint.cat || normalizeText(article?.category) === normalizeText(hint.cat);
+  if (hint.sub && normalizeText(article?.topic) === normalizeText(hint.sub) && sameCategory) return 2;
+  if (hint.cat && normalizeText(article?.category) === normalizeText(hint.cat)) return 1;
+  return 0;
+}
+
+/**
  * Evalúa y ordena una lista de notas. Devuelve las elegibles ordenadas y, aparte, las descartadas
  * con el motivo (para trazabilidad y tests).
  *
  * @param {object[]} articles
  * @param {object} ctx            igual que checkEligibility
  * @param {object} [opts]
- * @param {(a:object)=>string|null} [opts.zoneOf]  zona de similitud de cada nota (temas libres)
+ * @param {(a:object)=>string|null} [opts.zoneOf]  zona de similitud de cada nota (temas libres); solo informativa, no ordena
+ * @param {(a:object)=>number} [opts.hintOf]       nivel de pista de subtema de cada nota, 0-2 (temas libres); ordena
  * @param {boolean} [opts.goodOnly]               solo nivel "buena" (rescate)
  */
-function rankEligible(articles, ctx = {}, { zoneOf = null, goodOnly = false } = {}) {
+function rankEligible(articles, ctx = {}, { zoneOf = null, hintOf = null, goodOnly = false } = {}) {
   const eligible = [];
   const rejected = [];
   for (const article of articles || []) {
@@ -302,6 +319,7 @@ function rankEligible(articles, ctx = {}, { zoneOf = null, goodOnly = false } = 
       article,
       tier: ev.tier,
       zone: zoneOf ? zoneOf(article) : null,
+      hint: hintOf ? hintOf(article) : 0,
       ageHours: Math.max(0, ev.ageHours),
       band: ev.band,
       importance: ev.importance,
@@ -338,5 +356,6 @@ module.exports = {
   seenInJudgeBand,
   checkEligibility,
   compareCandidates,
+  hintLevel,
   rankEligible,
 };

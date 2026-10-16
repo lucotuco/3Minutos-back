@@ -11,7 +11,7 @@ const assert = require('node:assert/strict');
 const {
   IMPORTANCE_GOOD_MIN, IMPORTANCE_ACCEPTABLE_MIN, SAME_STORY_COSINE, TIER,
   cosine, ageHoursOf, tierOf, ageBandOf, isOpinionArticle, isAdvertisingArticle, isForeignInLocalCategory,
-  OPINION_URL_SEGMENTS, ADVERTISING_URL_SEGMENTS, findSameStory, mostSimilarSeen, checkEligibility, compareCandidates, rankEligible,
+  OPINION_URL_SEGMENTS, ADVERTISING_URL_SEGMENTS, findSameStory, mostSimilarSeen, checkEligibility, compareCandidates, hintLevel, rankEligible,
 } = require('../../utils/eligibility');
 
 const NOW = Date.parse('2026-10-15T12:00:00.000Z');
@@ -371,10 +371,29 @@ test('orden 1: una buena de 20 h le gana a una aceptable de 1 h', () => {
   assert.equal(ordenar([aceptable, buena])[0], buena);
 });
 
-test('orden 2: VERDE antes que AMARILLA aunque la AMARILLA sea más nueva e importante', () => {
+test('orden 2: la zona de similitud (VERDE / AMARILLA) NO ordena: manda la calidad', () => {
   const verde = cand({ zone: 'VERDE', ageHours: 20, importance: 50 });
   const amarilla = cand({ zone: 'AMARILLA', ageHours: 1, importance: 95 });
-  assert.equal(ordenar([amarilla, verde])[0], verde);
+  assert.equal(ordenar([verde, amarilla])[0], amarilla, 'la AMARILLA fresca e importante va primero');
+  assert.equal(ordenar([amarilla, verde])[0], amarilla);
+});
+
+test('orden 2 bis: la pista de subtema desempata antes que la edad y la importancia, pero después del nivel', () => {
+  const futbol = cand({ hint: 2, ageHours: 20, importance: 50 });
+  const deportes = cand({ hint: 1, ageHours: 2, importance: 80 });
+  const otra = cand({ hint: 0, ageHours: 1, importance: 99 });
+  assert.deepEqual(ordenar([otra, deportes, futbol]), [futbol, deportes, otra], '2, 1 y 0 en ese orden');
+
+  const aceptableConPista = cand({ tier: TIER.ACCEPTABLE, hint: 2, ageHours: 1, importance: 49 });
+  const buenaSinPista = cand({ tier: TIER.GOOD, hint: 0, ageHours: 23, importance: 50 });
+  assert.equal(ordenar([aceptableConPista, buenaSinPista])[0], buenaSinPista, 'el nivel manda sobre la pista');
+});
+
+test('orden 2 ter: sin pista (temas oficiales) el orden es el de siempre', () => {
+  const a = cand({ ageHours: 4, importance: 70 });
+  const b = cand({ ageHours: 2, importance: 60 });
+  assert.equal(ordenar([b, a])[0], a);
+  assert.equal(ordenar([a, { ...b, hint: undefined }])[0], a);
 });
 
 test('orden 3: la banda de hasta 10 h va antes que la de 10-24 h, aunque la segunda sea más importante', () => {
@@ -426,12 +445,42 @@ test('rankEligible con goodOnly (rescate) deja afuera las aceptables', () => {
   assert.deepEqual(rejected[0].reasons, ['no_es_buena']);
 });
 
-test('rankEligible con zoneOf: la zona desempata antes que la edad', () => {
+test('rankEligible con zoneOf: la zona queda anotada en cada entrada pero no cambia el orden', () => {
   const amarillaFresca = nota({ _id: 'y', publishedAt: hace(1), importanceScore: 90 });
   const verdeVieja = nota({ _id: 'g', publishedAt: hace(20), importanceScore: 50 });
   const zonas = new Map([[amarillaFresca, 'AMARILLA'], [verdeVieja, 'VERDE']]);
-  const { eligible } = rankEligible([amarillaFresca, verdeVieja], ctx(), { zoneOf: (a) => zonas.get(a) });
-  assert.deepEqual(eligible.map((e) => e.article._id), ['g', 'y']);
+  const { eligible } = rankEligible([verdeVieja, amarillaFresca], ctx(), { zoneOf: (a) => zonas.get(a) });
+  assert.deepEqual(eligible.map((e) => e.article._id), ['y', 'g']);
+  assert.deepEqual(eligible.map((e) => e.zone), ['AMARILLA', 'VERDE']);
+});
+
+test('rankEligible con hintOf: la pista ordena y queda anotada; sin hintOf la pista es 0', () => {
+  const futbol = nota({ _id: 'f', category: 'Deportes', topic: 'Fútbol', publishedAt: hace(20), importanceScore: 50 });
+  const salud = nota({ _id: 's', category: 'Sociedad', topic: 'Salud', publishedAt: hace(1), importanceScore: 90 });
+  const pista = { cat: 'Deportes', sub: 'Fútbol' };
+  const { eligible } = rankEligible([salud, futbol], ctx(), { hintOf: (a) => hintLevel(a, pista) });
+  assert.deepEqual(eligible.map((e) => e.article._id), ['f', 's']);
+  assert.deepEqual(eligible.map((e) => e.hint), [2, 0]);
+  assert.deepEqual(rankEligible([salud], ctx()).eligible.map((e) => e.hint), [0]);
+});
+
+test('hintLevel: 2 = subtema (y categoría), 1 = solo categoría, 0 = nada o sin pista; sin tildes ni mayúsculas', () => {
+  const futbol = { category: 'Deportes', topic: 'Fútbol' };
+  const tenis = { category: 'Deportes', topic: 'Tenis' };
+  const salud = { category: 'Sociedad', topic: 'Salud' };
+  const pista = { cat: 'Deportes', sub: 'Fútbol' };
+  assert.equal(hintLevel(futbol, pista), 2);
+  assert.equal(hintLevel(tenis, pista), 1);
+  assert.equal(hintLevel(salud, pista), 0);
+  assert.equal(hintLevel({ category: 'DEPORTES', topic: 'futbol' }, pista), 2);
+
+  assert.equal(hintLevel(tenis, { cat: 'Deportes', sub: '' }), 1, 'solo categoría');
+  assert.equal(hintLevel(salud, { cat: 'Deportes', sub: '' }), 0);
+  assert.equal(hintLevel(futbol, { cat: '', sub: 'Fútbol' }), 2, 'solo subtema');
+  assert.equal(hintLevel({ category: 'Sociedad', topic: 'Fútbol' }, { cat: 'Deportes', sub: 'Fútbol' }), 0, 'mismo subtema en otra categoría no cuenta');
+
+  for (const sinPista of [null, undefined, {}, { cat: '', sub: '' }]) assert.equal(hintLevel(futbol, sinPista), 0);
+  assert.equal(hintLevel(null, pista), 0);
 });
 
 test('rankEligible: edad negativa (fecha apenas en el futuro) se trata como 0 h', () => {

@@ -10,13 +10,19 @@
 
 const { norm } = require('../comparar/utilidades');
 const { topicWords } = require('../../utils/topicMatching');
+const { isPreviewOrAgenda } = require('../../utils/freshness');
 const { CONTRATO, UMBRALES } = require('./config');
 const { coseno, similitudTitulos } = require('./estadisticas');
 
-const ZONAS = new Set(['VERDE', 'AMARILLA', 'RESCATE']);
+// ETIQUETA = tema oficial leído por etiqueta (sin búsqueda por significado, sin score).
+const ZONAS = new Set(['ETIQUETA', 'VERDE', 'AMARILLA', 'RESCATE']);
 const CAUSAS_RESCATE = new Set(['sin_candidatos', 'ningun_candidato_valido', 'error_busqueda']);
-// Espejo de OPINION_KEYWORDS en pickBestArticlePerTopic.js (si cambia allá, actualizar acá).
+const NIVELES = new Set(['buena', 'aceptable', 'sugerida']);
+// Espejo de OPINION_KEYWORDS en utils/eligibility.js (a propósito independiente: así el test no coincide
+// con el motor por construcción. Si cambia allá, actualizar acá).
 const OPINION = ['opinion', 'columna', 'columnista', 'editorial', 'analisis'];
+// Sociedad solo admite notas de Argentina o de alcance Global (espejo de la regla de eligibility.js).
+const ALCANCES_LOCALES = new Set(['argentina', 'global']);
 
 const redondear = (n, d = 1) => (Number.isFinite(n) ? Math.round(n * 10 ** d) / 10 ** d : null);
 
@@ -76,7 +82,7 @@ function chequearTraza(r, add) {
   if (!('corralCategory' in r)) add('I5-TRAZA', 'MEDIA', 'falta corralCategory');
 }
 
-function chequearZona(r, a, add) {
+function chequearZona(r, a, add, esperado = {}) {
   const zona = r.matchZone ?? null;
   if (!a) {
     if (zona !== null) add('I2-ZONA', 'ALTA', `sin nota pero matchZone=${zona}`);
@@ -89,6 +95,15 @@ function chequearZona(r, a, add) {
     if (!CAUSAS_RESCATE.has(r.matchReason)) add('I13-RESCATE-SIN-MOTIVO', 'MEDIA', `rescate con matchReason="${r.matchReason}"`);
     return;
   }
+
+  // Tema oficial: se lee por etiqueta, no hay búsqueda por significado, así que no hay score.
+  if (zona === 'ETIQUETA') {
+    if (esperado.tipo === 'libre') add('I2-ZONA', 'ALTA', 'tema libre con zona ETIQUETA (esa zona es solo de los temas oficiales)');
+    if (r.matchScore !== null && r.matchScore !== undefined) add('I2-ZONA', 'MEDIA', `tema por etiqueta con matchScore=${r.matchScore} (no hay búsqueda por significado)`);
+    return;
+  }
+  if (esperado.tipo === 'oficial') { add('I2-ZONA', 'ALTA', `tema oficial con zona=${zona} (se esperaba ETIQUETA)`); return; }
+
   if (zona !== 'VERDE' && zona !== 'AMARILLA') { add('I2-ZONA', 'ALTA', `nota de tema con zona=${zona}`); return; }
   const s = r.matchScore;
   if (typeof s !== 'number' || !Number.isFinite(s)) add('I2-ZONA', 'ALTA', 'nota de tema sin matchScore numérico');
@@ -98,18 +113,58 @@ function chequearZona(r, a, add) {
   }
 }
 
-function chequearNota(a, ahora, add) {
+function chequearNota(r, a, ahora, add, esperado = {}) {
   if (!a._id) add('I6-FORMA', 'ALTA', 'la nota no tiene _id');
   if (typeof a.url !== 'string' || !/^https?:\/\//i.test(a.url)) add('I6-FORMA', 'ALTA', `url inválida: ${String(a.url).slice(0, 80)}`);
   if (typeof a.title !== 'string' || !a.title.trim()) add('I6-FORMA', 'ALTA', 'la nota no tiene título');
-  if (typeof a.score !== 'number' || !Number.isFinite(a.score) || a.score < 0 || a.score > 1) add('I10-SCORE', 'MEDIA', `score fuera de [0,1]: ${a.score}`);
-  if (typeof a.finalScore !== 'number' || !Number.isFinite(a.finalScore)) add('I10-SCORE', 'MEDIA', 'finalScore no numérico');
+  // Los temas oficiales se leen de la colección por etiqueta: sus notas no traen score de búsqueda.
+  if (esperado.tipo !== 'oficial') {
+    if (typeof a.score !== 'number' || !Number.isFinite(a.score) || a.score < 0 || a.score > 1) add('I10-SCORE', 'MEDIA', `score fuera de [0,1]: ${a.score}`);
+    if (typeof a.finalScore !== 'number' || !Number.isFinite(a.finalScore)) add('I10-SCORE', 'MEDIA', 'finalScore no numérico');
+  }
   if (esOpinion(a)) add('I6b-OPINION', 'MEDIA', 'se entregó una nota de opinión/columna/análisis');
+  if (isPreviewOrAgenda(a.title)) add('I15-PREVIA', 'ALTA', `se entregó una previa/agenda/en vivo: "${String(a.title).slice(0, 70)}"`);
 
   const h = edadHoras(a, ahora);
   if (h === null) add('I1-EDAD', 'MEDIA', 'la nota no tiene publishedAt válido');
   else if (h > CONTRATO.maxEdadHoras + 1 / 60) add('I1-EDAD', 'ALTA', `la nota tiene ${h.toFixed(1)} h (máximo ${CONTRATO.maxEdadHoras} h)`);
   else if (h < -2) add('I1-FECHA-FUTURA', 'BAJA', `publishedAt está ${Math.abs(h).toFixed(1)} h en el futuro (cuenta como "recién salida")`);
+
+  // Sustancia: nada por debajo del piso, y el rescate solo con notas buenas. (Los items de un digest no traen importanceScore.)
+  if (a.importanceScore !== undefined && a.importanceScore !== null) {
+    const imp = Number(a.importanceScore);
+    const piso = r.usedFallback ? CONTRATO.importanciaBuena : CONTRATO.importanciaMinima;
+    if (!Number.isFinite(imp) || imp < piso) add('I14-IMPORTANCIA', 'ALTA', `importancia ${a.importanceScore} < ${piso}${r.usedFallback ? ' (mínimo del rescate)' : ''}`);
+  }
+
+  // País: en Sociedad solo Argentina o Global.
+  if (norm(a.category) === 'sociedad' && a.geoScope && !ALCANCES_LOCALES.has(norm(a.geoScope))) {
+    add('I16-PAIS', 'ALTA', `nota de Sociedad con alcance "${a.geoScope}" (solo Argentina o Global)`);
+  }
+}
+
+function chequearNivel(r, a, add) {
+  if (r.tier === undefined) return; // resultados de versiones anteriores al nivel (no hay nada que medir)
+  if (!NIVELES.has(r.tier)) { add('I17-NIVEL', 'MEDIA', `tier desconocido: ${r.tier}`); return; }
+  if (r.usedFallback && r.tier !== 'sugerida') add('I17-NIVEL', 'ALTA', `rescate con tier=${r.tier} (debe ser "sugerida")`);
+  if (!r.usedFallback && r.tier === 'sugerida') add('I17-NIVEL', 'ALTA', 'nota del tema marcada como "sugerida"');
+  const imp = a.importanceScore;
+  if (imp === undefined || imp === null) return;
+  if (r.tier === 'buena' && imp < CONTRATO.importanciaBuena) add('I17-NIVEL', 'ALTA', `tier "buena" con importancia ${imp} < ${CONTRATO.importanciaBuena}`);
+  if (r.tier === 'aceptable' && (imp < CONTRATO.importanciaMinima || imp >= CONTRATO.importanciaBuena)) {
+    add('I17-NIVEL', 'ALTA', `tier "aceptable" con importancia ${imp} (debe estar entre ${CONTRATO.importanciaMinima} y ${CONTRATO.importanciaBuena - 1})`);
+  }
+}
+
+function chequearOficial(r, a, esperado, add) {
+  if (esperado.tipo !== 'oficial') return;
+  if (esperado.nivel === 'categoria' && r.usedFallback) {
+    add('I18-RESCATE-DE-CATEGORIA', 'ALTA', `la categoría "${esperado.categoria}" no tiene rescate (cualquier nota de la categoría ya vale) y devolvió una nota sugerida`);
+  }
+  // Subtema sin rescate: la etiqueta de la nota ES el subtema pedido.
+  if (esperado.nivel === 'subtema' && !r.usedFallback && r.matchZone === 'ETIQUETA' && a.topic && norm(a.topic) !== norm(r.topic)) {
+    add('I19-ETIQUETA', 'ALTA', `subtema "${r.topic}" entregó una nota con la etiqueta "${a.topic}"`);
+  }
 }
 
 function chequearCorral(r, a, esperado, add) {
@@ -145,10 +200,12 @@ function verificarResultado({ topic, r, esperado = {}, historial = null, ahora =
   }
   const a = r.article || null;
   chequearTraza(r, add);
-  chequearZona(r, a, add);
+  chequearZona(r, a, add, esperado);
   if (!a) return out;
 
-  chequearNota(a, ahora, add);
+  chequearNota(r, a, ahora, add, esperado);
+  chequearNivel(r, a, add);
+  chequearOficial(r, a, esperado, add);
   chequearCorral(r, a, esperado, add);
 
   if (historial && a.url && historial.has(a.url)) add('I7-REPETIDO-HISTORIAL', 'CRITICA', 'se entregó una nota que el usuario ya había visto');

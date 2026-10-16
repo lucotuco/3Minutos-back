@@ -23,7 +23,7 @@ const { parseArgs, norm, redondear } = require('./utilidades');
 const { instalarCacheOpenAI } = require('./cache');
 const { mencionaTema } = require('./metricas');
 
-const PER_TOPIC_LIMIT = 10; // igual que buildUserNewsDigest (busca perTopicLimit * 2 = 20)
+const PER_TOPIC_LIMIT = 10; // igual que buildUserNewsDigest (el motor nuevo busca perTopicLimit * 3 = 30; el anterior, * 2 = 20)
 const UMBRAL_VERDE = 0.94;
 const UMBRAL_AMARILLA = 0.8;
 
@@ -108,6 +108,7 @@ function armarRegistro(t, r, error, ms, logs) {
       score: typeof a.score === 'number' ? redondear(a.score, 3) : null,
       finalScore: typeof a.finalScore === 'number' ? redondear(a.finalScore, 1) : null,
       importancia: a.importanceScore ?? null,
+      geoScope: a.geoScope || null,
       tags: (a.tags || []).slice(0, 8),
       resumen: String(a.rawSummary || a.contentSnippet || '').replace(/\s+/g, ' ').trim().slice(0, 400),
       menciona: t.tipo === 'libre' ? mencionaTema(t.tema, cuerpo) : null,
@@ -135,6 +136,7 @@ function armarRegistro(t, r, error, ms, logs) {
     corral: r?.corralCategory ?? null,
     candidatosEvaluados: r?.candidatesEvaluated ?? null,
     categoriaRescate: r?.fallbackCategory ?? null,
+    nivelNota: r?.tier ?? null, // buena | aceptable | sugerida (solo la versión nueva lo informa)
     articulo,
     juez: null,
     logs,
@@ -239,17 +241,21 @@ async function main() {
     concurrencia: conc,
     perTopicLimit: PER_TOPIC_LIMIT,
     juez: !sinJuez,
+    dbArticulos24h: null,
     dbArticulos48h: null,
     digestLog: null,
   };
-  try {
-    meta.dbArticulos48h = await Article.countDocuments({ publishedAt: { $gte: new Date(Date.now() - 48 * 36e5) } }).maxTimeMS(15000);
-  } catch (e) {
-    meta.dbArticulos48h = null;
+  // La versión nueva solo mira las últimas 24 h; la anterior, 48 h: se cuentan las dos para poder medir la deriva de la base.
+  for (const horas of [24, 48]) {
+    try {
+      meta[`dbArticulos${horas}h`] = await Article.countDocuments({ publishedAt: { $gte: new Date(Date.now() - horas * 36e5) } }).maxTimeMS(15000);
+    } catch (e) {
+      meta[`dbArticulos${horas}h`] = null;
+    }
   }
   meta.digestLog = verificarDigestTestLog(root, mongoose);
 
-  out(`▶ ${a.etiqueta}: ${temas.length} temas | commit ${meta.commit || '?'} (${meta.rama || '?'}) | base "${meta.baseDeDatos}" | notas 48 h: ${meta.dbArticulos48h ?? 'n/d'}`);
+  out(`▶ ${a.etiqueta}: ${temas.length} temas | commit ${meta.commit || '?'} (${meta.rama || '?'}) | base "${meta.baseDeDatos}" | notas 24 h: ${meta.dbArticulos24h ?? 'n/d'} (48 h: ${meta.dbArticulos48h ?? 'n/d'})`);
 
   const resultados = new Array(temas.length);
   let hechos = 0;

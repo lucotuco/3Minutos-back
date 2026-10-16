@@ -305,9 +305,19 @@ const ids = (vs) => vs.map((v) => v.id);
 const verificar = (r, esperado = { tipo: 'libre' }, extra = {}) =>
   I.verificarResultado({ topic: 'river plate', r, esperado, ahora: AHORA, ...extra });
 
+// Un tema oficial se lee por etiqueta: zona ETIQUETA, sin score de búsqueda, con nivel y edad.
+const notaOficial = (o = {}) => nota({ score: undefined, finalScore: undefined, importanceScore: 70, geoScope: 'Argentina', ...o });
+const resultadoOficial = (o = {}, a = notaOficial()) => resultado({
+  topic: 'Fútbol', queryExpanded: 'Fútbol', matchZone: 'ETIQUETA', matchScore: null, tier: 'buena', ageHours: 5,
+  matchReason: 'ETIQUETA buena 5h imp=70 (candidato #1 de 3 elegibles)', ...o,
+}, a);
+const OFICIAL = { tipo: 'oficial', nivel: 'subtema', categoria: 'Deportes' };
+const verificarOficial = (r, esperado = OFICIAL, extra = {}) =>
+  I.verificarResultado({ topic: 'Fútbol', r, esperado, ahora: AHORA, ...extra });
+
 test('invariantes: un resultado sano no tiene violaciones', () => {
   assert.deepEqual(verificar(resultado()), []);
-  assert.deepEqual(verificar(resultado(), { tipo: 'oficial', categoria: 'Deportes' }), []);
+  assert.deepEqual(verificarOficial(resultadoOficial()), [], 'un tema oficial sano: zona ETIQUETA, sin score');
   const vacio = resultado({ article: null, matchZone: null, matchScore: null, matchReason: 'sin_candidatos', candidatesEvaluated: 0 });
   assert.deepEqual(verificar(vacio), [], 'sin nota y sin zona es un resultado válido');
 });
@@ -340,6 +350,97 @@ test('I2: coherencia entre zona, score y rescate', () => {
   assert.ok(ids(verificar(resultado({ usedFallback: true, matchZone: 'VERDE', matchReason: 'sin_candidatos' }))).includes('I2-ZONA'));
   assert.ok(ids(verificar(resultado({ article: null, matchZone: 'VERDE' }))).includes('I2-ZONA'));
   assert.ok(ids(verificar(resultado({ article: null, matchZone: null, usedFallback: true }))).includes('I2-ZONA'));
+});
+
+test('I2 (temas oficiales): la zona es ETIQUETA y no hay score; ETIQUETA no existe en los temas libres', () => {
+  assert.deepEqual(verificarOficial(resultadoOficial()), []);
+  const conVerde = verificarOficial(resultadoOficial({ matchZone: 'VERDE', matchScore: 0.97 }));
+  assert.ok(ids(conVerde).includes('I2-ZONA'), 'un oficial ya no pasa por la búsqueda por significado');
+  assert.equal(conVerde.find((v) => v.id === 'I2-ZONA').severidad, 'ALTA');
+
+  const conScore = verificarOficial(resultadoOficial({ matchScore: 0.9 }));
+  assert.equal(conScore.find((v) => v.id === 'I2-ZONA').severidad, 'MEDIA');
+
+  const libreConEtiqueta = verificar(resultado({ matchZone: 'ETIQUETA', matchScore: null }), { tipo: 'libre' });
+  assert.ok(ids(libreConEtiqueta).includes('I2-ZONA'));
+});
+
+test('I10 (temas oficiales): sus notas no traen score; las de un tema libre sí', () => {
+  assert.deepEqual(verificarOficial(resultadoOficial()), []);
+  const libreSinScore = resultado({}, nota({ score: undefined, finalScore: undefined }));
+  const v = verificar(libreSinScore, { tipo: 'libre' });
+  assert.equal(ids(v).filter((x) => x === 'I10-SCORE').length, 2);
+});
+
+test('I14: importancia mínima 40 (50 en el rescate); si la nota no la trae no se mide', () => {
+  assert.deepEqual(ids(verificarOficial(resultadoOficial({ tier: 'aceptable' }, notaOficial({ importanceScore: 40 })))), []);
+  const baja = verificarOficial(resultadoOficial({ tier: 'aceptable' }, notaOficial({ importanceScore: 39 })));
+  assert.ok(ids(baja).includes('I14-IMPORTANCIA'));
+  assert.equal(baja.find((v) => v.id === 'I14-IMPORTANCIA').severidad, 'ALTA');
+
+  const rescate = (imp) => resultadoOficial(
+    { usedFallback: true, matchZone: 'RESCATE', tier: 'sugerida', matchReason: 'sin_candidatos', fallbackCategory: 'Deportes' },
+    notaOficial({ importanceScore: imp })
+  );
+  assert.ok(ids(verificarOficial(rescate(49))).includes('I14-IMPORTANCIA'), 'el rescate exige nota buena (>= 50)');
+  assert.deepEqual(ids(verificarOficial(rescate(50))), []);
+
+  assert.deepEqual(ids(verificarOficial(resultadoOficial({}, notaOficial({ importanceScore: undefined })))), [], 'un item de digest no trae importanceScore');
+});
+
+test('I15: nunca una previa, agenda o "en vivo"', () => {
+  for (const titulo of ['EN VIVO | Boca - River', 'Previa del clásico: cómo llegan', 'River - Boca: a qué hora juegan y dónde ver', 'Las formaciones confirmadas']) {
+    const v = verificar(resultado({}, nota({ title: titulo })), { tipo: 'libre' });
+    assert.ok(ids(v).includes('I15-PREVIA'), titulo);
+    assert.equal(v.find((x) => x.id === 'I15-PREVIA').severidad, 'ALTA');
+  }
+  assert.ok(!ids(verificar(resultado(), { tipo: 'libre' })).includes('I15-PREVIA'));
+  assert.ok(!ids(verificar(resultado({}, nota({ title: 'Autorización previa: el cambio que piden las prepagas' })), { tipo: 'libre' })).includes('I15-PREVIA'));
+});
+
+test('I16: en Sociedad solo Argentina o Global', () => {
+  const sociedad = (geoScope) => verificarOficial(
+    resultadoOficial({ topic: 'Salud' }, notaOficial({ category: 'Sociedad', topic: 'Salud', geoScope })),
+    { tipo: 'oficial', nivel: 'subtema', categoria: 'Sociedad' }
+  );
+  assert.deepEqual(ids(sociedad('Argentina')), []);
+  assert.deepEqual(ids(sociedad('Global')), []);
+  assert.deepEqual(ids(sociedad('argentina')), [], 'sin importar mayúsculas');
+  assert.deepEqual(ids(sociedad(undefined)), [], 'sin dato no se mide (la ingesta deja Global por defecto)');
+  const mexico = sociedad('México');
+  assert.ok(ids(mexico).includes('I16-PAIS'));
+  assert.equal(mexico.find((v) => v.id === 'I16-PAIS').severidad, 'ALTA');
+  // otras categorías no tienen esta regla
+  assert.deepEqual(ids(verificarOficial(resultadoOficial({}, notaOficial({ geoScope: 'México' })))), []);
+});
+
+test('I17: el nivel es coherente con la importancia y con el rescate', () => {
+  const conTier = (tier, imp, extra = {}) => verificarOficial(resultadoOficial({ tier, ...extra }, notaOficial({ importanceScore: imp })));
+  assert.deepEqual(ids(conTier('buena', 50)), []);
+  assert.deepEqual(ids(conTier('aceptable', 45)), []);
+  assert.ok(ids(conTier('buena', 49)).includes('I17-NIVEL'));
+  assert.ok(ids(conTier('aceptable', 50)).includes('I17-NIVEL'));
+  assert.ok(ids(conTier('aceptable', 39)).includes('I17-NIVEL'));
+  assert.ok(ids(conTier('sugerida', 70)).includes('I17-NIVEL'), 'una nota del tema no puede ser "sugerida"');
+  assert.ok(ids(conTier('inventado', 70)).includes('I17-NIVEL'));
+  const rescateMal = conTier('buena', 70, { usedFallback: true, matchZone: 'RESCATE', matchReason: 'sin_candidatos', fallbackCategory: 'Deportes' });
+  assert.ok(ids(rescateMal).includes('I17-NIVEL'), 'el rescate es "sugerida"');
+  assert.deepEqual(ids(verificarOficial(resultadoOficial({ tier: undefined }))), [], 'resultados sin nivel (versiones anteriores) no se miden');
+});
+
+test('I18 e I19: una categoría no tiene rescate; un subtema trae notas con su etiqueta', () => {
+  const rescate = resultadoOficial({ topic: 'Deportes', usedFallback: true, matchZone: 'RESCATE', tier: 'sugerida', matchReason: 'sin_candidatos', fallbackCategory: 'Deportes' });
+  const categoria = { tipo: 'oficial', nivel: 'categoria', categoria: 'Deportes' };
+  assert.ok(ids(verificarOficial(rescate, categoria)).includes('I18-RESCATE-DE-CATEGORIA'));
+  assert.ok(!ids(verificarOficial(rescate, OFICIAL)).includes('I18-RESCATE-DE-CATEGORIA'), 'un subtema sí puede tener rescate');
+
+  const otraEtiqueta = resultadoOficial({}, notaOficial({ topic: 'Tenis' }));
+  const v = verificarOficial(otraEtiqueta);
+  assert.ok(ids(v).includes('I19-ETIQUETA'));
+  assert.equal(v.find((x) => x.id === 'I19-ETIQUETA').severidad, 'ALTA');
+  assert.deepEqual(ids(verificarOficial(resultadoOficial({}, notaOficial({ topic: 'fútbol' })))), [], 'sin importar mayúsculas');
+  assert.deepEqual(ids(verificarOficial(resultadoOficial({}, notaOficial({ topic: undefined })))), [], 'un item de digest no trae la etiqueta');
+  assert.deepEqual(ids(verificarOficial(resultadoOficial({ topic: 'Deportes' }, notaOficial({ topic: 'Tenis' })), { tipo: 'oficial', nivel: 'categoria', categoria: 'Deportes' })), [], 'una categoría acepta cualquier subtema');
 });
 
 test('I13: un rescate tiene que decir por qué', () => {

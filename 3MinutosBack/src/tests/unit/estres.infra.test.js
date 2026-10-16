@@ -308,7 +308,7 @@ test('crearMonitorLag y memoria devuelven números sanos', async () => {
 // ================================================================= reporte
 const META = {
   nivel: 'suave', duracionMin: 1.5, parcial: false, motivoParada: null, host: 'cluster0.secreto.mongodb.net',
-  baseConectada: 'db', commit: 'abc1234', rama: 'rama', iniciadoEn: '2026-10-14T12:00:00Z', articulos48h: 10,
+  baseConectada: 'db', commit: 'abc1234', rama: 'rama', iniciadoEn: '2026-10-14T12:00:00Z', articulos24h: 5, articulos48h: 10,
 };
 const hz = (id, severidad, escenario = 'A', extra = {}) => ({ id, severidad, escenario, titulo: `titulo ${id}`, detalle: '', evidencia: [], sugerencia: '', ...extra });
 const CONTADORES = { openai: { chat: { llamadas: 3, err429: 1 }, embeddings: { llamadas: 4, err429: 0 } }, mongo: { comandos: 9, fallos: 0, escrituras: 0 } };

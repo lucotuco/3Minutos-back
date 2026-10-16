@@ -60,10 +60,10 @@ function hallazgosA(porTema, filas, timeoutS) {
   const tragados = porTema.filter((t) => t.erroresBusqueda > 0);
   push(tragados.length, {
     id: 'A-ERROR-BUSQUEDA-TRAGADO', severidad: 'ALTA',
-    titulo: `${tragados.length} tópico(s) tuvieron un error de búsqueda que se disfrazó de "noticia sugerida"`,
-    detalle: 'Si la búsqueda falla (Atlas/OpenAI), el código cae al rescate y el usuario recibe una nota de relleno sin que nadie se entere.',
+    titulo: `${tragados.length} tópico(s) tuvieron un error de búsqueda que se tragó el sistema (nota "sugerida" o lugar vacío)`,
+    detalle: 'Si la lectura o la búsqueda falla (Mongo/Atlas/OpenAI), un tema libre cae al rescate y el usuario recibe una nota de relleno; un tema oficial queda vacío. En ambos casos nadie se entera.',
     evidencia: ev(tragados, (t) => `"${t.tema}": ${t.erroresBusqueda}/${t.n} llamadas con matchReason=error_busqueda`),
-    sugerencia: 'Distinguir "no hay notas" de "falló la búsqueda": reintentar o no mostrar rescate cuando es un error de infraestructura.',
+    sugerencia: 'Distinguir "no hay notas" de "falló la búsqueda": reintentar, o no mostrar rescate cuando es un error de infraestructura.',
   });
 
   const intermitentes = porTema.filter((t) => t.rescates > 0 && t.rescates < t.n);
@@ -72,7 +72,7 @@ function hallazgosA(porTema, filas, timeoutS) {
     titulo: `${intermitentes.length} tópico(s) a veces dan nota del tema y a veces rescate, con la misma entrada`,
     detalle: 'La misma consulta, sin historial, debería resolverse siempre igual (salvo que entren notas nuevas).',
     evidencia: ev(intermitentes, (t) => `"${t.tema}": rescate en ${t.rescates}/${t.n}; zonas ${JSON.stringify(t.zonas)}`),
-    sugerencia: 'Mirar si coincide con error_busqueda o con candidatos que oscilan alrededor de 0.80/0.94.',
+    sugerencia: 'Mirar si coincide con error_busqueda, con candidatos que oscilan alrededor de 0.80/0.94 (temas libres) o con una nota que cumple 24 h durante la corrida.',
   });
 
   const flapping = porTema.filter((t) => t.distintos >= 2 && t.transiciones >= 2);
@@ -102,9 +102,9 @@ function hallazgosA(porTema, filas, timeoutS) {
   push(concentradas.length, {
     id: 'A-NOTA-REPETIDA-ENTRE-TEMAS', severidad: 'MEDIA',
     titulo: `${concentradas.length} nota(s) se entregan a 3 o más tópicos distintos`,
-    detalle: 'Si es un rescate, todos los usuarios cuyo tópico falla en esa categoría ven la misma nota de relleno.',
+    detalle: 'Si es un rescate, todos los usuarios cuyo tópico falla en esa categoría ven la misma nota de relleno (la mejor "buena" de la categoría).',
     evidencia: ev(concentradas, (h) => `${h.temas.size} tópicos (${h.clase}) ← "${h.titulo.slice(0, 70)}"`),
-    sugerencia: 'Rotar o diversificar el rescate (hoy es siempre la primera nota usable de la misma consulta fija).',
+    sugerencia: 'Rotar o diversificar el rescate (hoy es siempre la misma: la mejor nota "buena" de la categoría).',
   });
 
   const libres = porTema.filter((t) => t.tipo === 'libre');
@@ -120,14 +120,14 @@ function hallazgosA(porTema, filas, timeoutS) {
   push(catsMal.length, {
     id: 'A-CATEGORIA-SIN-NOTA', severidad: 'ALTA',
     titulo: `${catsMal.length} categoría(s) oficial(es) no resuelven con una nota propia`,
-    detalle: 'Con 48 h de ingesta, cada una de las 7 categorías debería tener notas.',
+    detalle: 'Con las notas de las últimas 24 h (importancia de 40 o más), cada una de las 7 categorías debería tener alguna. La categoría no rescata: si no hay, queda vacía.',
     evidencia: ev(catsMal, (t) => `"${t.tema}" → ${t.claseModal}`),
   });
   const subMal = porTema.filter((t) => t.tipo === 'oficial' && t.nivel === 'subtema' && t.claseModal !== 'tema');
   push(subMal.length, {
     id: 'A-SUBTEMA-SIN-NOTA', severidad: 'MEDIA',
     titulo: `${subMal.length} subtema(s) oficial(es) terminan en rescate o vacío`,
-    detalle: 'Puede ser falta de notas reales, o que el nombre del subtema casi nunca aparece en el texto (zona amarilla).',
+    detalle: 'El subtema se lee por etiqueta: puede ser que no haya notas con esa etiqueta en las últimas 24 h (importancia de 40 o más). El rescate solo usa notas "buenas" (importancia de 50 o más) de la misma categoría.',
     evidencia: ev(subMal, (t) => `"${t.tema}" (${t.categoria}) → ${t.claseModal}`),
   });
 
@@ -205,7 +205,7 @@ function analizarSesiones({ rondasTema = [], sesiones = [], vectores = null } = 
   push(sinNota.length, {
     id: 'B-SIN-NOTICIA', severidad: 'MEDIA',
     titulo: `${sinNota.length} tópico(s) llegaron a no devolver nada tras refrescos repetidos`,
-    detalle: 'Se agotó también el rescate de la categoría (todo lo de las últimas 48 h ya fue visto).',
+    detalle: 'Se agotaron las notas de las últimas 24 h del tema y, en subtemas y temas libres, también el rescate de la categoría (todo ya fue visto). Una categoría oficial no rescata.',
     evidencia: sinNota.slice(0, 12).map((t) => `"${t.tema}": vacío desde la ronda ${t.primeraVacia}`),
   });
   const agotados = porTema.filter((t) => t.tipo === 'libre' && t.conTema <= 1 && t.rondas >= 3);
@@ -219,10 +219,10 @@ function analizarSesiones({ rondasTema = [], sesiones = [], vectores = null } = 
   const reaparecidas = sesiones.flatMap((s) => (s.reaparecidas || []).map((r) => ({ ...r, sesion: s.sesion })));
   push(reaparecidas.length, {
     id: 'B-REAPARICION', severidad: 'ALTA',
-    titulo: `${reaparecidas.length} nota(s) volvieron a entregarse a un mismo usuario tras salir de la ventana de ${CONTRATO.ventanaHistorial}`,
-    detalle: `El historial anti-repetidos mira solo las últimas ${CONTRATO.ventanaHistorial} notas vistas y las notas viven ${CONTRATO.maxEdadHoras} h: un usuario que refresca mucho vuelve a ver notas viejas.`,
+    titulo: `${reaparecidas.length} nota(s) volvieron a entregarse a un mismo usuario tras salir del historial (tope de ${CONTRATO.ventanaHistorial} notas)`,
+    detalle: `El historial anti-repetidos guarda lo visto en las últimas ${CONTRATO.ventanaHistorialHoras} h con un tope de ${CONTRATO.ventanaHistorial} notas, y una nota solo se entrega si tiene menos de ${CONTRATO.maxEdadHoras} h: salvo que el usuario vea más de ${CONTRATO.ventanaHistorial} notas en ${CONTRATO.ventanaHistorialHoras} h, ninguna nota vigente puede salir del historial.`,
     evidencia: reaparecidas.slice(0, 12).map((r) => `sesión ${r.sesion}: "${String(r.titulo).slice(0, 70)}" (la primera vez, ronda ${r.rondaPrevia})`),
-    sugerencia: 'Subir la ventana o excluir por (usuario, URL) dentro de las últimas 48 h en vez de por cantidad.',
+    sugerencia: 'Subir el tope (HISTORY_MAX_NOTES) o excluir por (usuario, URL) sin tope dentro de las últimas 48 h.',
   });
 
   const pares = [];
@@ -234,9 +234,9 @@ function analizarSesiones({ rondasTema = [], sesiones = [], vectores = null } = 
     id: 'B-CASI-DUPLICADOS', severidad: porCoseno.length ? 'ALTA' : 'MEDIA',
     titulo: `${pares.length} par(es) de notas "casi iguales" entregadas al mismo usuario simulado`,
     detalle: `Medido con ${porCoseno.length ? 'embeddings reales (coseno ≥ ' + UMBRALES.casiDuplicadoCos + ')' : 'similitud de títulos'}. ` +
-      'El filtro semántico de producción no corre (la búsqueda híbrida no trae el campo embedding), así que nada impide estos pares.',
+      'El motor descarta como "misma historia" toda nota con coseno ≥ 0,88 contra lo ya visto (48 h) o lo ya elegido en el digest: si aparece un par así, ese filtro no funcionó (o a una de las notas le falta el embedding).',
     evidencia: pares.slice(0, 12).map((p) => `${p.medida} ${p.valor}: "${p.a.titulo.slice(0, 55)}" ≈ "${p.b.titulo.slice(0, 55)}"`),
-    sugerencia: 'Proyectar embedding en la búsqueda (o compararlo aparte) para que isUsableDigestArticle pueda bloquear duplicados.',
+    sugerencia: 'Revisar que al motor le lleguen los embeddings de lo ya visto (seenEmbeddings) y que las notas entregadas tengan embedding.',
   });
 
   const resumen = {

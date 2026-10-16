@@ -27,7 +27,7 @@ const suma = (xs, f) => xs.reduce((a, x) => a + (f(x) || 0), 0);
 
 const hacerPick = (ctx) => async (tema) => {
   const salida = await ctx.pick([tema.tema]);
-  const f = filaDeUnTopico({ salida, topic: tema.tema, esperado: { tipo: tema.tipo, categoria: tema.categoria } });
+  const f = filaDeUnTopico({ salida, topic: tema.tema, esperado: { tipo: tema.tipo, nivel: tema.nivel, categoria: tema.categoria } });
   return {
     ms: f.ms, error: f.error, timeout: f.timeout,
     rescates: f.clase === 'rescate' ? 1 : 0,

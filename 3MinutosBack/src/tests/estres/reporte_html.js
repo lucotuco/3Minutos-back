@@ -143,7 +143,7 @@ function htmlReporte(rep) {
   const errores = rep.topErrores.length ? tabla([{ t: 'error', v: (x) => x.mensaje }, { t: 'veces', v: (x) => x.veces }], rep.topErrores) : '<p class="nota">Sin errores registrados.</p>';
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
     `<title>Estrés 3Minutos</title><style>${CSS}</style></head><body>` +
-    `<h1>Estrés 3Minutos</h1><p class="nota">Nivel ${esc(m.nivel)} · ${esc(m.iniciadoEn)} · ${esc(m.duracionMin)} min · base ${esc(m.baseConectada)} · commit ${esc(m.commit)} (${esc(m.rama)}) · notas de 48 h: ${esc(m.articulos48h)}</p>` +
+    `<h1>Estrés 3Minutos</h1><p class="nota">Nivel ${esc(m.nivel)} · ${esc(m.iniciadoEn)} · ${esc(m.duracionMin)} min · base ${esc(m.baseConectada)} · commit ${esc(m.commit)} (${esc(m.rama)}) · notas de 24 h: ${esc(m.articulos24h ?? 'n/d')} (48 h: ${esc(m.articulos48h ?? 'n/d')})</p>` +
     `<div class="ver ${esc(rep.veredicto.nivel)}">${esc(rep.veredicto.nivel)} — ${esc(rep.veredicto.texto)}${m.parcial ? ` (corrida parcial: ${esc(m.motivoParada)})` : ''}</div>` +
     seccion('hallazgos', 'Hallazgos', grupos) + secciones.join('') + seccion('contadores', 'Contadores y errores', contadores + errores) +
     `</body></html>`;

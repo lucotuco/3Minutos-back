@@ -164,7 +164,7 @@ test('B: repetir una nota dentro de la ventana es CRÍTICO (I7) y se cuenta por 
   assert.equal(r.porTema[0].repetidas, 1);
 });
 
-test('B: una nota que vuelve después de salir de la ventana de 30', () => {
+test('B: una nota que vuelve después de salir del tope del historial', () => {
   const reaparecida = { url: 'https://x.test/n1', titulo: 'Nota n1', rondaPrevia: 1, ronda: 12 };
   const r = analizarSesiones({ sesiones: [sesionB(1, 1, [art('n1')]), sesionB(1, 12, [art('n9')], { reaparecidas: [reaparecida] })] });
   const h = hallazgo(r, 'B-REAPARICION');
@@ -562,6 +562,8 @@ const FUENTES_CON_PROBLEMAS = {
   server: 'await mongoose.connect(uri, { serverSelectionTimeoutMS: 10000 });',
   pick: 'const queryExpansionCache = new Map();\nconst TOPIC_TO_CATEGORY = Object.fromEntries(pares);\nconst c = TOPIC_TO_CATEGORY[topic];\nconst q = `${cat} Argentina actualidad nacional`;',
   cron: 'for (const user of usersInWindow) { await buildDigestForUser(user._id); }',
+  ingesta: 'const TOPIC_TO_CATEGORY = Object.fromEntries(pares);\nif (TOPIC_TO_CATEGORY[topic]) category = TOPIC_TO_CATEGORY[topic];',
+  rutas: "router.get('/digest', async () => { const run = await UserDeliveryRun.findOne({ userId }); return res.json(run.digest); });",
 };
 const FUENTES_ARREGLADAS = {
   busqueda: 'const projectFields = { title: 1, url: 1, embedding: 1 };',
@@ -571,17 +573,53 @@ const FUENTES_ARREGLADAS = {
   server: 'await mongoose.connect(uri, { serverSelectionTimeoutMS: 10000, maxPoolSize: 20, socketTimeoutMS: 30000 });',
   pick: 'const queryExpansionCache = new Map(); queryExpansionCache.delete(k);\nconst c = Object.hasOwn(TOPIC_TO_CATEGORY, topic) ? TOPIC_TO_CATEGORY[topic] : null;\nconst TOPIC_TO_CATEGORY = Object.fromEntries(pares);',
   cron: 'await Promise.all(usersInWindow.map((u) => buildDigestForUser(u._id)));',
+  ingesta: 'const TOPIC_TO_CATEGORY = Object.fromEntries(pares);\nif (Object.hasOwn(TOPIC_TO_CATEGORY, topic)) category = TOPIC_TO_CATEGORY[topic];',
+  rutas: "router.get('/digest', async () => { const run = await UserDeliveryRun.findOne({ userId }); const { digest } = await ensureFreshDigest(run, deps); return res.json(digest); });",
 };
 
-test('estático: detecta los 9 problemas de diseño en un código que los tiene', () => {
+test('estático: detecta los 10 problemas de diseño en un código que los tiene', () => {
   const r = auditarFuentes(FUENTES_CON_PROBLEMAS);
   assert.deepEqual(r.map((h) => h.id).sort(), [
-    'S-CACHE-EXPANSION-SIN-LIMITE', 'S-CRON-SECUENCIAL', 'S-LOOKUP-EN-OBJETO-COMUN', 'S-MONGO-SIN-POOL-NI-SOCKET-TIMEOUT',
-    'S-OPENAI-SIN-TIMEOUT', 'S-RESCATE-CONSULTA-FIJA', 'S-SIN-EMBEDDING-EN-CANDIDATOS', 'S-TITULOS-DEL-HISTORIAL-NUNCA-LLEGAN',
-    'S-VENTANA-HISTORIAL-30',
+    'S-CACHE-EXPANSION-SIN-LIMITE', 'S-CRON-SECUENCIAL', 'S-DIGEST-GUARDADO-SIN-REVISAR-EDAD', 'S-LOOKUP-EN-OBJETO-COMUN',
+    'S-MONGO-SIN-POOL-NI-SOCKET-TIMEOUT', 'S-OPENAI-SIN-TIMEOUT', 'S-RESCATE-CONSULTA-FIJA', 'S-SIN-EMBEDDING-EN-CANDIDATOS',
+    'S-TITULOS-DEL-HISTORIAL-NUNCA-LLEGAN', 'S-VENTANA-HISTORIAL-30',
   ]);
   assert.ok(r.every((h) => h.escenario === 'S'));
   assert.equal(r.find((h) => h.id === 'S-SIN-EMBEDDING-EN-CANDIDATOS').severidad, 'ALTA');
+  assert.equal(r.find((h) => h.id === 'S-DIGEST-GUARDADO-SIN-REVISAR-EDAD').severidad, 'ALTA');
+});
+
+test('estático: el digest guardado se marca solo si las rutas no revisan la edad de sus notas', () => {
+  const idsDe = (f) => auditarFuentes(f).map((h) => h.id);
+  assert.ok(idsDe({ rutas: FUENTES_CON_PROBLEMAS.rutas }).includes('S-DIGEST-GUARDADO-SIN-REVISAR-EDAD'));
+  assert.ok(!idsDe({ rutas: FUENTES_ARREGLADAS.rutas }).includes('S-DIGEST-GUARDADO-SIN-REVISAR-EDAD'));
+  assert.deepEqual(idsDe({ rutas: 'router.get("/ping", () => "ok");' }), [], 'unas rutas sin digests guardados no tienen nada que revisar');
+});
+
+test('estático: el lookup en objeto común se marca en el motor y en la ingesta, cada uno por separado', () => {
+  const lookup = (f) => hallazgo(auditarFuentes(f), 'S-LOOKUP-EN-OBJETO-COMUN');
+  const soloIngesta = lookup({ ingesta: FUENTES_CON_PROBLEMAS.ingesta, pick: FUENTES_ARREGLADAS.pick });
+  assert.deepEqual(soloIngesta.evidencia, ['ingestion/reviewArticlesWithAIBatch.js']);
+  const soloMotor = lookup({ pick: FUENTES_CON_PROBLEMAS.pick, ingesta: FUENTES_ARREGLADAS.ingesta });
+  assert.deepEqual(soloMotor.evidencia, ['utils/pickBestArticlePerTopic.js']);
+  assert.equal(lookup({ pick: FUENTES_ARREGLADAS.pick, ingesta: FUENTES_ARREGLADAS.ingesta }), undefined);
+});
+
+test('estático: el filtro de "misma historia" no se marca como roto si el motor lee los embeddings de los finalistas', () => {
+  const sinProyectar = { busqueda: 'const projectFields = { title: 1, url: 1 };' };
+  assert.ok(ids(auditarFuentes(sinProyectar)).includes('S-SIN-EMBEDDING-EN-CANDIDATOS'));
+  for (const lector of ['const vectors = await store.loadEmbeddings(ids);', 'function embeddingLoader(store) {}']) {
+    assert.ok(!ids(auditarFuentes({ ...sinProyectar, pick: lector })).includes('S-SIN-EMBEDDING-EN-CANDIDATOS'), lector);
+  }
+});
+
+test('estático: con timeout y reintentos acotados en el camino del digest, el cliente de OpenAI sin opciones ya no se marca', () => {
+  const cliente = { openai: 'const cliente = new OpenAI({ apiKey });' };
+  assert.ok(ids(auditarFuentes(cliente)).includes('S-OPENAI-SIN-TIMEOUT'));
+  const soloUno = { ...cliente, busqueda: 'create(body, { timeout: 8000, maxRetries: 1 })', pick: 'sin opciones' };
+  assert.ok(ids(auditarFuentes(soloUno)).includes('S-OPENAI-SIN-TIMEOUT'), 'si una de las dos llamadas queda sin acotar, sigue marcado');
+  const ambos = { ...cliente, busqueda: 'create(body, { timeout: 8000, maxRetries: 1 })', pick: 'create(body, { timeout: 8000, maxRetries: 1 })' };
+  assert.ok(!ids(auditarFuentes(ambos)).includes('S-OPENAI-SIN-TIMEOUT'));
 });
 
 test('estático: cuando el código ya está arreglado, los hallazgos desaparecen (sin falsos positivos)', () => {
@@ -590,7 +628,7 @@ test('estático: cuando el código ya está arreglado, los hallazgos desaparecen
 
 test('estático: sin archivos (vacíos o ausentes) no inventa hallazgos', () => {
   assert.deepEqual(auditarFuentes({}), []);
-  assert.deepEqual(auditarFuentes({ busqueda: '', historial: '', digest: '', openai: '', server: '', pick: '', cron: '' }), []);
+  assert.deepEqual(auditarFuentes({ busqueda: '', historial: '', digest: '', openai: '', server: '', pick: '', cron: '', ingesta: '', rutas: '' }), []);
 });
 
 test('estático: leerFuentes encuentra todos los archivos auditados (si se renombra uno, la auditoría quedaría ciega)', () => {

@@ -157,7 +157,10 @@ async function crearEntorno({ nivel, args = {}, log = () => {}, presupuesto, con
       .map((u) => ({ id: String(u._id), topics: u.topics }));
   }
 
+  // Cuántas notas hay para elegir: el motor solo mira las últimas 24 h (las de 48 h quedan como referencia).
+  let articulos24h = null;
   let articulos48h = null;
+  try { articulos24h = await Article.countDocuments({ publishedAt: { $gte: new Date(Date.now() - 24 * 36e5) } }).maxTimeMS(15000); } catch { /* informativo */ }
   try { articulos48h = await Article.countDocuments({ publishedAt: { $gte: new Date(Date.now() - 48 * 36e5) } }).maxTimeMS(15000); } catch { /* informativo */ }
 
   const meta = {
@@ -166,6 +169,7 @@ async function crearEntorno({ nivel, args = {}, log = () => {}, presupuesto, con
     commit: git('rev-parse', '--short', 'HEAD'),
     rama: git('rev-parse', '--abbrev-ref', 'HEAD'),
     node: process.version,
+    articulos24h,
     articulos48h,
     usuariosActivosLeidos: usuarios.length,
     origenLibres: t.origenLibres,

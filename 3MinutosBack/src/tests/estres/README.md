@@ -2,6 +2,16 @@
 
 Somete **el código actual** del motor de búsqueda y del armado de digests a repetición, a carga y a entradas raras, y arma un reporte con los problemas que encuentra. No compara contra versiones anteriores.
 
+Además de medir velocidad y estabilidad, comprueba **el contrato de una nota aceptable** en cada resultado que devuelve el motor:
+
+- **Vigente:** menos de 24 h (la app no muestra la edad de la nota, así que una vieja parece nueva).
+- **Sustancia:** importancia de 50 o más = "buena"; de 40 a 49 = "aceptable"; menos de 40, nunca. El rescate solo usa "buenas".
+- **Temas oficiales** (categorías y subtemas): se leen por etiqueta (`matchZone = ETIQUETA`, sin score). La categoría no rescata nunca; el subtema rescata solo con una nota "buena" de su categoría.
+- **Sociedad** solo con notas de Argentina o de alcance Global. Sin opinión, sin previas ni agenda.
+- **Sin repetir:** ni una URL ya vista, ni "la misma historia" (embeddings con coseno ≥ 0,88) contra lo visto en las últimas 48 h (hasta 150 notas) o lo ya elegido en el mismo digest.
+
+Corre contra el código de la rama que tengas descargada: en el código anterior marca los problemas de antes; en el de la rama del motor nuevo deberían desaparecer.
+
 - **Solo lectura sobre Mongo.** No escribe nada (ver [Seguridad](#seguridad)).
 - **Gasta OpenAI de verdad** (embeddings y expansión de consultas, con las claves de tu `.env`). Cuenta cada llamada y respeta un tope (`--max-openai`).
 - **Pega contra tu Atlas real** (`$vectorSearch` + `$search`). Conviene correrlo fuera del horario pico.
@@ -9,7 +19,7 @@ Somete **el código actual** del motor de búsqueda y del armado de digests a re
 ## Cómo correrlo
 
 ```bash
-git pull                                   # rama test/comparador-antes-despues
+git pull                                   # en la rama que quieras medir (tiene que incluir este test)
 cd 3MinutosBack && npm install             # si hace falta
 
 npm run test:estres -- --dry-run           # 1) mira el plan; NO se conecta a nada
@@ -46,26 +56,29 @@ Cualquier número se pisa por la línea de comandos (ver [Opciones](#opciones)).
 | | Qué hace | Qué problemas encuentra |
 |---|---|---|
 | **A · Repetición** | Cada tópico se consulta N veces con la misma entrada y sin historial. | Resultados que cambian de ida y vuelta (no determinismo), tópicos que a veces dan nota del tema y a veces rescate, **errores de búsqueda que se disfrazan de "noticia sugerida"**, la misma nota de relleno entregada a muchos tópicos, categorías sin nota. |
-| **B · Sesiones con historial** | Simula usuarios que refrescan: cada ronda excluye las últimas 30 notas vistas (como producción). Un tópico solo, y usuarios de 3 tópicos. | **Notas repetidas**, notas que **reaparecen al salir de la ventana de 30**, cuándo se agota un tópico, notas "casi iguales" entregadas al mismo usuario (con embeddings reales de Mongo si están). |
+| **B · Sesiones con historial** | Simula usuarios que refrescan: cada ronda le pasa al motor lo que el usuario ya vio (las URLs y los embeddings de hasta 150 notas, como producción). Un tópico solo, y usuarios de 3 tópicos. | **Notas repetidas**, notas que **reaparecen al salir del tope de 150**, cuándo se agota un tópico, notas "casi iguales" (misma historia) entregadas al mismo usuario (con embeddings reales de Mongo si están). |
 | **C · Tríos solapados** | Digests de 3 tópicos que se pisan (categoría + subtemas, tríos reales de usuarios) en las 6 permutaciones. | La misma nota o la misma historia en dos tópicos del mismo digest, tópicos que reciben otra nota según su posición ("el 3.º recibe las sobras"). |
 | **D · Carga y concurrencia** | Rampa de llamadas en paralelo (y de digests completos con usuarios reales), prueba del candado de `buildDigestForUser`, ráfaga sobre un tópico nuevo, una llamada con muchos tópicos. | **En qué escalón se degrada** (errores, latencia, event loop), 429 de OpenAI, fallos del pool de Mongo, candado que no agrupa o no se libera, cuántas expansiones paga una ráfaga, cuántos digests por minuto aguanta la cron. |
 | **E · Hostiles y variantes** | Textos que un usuario o un bug del front podrían mandar (vacíos, gigantes, emoji, regex, operadores de Mongo, `constructor`…) y el mismo tópico escrito de 4-5 maneras. | **Excepciones o cuelgues** con un texto de usuario (crítico), búsquedas que se rompen por el texto, "River" / "RIVER" / "river" que se resuelven distinto. |
 | **F · Soak** | Carga sostenida (solo en `maximo` o con `--soak-minutos`), con tópicos únicos que engordan la caché de expansiones. | Crecimiento de memoria, latencia que empeora con el tiempo, errores que aparecen con el tiempo. |
 | **S · Auditoría estática** | Lee el código actual (no lo ejecuta). | Decisiones de diseño que explican lo medido (ver abajo). |
 
-### Las 9 cosas que la auditoría estática ya marca en el código actual
+### Qué marca la auditoría estática
 
-Salen de leer el código, no de medir; los escenarios dinámicos muestran su efecto real.
+Salen de leer el código, no de medir; los escenarios dinámicos muestran su efecto real. La columna de la derecha dice si el código del motor nuevo todavía lo tiene.
 
-1. `searchArticlesBySimilarityAtlas` no proyecta `embedding`: **el filtro semántico de duplicados nunca bloquea nada**.
-2. `buildDigestForUser` lee `history.titles`, pero el historial no lo devuelve.
-3. El historial mira solo las últimas **30** notas vistas (las notas viven 48 h).
-4. Los clientes de OpenAI no tienen `timeout` ni `maxRetries` (rigen los del SDK: 10 min y 2 reintentos).
-5. La conexión a Mongo no fija `maxPoolSize` ni `socketTimeoutMS`.
-6. `queryExpansionCache` es un `Map` que solo crece y no deduplica pedidos simultáneos del mismo tópico nuevo (el escenario D mide cuántas expansiones paga una ráfaga).
-7. El rescate usa una consulta fija por categoría: todos los tópicos que fallan reciben la misma nota.
-8. `TOPIC_TO_CATEGORY[topic]` busca en un objeto común (`constructor`, `toString`… devuelven funciones).
-9. La cron genera los digests uno tras otro.
+| # | Hallazgo | ¿Sigue en el motor nuevo? |
+|---|---|---|
+| 1 | `searchArticlesBySimilarityAtlas` no proyecta `embedding` y el motor tampoco lo lee aparte: **el filtro de "misma historia" nunca bloquea nada** | No: el motor lee los embeddings de los finalistas |
+| 2 | `buildDigestForUser` lee `history.titles`, pero el historial no lo devuelve | No |
+| 3 | El historial mira solo las últimas **30** notas vistas | No: 48 h, hasta 150 notas |
+| 4 | Los clientes de OpenAI no tienen `timeout` ni `maxRetries` (rigen los del SDK: 10 min y 2 reintentos) | No en el camino del digest (la expansión y el embedding de la consulta llevan los suyos) |
+| 5 | La conexión a Mongo no fija `maxPoolSize` ni `socketTimeoutMS` | Sí |
+| 6 | `queryExpansionCache` es un `Map` que solo crece (y no deduplica pedidos simultáneos del mismo tópico nuevo; el escenario D mide cuántas expansiones paga una ráfaga) | Sí |
+| 7 | El rescate de los temas libres usa una consulta fija por categoría: todos los que fallan reciben la misma nota | Sí (los oficiales ya no usan esa consulta) |
+| 8 | `TOPIC_TO_CATEGORY[topic]` busca en un objeto común (`constructor`, `toString`… devuelven funciones), en el motor o en la ingesta | No |
+| 9 | La cron genera los digests uno tras otro | Sí |
+| 10 | **La app muestra el digest guardado sin volver a revisar la edad de sus notas** (una nota elegida a la mañana se sigue mostrando a la noche) | No: `ensureFreshDigest` revisa y reemplaza las vencidas |
 
 ## Opciones
 
@@ -98,7 +111,7 @@ Para el soak conviene correr con `--expose-gc` (el script `npm run test:estres` 
 | Severidad | Significa | Ejemplos |
 |---|---|---|
 | 🔴 CRÍTICA | Una garantía básica se rompió. Frenar y mirar. | nota repetida dentro de la ventana de historial · la misma nota para 2 tópicos de un digest · una excepción con un texto de usuario · el candado no se libera · **el test emitió una escritura** |
-| 🟠 ALTA | Falla visible para el usuario o el sistema se degrada. | nota de más de 48 h · categoría equivocada · errores de búsqueda disfrazados de rescate · resultados que oscilan · la rampa se quiebra · fuga de memoria |
+| 🟠 ALTA | Falla visible para el usuario o el sistema se degrada. | nota de más de 24 h · importancia por debajo del piso · previa o agenda · nota de Sociedad de otro país · categoría equivocada · tema oficial con score en vez de etiqueta · errores de búsqueda disfrazados de rescate · resultados que oscilan · la rampa se quiebra · fuga de memoria |
 | 🟡 MEDIA | Calidad o robustez a revisar. | rescate "monocultivo" · tópico que depende de su posición · lentitud · una ráfaga que paga varias expansiones |
 | 🔵 BAJA / ⚪ INFO | Contexto: no requiere acción por sí solo. | cambio único de nota · `constructor` / `toString` como tópico · capacidad estimada de la cron · "no se quebró hasta N" |
 
@@ -125,7 +138,7 @@ Los archivos del reporte no contienen el host ni credenciales de Mongo.
 
 ## Qué NO prueba
 
-La API HTTP (rutas, autenticación, rate limits de Express), las notificaciones push, la ingesta ni la clasificación, y la curación de OpenAI (está simulada). Es el motor de búsqueda y el armado de digests.
+La API HTTP (rutas, autenticación, rate limits de Express), las notificaciones push, la ingesta ni la clasificación (la auditoría estática solo lee su código), ni el reemplazo de notas vencidas al abrir la app (eso lo cubren los tests unitarios de `staleDigest` y `rutasDigest`), y la curación de OpenAI (está simulada). Es el motor de búsqueda y el armado de digests.
 
 ## Los tests del propio script
 
@@ -143,7 +156,7 @@ estres/
   config.js           niveles, umbrales y tópicos hostiles
   entorno.js          ÚNICO archivo que se conecta a Mongo y OpenAI
   instrumentos.js     contadores, tope de OpenAI, bloqueo de escrituras, captura de logs, lag, memoria
-  invariantes.js      lo que SIEMPRE debe cumplir un resultado (edad, zona, categoría, repetidos…)
+  invariantes.js      lo que SIEMPRE debe cumplir un resultado (edad, importancia, etiqueta, país, categoría, repetidos…)
   analisis_*.js       analizadores puros: filas medidas → hallazgos
   escenarios/         A…F (usan solo el ctx que arma entorno.js)
   estatico.js         auditoría estática del código

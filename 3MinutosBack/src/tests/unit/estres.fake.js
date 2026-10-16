@@ -20,6 +20,12 @@
  *   alBuscar(contadores)    se llama por cada tópico buscado; sirve para tocar contadores
  *   lagP99                  lag del event loop simulado
  *
+ * Imita el contrato del motor nuevo:
+ *   - temas OFICIALES: se leen por etiqueta (zona ETIQUETA, sin score); la categoría nunca rescata y un
+ *     error de lectura deja el lugar vacío; el subtema rescata con una nota "sugerida" de su categoría;
+ *   - temas LIBRES: búsqueda por significado (VERDE con score) y, si no hay nada, rescate "sugerido";
+ *   - todas las notas tienen menos de 24 h y importancia >= 50 ("buena").
+ *
  * La latencia que informa es SINTÉTICA (5 ms + lo que pida msPorConcurrente): así los tests no
  * dependen del reloj ni de qué tan cargada esté la máquina.
  */
@@ -64,15 +70,30 @@ function crearFalso({ nivel = nivelChico(), fallas = {}, usuarios = 6, articulos
   const todosOficiales = [...OFICIALES.values()];
   const oficiales = nivel.oficiales === 'categorias' ? todosOficiales.filter((t) => t.nivel === 'categoria') : todosOficiales;
 
+  // Edades repartidas entre 0,5 h y 22,5 h: todas vigentes (< 24 h) aunque el pozo tenga muchas notas.
+  const edadDe = (i, total) => 0.5 + (22 * i) / Math.max(1, total - 1);
+  const redondear = (n) => Math.round(n * 10) / 10;
+
   // Cada título lleva palabras únicas por (tópico, posición): así dos notas distintas nunca parecen "la misma historia".
-  const articulosDe = (clave, categoria) => {
+  // Los temas oficiales se leen por etiqueta: sus notas no traen score de búsqueda (las de los temas libres sí).
+  const articulosDe = (clave, categoria, { oficial = null, topic = null } = {}) => {
     const compacto = slug(clave).replace(/-/g, '');
-    return Array.from({ length: articulosPorTema }, (_, i) => ({
-      _id: `${slug(clave)}-${i}`, url: `https://ejemplo.test/${slug(clave)}/${i}`,
-      title: `${clave} suceso${i}${compacto} detalle${i}${compacto}`,
-      rawSummary: `resumen sobre ${clave}`, tags: [clave], category: categoria, topic: null, sourceName: 'Fuente',
-      publishedAt: new Date(ahora0 - Math.min(i + 1, 40) * HORA), score: 0.97 - i * 0.001, finalScore: 80 - i,
-    }));
+    return Array.from({ length: articulosPorTema }, (_, i) => {
+      const nota = {
+        _id: `${slug(clave)}-${i}`, url: `https://ejemplo.test/${slug(clave)}/${i}`,
+        title: `${clave} suceso${i}${compacto} detalle${i}${compacto}`,
+        rawSummary: `resumen sobre ${clave}`, tags: [clave], category: categoria, topic, geoScope: 'Argentina', sourceName: 'Fuente',
+        publishedAt: new Date(ahora0 - edadDe(i, articulosPorTema) * HORA), importanceScore: 55 + (i % 40),
+      };
+      if (!oficial) { nota.score = 0.97 - i * 0.001; nota.finalScore = 80 - i; }
+      return nota;
+    });
+  };
+  // Le da a una nota copiada la forma de su tipo de tópico (los oficiales no traen score; los libres sí).
+  const conForma = (nota, oficial) => {
+    const copia = { ...nota };
+    if (oficial) { delete copia.score; delete copia.finalScore; } else { copia.score ??= 0.95; copia.finalScore ??= 70; }
+    return copia;
   };
   const categoriaDe = (t) => (OFICIALES.get(norm(t))?.categoria) || 'Deportes';
 
@@ -95,6 +116,7 @@ function crearFalso({ nivel = nivelChico(), fallas = {}, usuarios = 6, articulos
         llamadas.topicosBuscados++;
         if (fallas.alBuscar) fallas.alBuscar(contadores);
         const oficial = OFICIALES.get(norm(t));
+        const subtema = Boolean(oficial) && oficial.nivel === 'subtema';
         const categoria = categoriaDe(t);
         const n = (nLlamadaPorTema.get(t) || 0) + 1;
         nLlamadaPorTema.set(t, n);
@@ -102,27 +124,38 @@ function crearFalso({ nivel = nivelChico(), fallas = {}, usuarios = 6, articulos
         const falloBusqueda = (fallas.errorBusquedaCada && n % fallas.errorBusquedaCada === 0) || (fallas.errorBusquedaPara || []).includes(t);
         let art = null;
         if (!falloBusqueda) {
-          let lista = articulosDe(fallas.mismaNotaParaTodos ? 'comun' : t, categoria).filter((a) => !bloqueada(a));
+          let lista = articulosDe(fallas.mismaNotaParaTodos ? 'comun' : t, categoria, { oficial, topic: subtema ? oficial.tema : null })
+            .filter((a) => !bloqueada(a));
           if (fallas.inestable) lista = lista.slice(n % 2);
           art = lista[0] || null;
           const primero = resultados[0]?.article;
           if (fallas.casiDuplicados && primero) {
-            art = { ...primero, _id: `${primero._id}-bis${resultados.length}`, url: `${primero.url}?bis${resultados.length}`, title: `${primero.title} (bis)` };
+            art = conForma({ ...primero, _id: `${primero._id}-bis${resultados.length}`, url: `${primero.url}?bis${resultados.length}`, title: `${primero.title} (bis)` }, oficial);
           }
         }
         let usedFallback = false;
         let motivo = null;
         if (!art) {
           motivo = falloBusqueda ? 'error_busqueda' : 'ningun_candidato_valido';
-          art = articulosDe(`rescate ${categoria}`, categoria).filter((a) => !bloqueada(a))[0] || null;
-          usedFallback = Boolean(art);
+          // Como el motor: la categoría oficial nunca rescata (cualquier nota suya ya vale) y un error de lectura de un
+          // tema oficial deja el lugar vacío. El subtema y el tema libre rescatan con una nota "buena" de su categoría.
+          const puedeRescatar = !oficial || (subtema && !falloBusqueda);
+          if (puedeRescatar) {
+            art = articulosDe(`rescate ${categoria}`, categoria, { oficial, topic: `Otro tema de ${categoria}` }).filter((a) => !bloqueada(a))[0] || null;
+            usedFallback = Boolean(art);
+          }
         }
         if (art) enLlamada.add(art.url);
+        const edad = art ? redondear((ahora0 - art.publishedAt.getTime()) / HORA) : null;
         resultados.push({
           topic: oficial ? oficial.tema : t, queryExpanded: t, article: art, usedFallback, fallbackCategory: usedFallback ? categoria : null,
-          matchZone: art ? (usedFallback ? 'RESCATE' : 'VERDE') : null, matchScore: art && !usedFallback ? art.score : null,
-          matchReason: motivo || `VERDE score=${art ? art.score.toFixed(3) : ''} (candidato #1)`,
+          matchZone: art ? (usedFallback ? 'RESCATE' : (oficial ? 'ETIQUETA' : 'VERDE')) : null,
+          matchScore: art && !usedFallback && !oficial ? art.score : null,
+          matchReason: motivo || (oficial
+            ? `ETIQUETA buena ${edad}h imp=${art.importanceScore} (candidato #1 de 1 elegibles)`
+            : `VERDE score=${art.score.toFixed(3)} (candidato #1)`),
           corralCategory: oficial ? categoria : null, candidatesEvaluated: art ? 1 : 0,
+          tier: art ? (usedFallback ? 'sugerida' : 'buena') : null, ageHours: edad,
         });
       }
       return { resultados, ms, error: null, timeout: false, logs: { lineas: 0, errorBusqueda: 0, errorRescate: 0, caducidad: 0 }, ahora: Date.now() };
@@ -154,6 +187,7 @@ function crearFalso({ nivel = nivelChico(), fallas = {}, usuarios = 6, articulos
         url: r.article.url, category: r.article.category, section: null, tags: r.article.tags, publishedAt: r.article.publishedAt,
         score: r.article.score, finalScore: r.article.finalScore, usedFallback: r.usedFallback, fallbackCategory: r.fallbackCategory,
         matchZone: r.matchZone, matchScore: r.matchScore, matchReason: r.matchReason, corralCategory: r.corralCategory, candidatesEvaluated: r.candidatesEvaluated,
+        tier: r.tier, ageHoursAtPick: r.ageHours,
       }));
       return { ok: true, items, resultado: { user: { id: clave }, digest: { items } }, ms: s.ms + 3, error: null, timeout: false, logs: null };
     })();
@@ -168,7 +202,7 @@ function crearFalso({ nivel = nivelChico(), fallas = {}, usuarios = 6, articulos
     nivel, args: {}, rng: mulberry32(7), contadores, log: () => {},
     meta: {
       baseConectada: 'falsa', host: 'host.falso', commit: 'abc1234', rama: 'rama-falsa', node: process.version,
-      articulos48h: 123, usuariosActivosLeidos: usuarios, origenLibres: 'falso', cacheOpenAI: false,
+      articulos24h: 61, articulos48h: 123, usuariosActivosLeidos: usuarios, origenLibres: 'falso', cacheOpenAI: false,
     },
     temas: { oficiales, libres, origenLibres: 'falso' },
     usuarios: usuariosFalsos, tieneDigest: true, motivoSinDigest: null,

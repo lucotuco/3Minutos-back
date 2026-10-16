@@ -27,7 +27,7 @@ async function correr(ctx) {
 
   const filasHostiles = [];
   const filasVariantes = [];
-  const libre = { tipo: 'libre', categoria: null };
+  const libre = { tipo: 'libre', nivel: 'libre', categoria: null };
 
   const erroresInternos = await pool(tareas, nivel.concurrencia, async ({ h, rep }) => {
     const salida = await ctx.pick([h.valor]);

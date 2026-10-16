@@ -24,7 +24,7 @@ const D = require('../estres/escenarios/d_carga');
 const E = require('../estres/escenarios/e_hostiles');
 const F = require('../estres/escenarios/f_soak');
 const { ESCENARIOS, porId } = require('../estres/escenarios');
-const { tamanios, hostilesDe } = require('../estres/config');
+const { tamanios, hostilesDe, CONTRATO } = require('../estres/config');
 const { crearControl, crearPresupuesto } = require('../estres/instrumentos');
 const { construirReporte } = require('../estres/reporte');
 const { htmlReporte } = require('../estres/reporte_html');
@@ -85,12 +85,15 @@ test('A detecta resultados que cambian de ida y vuelta (no determinismo)', async
 });
 
 test('A detecta errores de búsqueda disfrazados de rescate, rescates intermitentes y rescate "monocultivo"', async () => {
-  const { r } = await correr(A, { fallas: { errorBusquedaCada: 2 } });
+  const { r, ctx } = await correr(A, { fallas: { errorBusquedaCada: 2 } });
   assert.equal(hallazgo(r, 'A-ERROR-BUSQUEDA-TRAGADO').severidad, 'ALTA');
   assert.equal(hallazgo(r, 'A-RESCATE-INTERMITENTE').severidad, 'ALTA');
   const hub = hallazgo(r, 'A-NOTA-REPETIDA-ENTRE-TEMAS');
   assert.ok(hub, 'todos los rescates de una categoría devuelven la misma nota');
-  assert.equal(r.resumen.causasNoTema.error_busqueda, r.resumen.clases.rescate);
+  // Un error de búsqueda en un tema libre cae al rescate; en un tema oficial (que se lee por etiqueta) deja el lugar vacío.
+  assert.equal(r.resumen.clases.rescate, ctx.temas.libres.length, 'los 6 libres rescatan');
+  assert.equal(r.resumen.clases.vacio, ctx.temas.oficiales.length, 'las 7 categorías no rescatan nunca: quedan vacías');
+  assert.equal(r.resumen.causasNoTema.error_busqueda, r.resumen.clases.rescate + r.resumen.clases.vacio);
 });
 
 test('A detecta tópicos que lanzan error', async () => {
@@ -124,17 +127,63 @@ test('B detecta que se repita una nota que el usuario ya vio (historial ignorado
   assert.ok(r.porTema.some((t) => t.repetidas > 0));
 });
 
-test('B: una sesión larga hace reaparecer notas cuando salen de la ventana de 30', async () => {
-  const largo = nivelChico({ B: { temas: 1, rondas: 1, sesiones: 1, rondasSesion: 12 } });
-  const { r } = await correr(B, { nivel: largo, articulosPorTema: 12 });
+test('B: una sesión larga hace reaparecer notas cuando salen del tope del historial (150 notas)', async () => {
+  const tope = CONTRATO.ventanaHistorial; // 150 notas = 50 rondas de un usuario con 3 tópicos
+  const rondasHastaElTope = tope / 3;
+
+  // Una ronda más allá del tope: la nota más vieja sale del historial y, como sigue vigente, vuelve a entregarse.
+  const largo = nivelChico({ B: { temas: 1, rondas: 1, sesiones: 1, rondasSesion: rondasHastaElTope + 2 } });
+  const { r } = await correr(B, { nivel: largo, articulosPorTema: rondasHastaElTope + 1 });
   const h = hallazgo(r, 'B-REAPARICION');
   assert.equal(h.severidad, 'ALTA');
   assert.ok(r.resumen.reaparecidas >= 1);
-  assert.ok(!ids(r).includes('B-I7-REPETIDO-HISTORIAL'), 'no es una violación de la ventana: salió de ella');
+  assert.match(h.titulo, new RegExp(`${tope} notas`));
+  assert.ok(!ids(r).includes('B-I7-REPETIDO-HISTORIAL'), 'no es una violación del historial: la nota ya había salido de él');
 
-  const corto = nivelChico({ B: { temas: 1, rondas: 1, sesiones: 1, rondasSesion: 8 } });
-  const sano = await correr(B, { nivel: corto, articulosPorTema: 12 });
-  assert.ok(!ids(sano.r).includes('B-REAPARICION'), '8 rondas × 3 = 24 notas: todavía dentro de la ventana');
+  // Justo en el tope (50 rondas = 150 notas) todo sigue dentro del historial: no reaparece nada.
+  const justo = nivelChico({ B: { temas: 1, rondas: 1, sesiones: 1, rondasSesion: rondasHastaElTope } });
+  const sano = await correr(B, { nivel: justo, articulosPorTema: rondasHastaElTope + 1 });
+  assert.ok(!ids(sano.r).includes('B-REAPARICION'), `${rondasHastaElTope} rondas × 3 = ${tope} notas: todavía dentro del historial`);
+});
+
+test('B le pasa al motor lo ya visto (URLs y embeddings), como producción, y lo acota al historial', async () => {
+  const nivel = nivelChico({ B: { temas: 0, rondas: 1, sesiones: 1, rondasSesion: 3 } });
+  const vectores = (ids2) => new Map(ids2.map((id, i) => [id, [1, i, 0]]));
+  const falso = crearFalso({ nivel, fallas: { vectores } });
+  const llamadasPick = [];
+  const original = falso.ctx.pick;
+  falso.ctx.pick = (topics, opts) => { llamadasPick.push({ topics, opts }); return original(topics, opts); };
+
+  const r = await B.correr(falso.ctx);
+  const sesion = llamadasPick.filter((c) => c.topics.length === 3);
+  assert.equal(sesion.length, 3);
+  assert.deepEqual(sesion[0].opts.alreadyShownUrls, []);
+  assert.deepEqual(sesion[0].opts.seenEmbeddings, []);
+
+  // En la 2.ª y 3.ª ronda el motor recibe las notas de las rondas anteriores, con su embedding real.
+  assert.equal(sesion[1].opts.alreadyShownUrls.length, 3);
+  assert.equal(sesion[1].opts.seenEmbeddings.length, 3);
+  assert.equal(sesion[2].opts.alreadyShownUrls.length, 6);
+  assert.equal(sesion[2].opts.seenEmbeddings.length, 6);
+  for (const e of sesion[2].opts.seenEmbeddings) {
+    assert.equal(typeof e.title, 'string');
+    assert.ok(Array.isArray(e.vector) && e.vector.length === 3);
+  }
+  assert.deepEqual(r.erroresInternos, []);
+});
+
+test('B sigue sin embeddings si no se pueden leer: avisa una sola vez por ese motivo y pasa solo las URLs', async () => {
+  const nivel = nivelChico({ B: { temas: 0, rondas: 1, sesiones: 1, rondasSesion: 3 } });
+  const falso = crearFalso({ nivel, fallas: { vectores: () => { throw new Error('mongo caído'); } } });
+  const pasados = [];
+  const original = falso.ctx.pick;
+  falso.ctx.pick = (topics, opts) => { pasados.push(opts); return original(topics, opts); };
+
+  const r = await B.correr(falso.ctx);
+  assert.ok(pasados.every((o) => Array.isArray(o.seenEmbeddings) && o.seenEmbeddings.length === 0));
+  assert.equal(pasados[2].alreadyShownUrls.length, 6, 'las URLs sí se pasan');
+  const avisos = r.erroresInternos.filter((m) => /para pasarle al motor lo ya visto: mongo caído/.test(m));
+  assert.equal(avisos.length, 1, 'no se repite el aviso en cada ronda');
 });
 
 test('B: un tópico con pocas notas se agota (rescate y después vacío)', async () => {

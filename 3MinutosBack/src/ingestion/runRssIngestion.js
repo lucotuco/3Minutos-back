@@ -59,19 +59,21 @@ async function saveArticles(articles = []) {
   let created = 0;
   let skipped = 0;
   let errors = 0;
+  let embeddingsReused = 0;
 
   for (const article of articles) {
     try {
       const result = await saveNormalizedArticle(article);
       if (result.status === 'created') created++;
       else skipped++;
+      if (result.embeddingReused) embeddingsReused++;
     } catch (error) {
       errors++;
       console.log(`Error guardando articulo -> ${error.message}`);
     }
   }
 
-  return { created, skipped, errors };
+  return { created, skipped, errors, embeddingsReused };
 }
 
 async function filterExistingArticles(articles = []) {
@@ -228,6 +230,7 @@ async function runRssIngestion() {
       let skipped = 0;
       let errors = 0;
       let aiBatchCount = 0;
+      let embeddingsReused = 0;
 
       try {
         const feed = await parser.parseURL(source.url);
@@ -262,6 +265,7 @@ async function runRssIngestion() {
             created += batchSaveResult.created;
             skipped += batchSaveResult.skipped;
             errors += batchSaveResult.errors;
+            embeddingsReused += batchSaveResult.embeddingsReused || 0;
           } catch (error) {
             console.log(`${source.name} -> error batch IA: ${error.message}`);
 
@@ -271,11 +275,13 @@ async function runRssIngestion() {
             created += fallbackSaveResult.created;
             skipped += fallbackSaveResult.skipped;
             errors += fallbackSaveResult.errors;
+            embeddingsReused += fallbackSaveResult.embeddingsReused || 0;
           }
         }
 
         console.log(
           `Guardado ${source.name} -> creados: ${created}, omitidos: ${skipped}, errores: ${errors}, IA batch: ${aiBatchCount}, `
+          + `embeddings reusados: ${embeddingsReused}, `
           + `rescatadas: ${prepared.stats.rescatadas}, cortas conservadas: ${prepared.stats.cortasConservadas}, `
           + `descartadas por texto: ${prepared.stats.descartadas}`
         );

@@ -217,8 +217,12 @@ function createLlmJudge({
     }
 
     const t0 = now();
-    const outcome = await raceWithTimeout(start(input), session.remainingMs);
-    const waitedMs = now() - t0;
+    const grantedMs = session.remainingMs;
+    const outcome = await raceWithTimeout(start(input), grantedMs);
+    // Si se acabó el tiempo se esperó TODO lo concedido, aunque el reloj marque un poco menos (el temporizador y
+    // Date.now() no son el mismo reloj): así el digest no se queda con migajas de presupuesto que alcancen para
+    // lanzar otra pregunta que ya nace perdida.
+    const waitedMs = outcome === TIMED_OUT ? Math.max(now() - t0, grantedMs) : now() - t0;
     session.charge(waitedMs);
 
     if (outcome === TIMED_OUT) {

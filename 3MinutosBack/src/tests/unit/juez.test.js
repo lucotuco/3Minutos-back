@@ -259,6 +259,35 @@ test('presupuesto: es de TODO el digest; la primera pregunta lenta lo gasta y la
   cliente.liberar();
 });
 
+test('presupuesto: si se acabó el tiempo se gastó TODO lo concedido, aunque el reloj marque menos (no quedan migajas)', async () => {
+  const cliente = clienteManual('SI');
+  const { juez } = nuevoJuez({ cliente, now: () => 5000 }); // reloj clavado: "midió" 0 ms de espera
+  const session = sesion(20);
+
+  const r1 = await juez.ask({ q: 1 }, { session });
+  assert.equal(r1.source, 'timeout');
+  assert.equal(r1.waitedMs, 20, 'se cuenta lo concedido, no lo que dijo el reloj');
+  assert.equal(session.remainingMs, 0);
+  assert.equal(session.waitedMs, 20);
+
+  const r2 = await juez.ask({ q: 2 }, { session });
+  assert.deepEqual([r2.verdict, r2.source], [null, 'skipped'], 'la segunda ni se lanza');
+  assert.equal(cliente.llamadas.length, 1);
+  cliente.liberar();
+});
+
+test('presupuesto: si la respuesta llegó a tiempo, se cuenta lo que midió el reloj (no todo lo concedido)', async () => {
+  let ahora = 1000;
+  const cliente = clienteFalso(() => { ahora += 120; return respuesta('SI'); });
+  const { juez } = nuevoJuez({ cliente, now: () => ahora });
+  const session = sesion(1500);
+
+  const r = await juez.ask({ q: 1 }, { session });
+  assert.equal(r.source, 'llm');
+  assert.equal(r.waitedMs, 120);
+  assert.equal(session.remainingMs, 1380);
+});
+
 test('presupuesto 0: no se llama a la IA, pero lo que ya está en la caché sí se usa', async () => {
   const { juez, cliente } = nuevoJuez();
   await juez.ask({ q: 1 }, { session: sesion(1000) });

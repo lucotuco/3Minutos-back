@@ -27,6 +27,12 @@ const IMPORTANCE_ACCEPTABLE_MIN = 40;  // 40-49: "aceptable" (solo si no hay una
 const SAME_STORY_COSINE = 0.88;        // coseno entre embeddings de notas: >= esto es la misma historia
 const MAX_FUTURE_SKEW_HOURS = 3;       // una fecha más de 3 h en el futuro no es creíble
 
+// Cuánto mira hacia atrás el historial de lo que el usuario ya vio (getAlreadyShownUrlsForUser.js).
+// Una nota vista hace más de 24 h ya no podría elegirse por edad; 48 h cubre además las notas nuevas
+// de una MISMA historia que salen al día siguiente. El tope de notas acota el costo de traer embeddings.
+const HISTORY_WINDOW_HOURS = 48;
+const HISTORY_MAX_NOTES = 150;
+
 // Categorías "de vida local": solo notas de Argentina o de alcance Global.
 // Política y Economía no están: la ingesta ya pasa a Internacional las que tienen país extranjero.
 const LOCAL_ONLY_CATEGORIES = new Set(['sociedad']);
@@ -246,6 +252,8 @@ module.exports = {
   IMPORTANCE_ACCEPTABLE_MIN,
   SAME_STORY_COSINE,
   MAX_FUTURE_SKEW_HOURS,
+  HISTORY_WINDOW_HOURS,
+  HISTORY_MAX_NOTES,
   LOCAL_ONLY_CATEGORIES,
   TIER,
   OPINION_KEYWORDS,

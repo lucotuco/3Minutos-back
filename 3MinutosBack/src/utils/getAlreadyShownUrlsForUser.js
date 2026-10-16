@@ -2,14 +2,8 @@ const UserShownArticle = require('../models/UserShownArticle');
 const UserDeliveryRun = require('../models/UserDeliveryRun');
 const Article = require('../models/Article');
 
-// Ventana del historial. Una nota que el usuario vio hace más de 24 h ya no podría volver a elegirse
-// por edad (el tope de edad es 24 h); 48 h cubre además las notas nuevas de una MISMA historia que
-// aparecen al día siguiente ("misma historia" = coseno de embeddings, ver eligibility.js).
-const HISTORY_WINDOW_HOURS = 48;
-
-// Tope de notas del historial. Con 3 temas por digest y unos pocos refrescos por día, 150 cubre 48 h de sobra
-// y acota el costo de traer los embeddings (antes: las últimas 30 de cualquier fecha).
-const HISTORY_MAX_NOTES = 150;
+// Ventana (48 h) y tope (150 notas) del historial: ver eligibility.js. Antes: las últimas 30 notas de cualquier fecha.
+const { HISTORY_WINDOW_HOURS, HISTORY_MAX_NOTES } = require('./eligibility');
 
 async function getAlreadyShownUrlsForUser(userId) {
   const items = await UserShownArticle.find({ userId }).select('articleUrl -_id').lean();

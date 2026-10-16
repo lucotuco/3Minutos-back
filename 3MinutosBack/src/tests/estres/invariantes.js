@@ -137,8 +137,9 @@ function chequearNota(r, a, ahora, add, esperado = {}) {
   if (!a._id) add('I6-FORMA', 'ALTA', 'la nota no tiene _id');
   if (typeof a.url !== 'string' || !/^https?:\/\//i.test(a.url)) add('I6-FORMA', 'ALTA', `url inválida: ${String(a.url).slice(0, 80)}`);
   if (typeof a.title !== 'string' || !a.title.trim()) add('I6-FORMA', 'ALTA', 'la nota no tiene título');
-  // Los temas oficiales se leen de la colección por etiqueta: sus notas no traen score de búsqueda.
-  if (esperado.tipo !== 'oficial') {
+  // Los temas oficiales y los rescates (también los de un tema libre) se leen de la colección por etiqueta: sus notas
+  // no pasaron por la búsqueda, así que no traen score. Solo las que eligió la búsqueda lo tienen.
+  if (esperado.tipo !== 'oficial' && !r.usedFallback) {
     if (typeof a.score !== 'number' || !Number.isFinite(a.score) || a.score < 0 || a.score > 1) add('I10-SCORE', 'MEDIA', `score fuera de [0,1]: ${a.score}`);
     if (typeof a.finalScore !== 'number' || !Number.isFinite(a.finalScore)) add('I10-SCORE', 'MEDIA', 'finalScore no numérico');
   }

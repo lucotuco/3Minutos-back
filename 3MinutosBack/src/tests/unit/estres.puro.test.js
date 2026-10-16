@@ -365,11 +365,23 @@ test('I2 (temas oficiales): la zona es ETIQUETA y no hay score; ETIQUETA no exis
   assert.ok(ids(libreConEtiqueta).includes('I2-ZONA'));
 });
 
-test('I10 (temas oficiales): sus notas no traen score; las de un tema libre sí', () => {
+test('I10 (temas oficiales y rescates): sus notas no traen score; las que eligió la búsqueda de un tema libre sí', () => {
   assert.deepEqual(verificarOficial(resultadoOficial()), []);
   const libreSinScore = resultado({}, nota({ score: undefined, finalScore: undefined }));
   const v = verificar(libreSinScore, { tipo: 'libre' });
   assert.equal(ids(v).filter((x) => x === 'I10-SCORE').length, 2);
+
+  // El rescate de un tema libre se lee por etiqueta (sin búsqueda): su nota viene sin score y eso es lo normal.
+  const rescateLibre = resultado(
+    { usedFallback: true, matchZone: 'RESCATE', matchScore: null, matchReason: 'sin_candidatos', tier: 'sugerida', fallbackCategory: 'Deportes' },
+    nota({ score: undefined, finalScore: undefined, importanceScore: 70, geoScope: 'Argentina' }),
+  );
+  assert.deepEqual(verificar(rescateLibre, { tipo: 'libre' }), []);
+  // Pero una nota que eligió la búsqueda (en cualquier zona) y no trae score sigue siendo una violación.
+  for (const [zona, matchScore] of [['VERDE', 0.97], ['AMARILLA', 0.91]]) {
+    const sinScore = verificar({ ...rescateLibre, usedFallback: false, matchZone: zona, matchScore }, { tipo: 'libre' });
+    assert.equal(ids(sinScore).filter((x) => x === 'I10-SCORE').length, 2, zona);
+  }
 });
 
 test('I14: importancia mínima 40 (50 en el rescate); si la nota no la trae no se mide', () => {

@@ -131,7 +131,7 @@ function armarRegistro(t, r, error, ms, logs) {
     entregada: Boolean(a),
     rescate,
     zona,
-    // En un rescate el score es contra la consulta genérica del rescate, no contra el tema: no se informa.
+    // En un rescate no hay score contra el tema (el motor nuevo lo lee por etiqueta; el viejo buscaba una consulta genérica): no se informa.
     scoreBusqueda: rescate ? null : (r?.matchScore ?? articulo?.score ?? null),
     motivo: r ? (r.matchReason ?? null) : undefined,
     corral: r?.corralCategory ?? null,

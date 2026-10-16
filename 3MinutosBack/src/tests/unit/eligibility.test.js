@@ -253,6 +253,39 @@ test('publicidad: el contenido patrocinado de Infobae (/inhouse/) se descarta co
   assert.equal(isAdvertisingArticle({}), false);
 });
 
+test('tipo de nota: opinión, servicio, previa/agenda y publicidad (según la IA) no son elegibles, con su motivo', () => {
+  assert.deepEqual(checkEligibility(nota({ contentType: 'opinion' }), ctx()).reasons, ['opinion']);
+  assert.deepEqual(checkEligibility(nota({ contentType: 'servicio' }), ctx()).reasons, ['servicio']);
+  assert.deepEqual(checkEligibility(nota({ contentType: 'previa_agenda' }), ctx()).reasons, ['previa_o_agenda']);
+  assert.deepEqual(checkEligibility(nota({ contentType: 'publicidad' }), ctx()).reasons, ['publicidad']);
+});
+
+test('tipo de nota: noticia, análisis, entrevista, color y las notas sin tipo (anteriores al campo) sí pasan', () => {
+  for (const contentType of ['noticia', 'analisis', 'entrevista', 'color', '', undefined, null]) {
+    assert.equal(checkEligibility(nota({ contentType }), ctx()).ok, true, String(contentType));
+  }
+  assert.equal(checkEligibility(nota({ contentType: 'constructor' }), ctx()).ok, true, 'un valor raro no rompe ni excluye');
+});
+
+test('tipo de nota: si la URL, el título y el tipo dan el mismo motivo, aparece una sola vez', () => {
+  const columna = nota({ url: 'https://medio.test/opinion/x/nota', contentType: 'opinion' });
+  assert.deepEqual(checkEligibility(columna, ctx()).reasons, ['opinion']);
+  const previa = nota({ title: 'EN VIVO | Boca - River', contentType: 'previa_agenda' });
+  assert.deepEqual(checkEligibility(previa, ctx()).reasons, ['previa_o_agenda']);
+  const patrocinada = nota({ url: 'https://www.infobae.com/inhouse/2026/10/13/x/', contentType: 'publicidad' });
+  assert.deepEqual(checkEligibility(patrocinada, ctx()).reasons, ['publicidad']);
+});
+
+test('tipo de nota: rankEligible las deja en las rechazadas con su motivo y no cambia el orden de las demás', () => {
+  const noticia = nota({ importanceScore: 60, contentType: 'noticia' });
+  const analisis = nota({ importanceScore: 70, contentType: 'analisis' });
+  const opinion = nota({ importanceScore: 99, contentType: 'opinion' });
+  const servicio = nota({ importanceScore: 95, contentType: 'servicio' });
+  const { eligible, rejected } = rankEligible([opinion, noticia, servicio, analisis], ctx());
+  assert.deepEqual(eligible.map((e) => e.article), [analisis, noticia], 'el tipo no ordena: manda la importancia');
+  assert.deepEqual(rejected.map((r) => [r.article, r.reasons]), [[opinion, ['opinion']], [servicio, ['servicio']]]);
+});
+
 test('las listas de segmentos son las acordadas', () => {
   assert.deepEqual([...OPINION_URL_SEGMENTS].sort(), [
     'ambito-debate', 'cartas-al-pais', 'columna', 'columnas', 'columnista', 'columnistas',

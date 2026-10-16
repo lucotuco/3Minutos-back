@@ -368,6 +368,28 @@ test('oficial: opinión y previas/en vivo no se entregan', async () => {
   assert.equal(r.resultados[0].article.url, buena.url);
 });
 
+test('oficial: el tipo de nota que puso la IA descarta opinión, servicio, previas y publicidad (aunque la URL y el título no lo digan)', async () => {
+  const columna = nota({ contentType: 'opinion', importanceScore: 95 });
+  const tutorial = nota({ contentType: 'servicio', importanceScore: 94 });
+  const previa = nota({ contentType: 'previa_agenda', importanceScore: 93 });
+  const patrocinada = nota({ contentType: 'publicidad', importanceScore: 92 });
+  const analisis = nota({ contentType: 'analisis', importanceScore: 55, publishedAt: hace(9) });
+  const r = await correr(['Fútbol'], { docs: [columna, tutorial, previa, patrocinada, analisis] });
+  assert.equal(r.resultados[0].article.url, analisis.url, 'el análisis sí se entrega, y las 4 anteriores no, por más importantes que sean');
+});
+
+test('oficial: si todas son de un tipo excluido no entrega ninguna del tema', async () => {
+  const r = await correr(['Fútbol'], { docs: [nota({ contentType: 'opinion' }), nota({ contentType: 'servicio' })] });
+  assert.equal(r.resultados[0].article, null);
+});
+
+test('oficial: las notas sin tipo (anteriores al campo) se entregan como noticias', async () => {
+  const vieja = nota({ importanceScore: 70 });
+  assert.equal(vieja.contentType, undefined);
+  const r = await correr(['Fútbol'], { docs: [vieja] });
+  assert.equal(r.resultados[0].article.url, vieja.url);
+});
+
 test('oficial: tópicos que comparten notas no repiten URL ni historia dentro del digest', async () => {
   // `a` es [1, 0]; `b` tiene coseno 0,95 con `a` (misma historia) y `c` 0,4 (otra historia).
   const a = nota({ publishedAt: hace(1), importanceScore: 90, embedding: [1, 0] });
@@ -476,6 +498,15 @@ test('libre: la elegibilidad también aplica (vencida, floja, en vivo, opinión,
   const vivo = nota({ title: 'River EN VIVO | minuto a minuto', category: 'Deportes', score: 0.99, importanceScore: 90 });
   const columna = nota({ title: 'River: una columna', url: 'https://medio.test/opinion/river', score: 0.99, importanceScore: 90 });
   const r = await correr(['river plate'], { busqueda: busquedaFalsa([vencida, floja, vivo, columna, c.verdeVieja, c.amarilla2, c.amarilla3]) });
+  assert.equal(r.resultados[0].article.url, c.verdeVieja.url);
+});
+
+test('libre: el tipo de nota que puso la IA también descarta opinión, servicio, previas y publicidad', async () => {
+  const c = candidatosRiver();
+  const columna = nota({ title: 'River: la columna de la semana', category: 'Deportes', score: 0.99, importanceScore: 90, contentType: 'opinion' });
+  const tutorial = nota({ title: 'River: cómo ver el partido', category: 'Deportes', score: 0.98, importanceScore: 90, contentType: 'servicio' });
+  const patrocinada = nota({ title: 'River: beneficios del club', category: 'Deportes', score: 0.97, importanceScore: 90, contentType: 'publicidad' });
+  const r = await correr(['river plate'], { busqueda: busquedaFalsa([columna, tutorial, patrocinada, c.verdeVieja, c.amarilla2, c.amarilla3]) });
   assert.equal(r.resultados[0].article.url, c.verdeVieja.url);
 });
 

@@ -88,7 +88,7 @@ test('una categoría que no existe cae en Sociedad', async () => {
 
 // ---------------------------------------------------------------- lo que ve la IA
 /** Clasifica `notas` y devuelve el arreglo de artículos que se le mandó a la IA (leído del prompt). */
-async function payloadEnviado(notas) {
+async function payloadEnviado(notas, reviews = null) {
   let llamada = null;
   instalarStub('config/openai.js', {
     OPENAI_MODEL: 'test',
@@ -96,7 +96,7 @@ async function payloadEnviado(notas) {
       responses: {
         parse: async (args) => {
           llamada = args;
-          return { output_parsed: { reviews: notas.map((_, i) => review(i)) } };
+          return { output_parsed: { reviews: reviews || notas.map((_, i) => review(i)) } };
         },
       },
     },
@@ -106,11 +106,11 @@ async function payloadEnviado(notas) {
   const archivo = require.resolve(path.join(SRC, 'ingestion', 'reviewArticlesWithAIBatch.js'));
   delete require.cache[archivo];
   const { reviewArticlesWithAIBatch, CLASSIFIER_SUMMARY_CHARS } = require(archivo);
-  await reviewArticlesWithAIBatch(notas);
+  const enriquecidas = await reviewArticlesWithAIBatch(notas);
 
   const usuario = llamada.input.find((m) => m.role === 'user').content;
   const json = usuario.slice(usuario.indexOf('Artículos a evaluar:') + 'Artículos a evaluar:'.length);
-  return { payload: JSON.parse(json), limite: CLASSIFIER_SUMMARY_CHARS };
+  return { payload: JSON.parse(json), limite: CLASSIFIER_SUMMARY_CHARS, llamada, enriquecidas };
 }
 
 const IMG = '<img src="https://www.infobae.com/resizer/v2/ABC.JPG?auth=a88d0a4bfa9ededd841c0af6e98a2bb32dc89f9ba759588dd73a4df394d13ed8&smart=true&width=4000&height=2668" alt="" height="2668" width="4000"/>';
@@ -144,4 +144,65 @@ test('una nota cuyo resumen era solo una imagen llega con resumen vacío (no con
 test('si no hay rawSummary se usa contentSnippet', async () => {
   const { payload } = await payloadEnviado([{ title: 'Nota', sourceName: 'Medio', rawSummary: '', contentSnippet: 'Del snippet.' }]);
   assert.equal(payload[0].summary, 'Del snippet.');
+});
+
+// ---------------------------------------------------------------- tipo de nota (contentType)
+const { CONTENT_TYPE_VALUES } = require('../../utils/contentTypes');
+
+test('el tipo de nota que devuelve la IA se guarda en cada nota', async () => {
+  const notas = CONTENT_TYPE_VALUES.map((_, i) => ({ title: `Nota ${i}`, rawSummary: 'resumen', sourceName: 'Medio' }));
+  const { enriquecidas } = await payloadEnviado(notas, CONTENT_TYPE_VALUES.map((contentType, i) => review(i, { contentType })));
+  assert.deepEqual(enriquecidas.map((n) => n.contentType), CONTENT_TYPE_VALUES);
+});
+
+test('un tipo fuera de la lista (o ausente) queda vacío en vez de guardarse tal cual', async () => {
+  const notas = [0, 1, 2, 3, 4, 5].map((i) => ({ title: `Nota ${i}`, rawSummary: 'resumen', sourceName: 'Medio' }));
+  const { enriquecidas } = await payloadEnviado(notas, [
+    review(0, { contentType: 'inventado' }),
+    review(1, {}),
+    review(2, { contentType: 'constructor' }),
+    review(3, { contentType: '__proto__' }),
+    review(4, { contentType: 42 }),
+    review(5, { contentType: ' OPINION ' }),
+  ]);
+  assert.deepEqual(enriquecidas.map((n) => n.contentType), ['', '', '', '', '', 'opinion']);
+});
+
+test('una nota para la que la IA no devolvió nada queda sin tipo (se trata como noticia)', async () => {
+  const notas = [{ title: 'A', rawSummary: 'x', sourceName: 'M' }, { title: 'B', rawSummary: 'y', sourceName: 'M' }];
+  const { enriquecidas } = await payloadEnviado(notas, [review(0, { contentType: 'opinion' })]);
+  assert.equal(enriquecidas[0].contentType, 'opinion');
+  assert.equal(enriquecidas[1].contentType, undefined);
+});
+
+test('la IA recibe la URL de cada nota (pista del género y del país)', async () => {
+  const { payload } = await payloadEnviado([
+    { title: 'Dólar hoy', sourceName: 'Infobae', url: 'https://www.infobae.com/colombia/2026/10/16/dolar/', rawSummary: 'x' },
+    { title: 'Sin url', sourceName: 'Medio', rawSummary: 'y' },
+  ]);
+  assert.equal(payload[0].url, 'https://www.infobae.com/colombia/2026/10/16/dolar/');
+  assert.equal(payload[1].url, '');
+});
+
+test('el esquema que se le pide a la IA obliga a elegir uno de los 8 tipos', async () => {
+  const { llamada } = await payloadEnviado([{ title: 'A', rawSummary: 'x', sourceName: 'M' }]);
+  const propiedades = llamada.text.format.schema.properties.reviews.items.properties;
+  assert.deepEqual(propiedades.contentType.enum, CONTENT_TYPE_VALUES);
+  assert.ok(llamada.text.format.schema.properties.reviews.items.required.includes('contentType'));
+});
+
+test('el prompt define los 8 tipos, da la pista de la URL y la regla del país', async () => {
+  const { llamada } = await payloadEnviado([{ title: 'A', rawSummary: 'x', sourceName: 'M' }]);
+  const sistema = llamada.input.find((m) => m.role === 'system').content;
+  for (const tipo of CONTENT_TYPE_VALUES) assert.ok(sistema.includes(`"${tipo}"`), `el prompt no define "${tipo}"`);
+  assert.match(sistema, /"url"/);
+  assert.match(sistema, /\/inhouse\//);
+  assert.match(sistema, /\/colombia\//, 'si la URL dice otro país, ese es el geoScope');
+  assert.match(sistema, /cotizaciones y datos del día/, 'las cotizaciones del día siguen siendo noticia');
+  assert.match(sistema, /dónde ver/, 'dónde ver es servicio');
+});
+
+test('una nota extranjera de Economía con geoScope por la URL pasa a Internacional', async () => {
+  const [n] = await clasificar([review(0, { category: 'Economía', topic: 'Dólar y Mercados', geoScope: 'Colombia', contentType: 'noticia' })]);
+  assert.deepEqual([n.category, n.topic, n.geoScope], ['Internacional', 'América Latina', 'Colombia']);
 });

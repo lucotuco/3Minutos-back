@@ -491,9 +491,17 @@ test('I5, I6, I6b e I10: trazabilidad, forma de la nota, opinión y scores', () 
   assert.equal(I.esOpinion(nota({ url: 'https://x.test/politica/editorial-planeta-lanzo-catalogo' })), false);
   assert.equal(I.esOpinion(nota({ url: 'https://x.test/politica/nota?ref=/opinion/' })), false);
 
-  // I6c: contenido patrocinado.
+  // I6c: contenido patrocinado. I6d: tipo de nota que la IA marcó como no entregable.
   assert.ok(ids(verificar(resultado({}, nota({ url: 'https://www.infobae.com/inhouse/2026/10/13/nota/' })))).includes('I6c-PUBLICIDAD'));
   assert.equal(I.esPublicidad(nota()), false);
+  for (const contentType of ['opinion', 'servicio', 'previa_agenda', 'publicidad']) {
+    const v = verificar(resultado({}, nota({ contentType })));
+    assert.ok(ids(v).includes('I6d-TIPO-EXCLUIDO'), contentType);
+    assert.equal(v.find((x) => x.id === 'I6d-TIPO-EXCLUIDO').severidad, 'ALTA');
+  }
+  for (const contentType of ['noticia', 'analisis', 'entrevista', 'color', '', undefined]) {
+    assert.ok(!ids(verificar(resultado({}, nota({ contentType })))).includes('I6d-TIPO-EXCLUIDO'), String(contentType));
+  }
 
   assert.ok(ids(verificar(resultado({}, nota({ score: 1.5 })))).includes('I10-SCORE'));
   assert.ok(ids(verificar(resultado({}, nota({ finalScore: 'alto' })))).includes('I10-SCORE'));

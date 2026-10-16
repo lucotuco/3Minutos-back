@@ -111,7 +111,7 @@ test('proyección: trae los campos que mira la elegibilidad (geoScope, importanc
   await searchArticlesBySimilarityAtlas('river', 'river club');
   for (const p of pipelines) {
     const proyeccion = p.find((etapa) => etapa.$project).$project;
-    for (const campo of ['_id', 'title', 'url', 'publishedAt', 'importanceScore', 'category', 'topic', 'geoScope', 'section', 'tags', 'sourceName',
+    for (const campo of ['_id', 'title', 'url', 'publishedAt', 'importanceScore', 'category', 'topic', 'geoScope', 'contentType', 'section', 'tags', 'sourceName',
       'neutralTitle', 'neutralLead', 'neutralSummary', 'rawSummary', 'contentSnippet', 'imageUrl', 'curationStatus']) {
       assert.equal(proyeccion[campo], 1, `falta ${campo} en la proyección`);
     }

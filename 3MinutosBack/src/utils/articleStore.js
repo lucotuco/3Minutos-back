@@ -16,12 +16,12 @@ const QUERY_TIMEOUT_MS = 8000;
 const MAX_CANDIDATES = 1000;
 
 // Campos livianos: alcanzan para decidir si una nota es elegible y en qué orden (sin resumen ni embedding).
-const LIGHT_FIELDS = '_id url title publishedAt importanceScore category topic geoScope section tags sourceName';
+const LIGHT_FIELDS = '_id url title publishedAt importanceScore category topic geoScope contentType section tags sourceName';
 
 // Los mismos campos que proyecta la búsqueda híbrida (+ geoScope) y el embedding para comparar historias.
 const FULL_FIELDS = [
   '_id', 'title', 'url', 'sourceName', 'section', 'region', 'tags', 'importanceScore', 'importanceLevel',
-  'publishedAt', 'topic', 'category', 'geoScope', 'imageUrl', 'neutralTitle', 'neutralLead', 'neutralSummary',
+  'publishedAt', 'topic', 'category', 'geoScope', 'contentType', 'imageUrl', 'neutralTitle', 'neutralLead', 'neutralSummary',
   'rawSummary', 'contentSnippet', 'neutralityScore', 'politicalBiasRisk', 'curationStatus', 'embedding',
 ].join(' ');
 

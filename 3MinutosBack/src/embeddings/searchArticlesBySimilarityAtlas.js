@@ -47,7 +47,7 @@ async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options 
 
   const projectFields = {
     _id: 1, title: 1, url: 1, sourceName: 1, section: 1, region: 1, tags: 1,
-    importanceScore: 1, importanceLevel: 1, publishedAt: 1, topic: 1, category: 1, geoScope: 1,
+    importanceScore: 1, importanceLevel: 1, publishedAt: 1, topic: 1, category: 1, geoScope: 1, contentType: 1,
     imageUrl: 1, neutralTitle: 1, neutralLead: 1, neutralSummary: 1, rawSummary: 1,
     contentSnippet: 1, neutralityScore: 1, politicalBiasRisk: 1, curationStatus: 1,
   };

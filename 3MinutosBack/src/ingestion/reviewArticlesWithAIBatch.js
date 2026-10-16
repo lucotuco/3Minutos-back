@@ -3,6 +3,7 @@ const { zodTextFormat } = require('openai/helpers/zod');
 const { openaiReview, OPENAI_MODEL } = require('../config/openai');
 const { buildEmbeddingText } = require('../embeddings/buildEmbeddingsText');
 const { toPlainText } = require('../utils/plainText');
+const { CONTENT_TYPE_VALUES, sanitizeContentType } = require('../utils/contentTypes');
 const GlobalContext = require('../models/GlobalContext');
 
 const BatchReviewSchema = z.object({
@@ -15,6 +16,7 @@ const BatchReviewSchema = z.object({
       tags: z.array(z.string().min(1).max(50)).max(5),
       importanceScore: z.number().min(0).max(100),
       aiConfidence: z.number().min(0).max(1),
+      contentType: z.enum(CONTENT_TYPE_VALUES),
     })
   ),
 });
@@ -77,6 +79,7 @@ function buildArticlePayload(article = {}, index) {
     id: index,
     sourceName: article.sourceName || '',
     title: article.title || '',
+    url: article.url || '',
     summary: toPlainText(article.rawSummary || article.contentSnippet || '', { maxChars: CLASSIFIER_SUMMARY_CHARS, ellipsis: true }),
   };
 }
@@ -103,8 +106,18 @@ ${buildCategoryListText()}
 REGLAS DE CLASIFICACIÓN:
 1. "category": DEBE ser una de las Categorías Oficiales.
 2. "topic": DEBE pertenecer a los Subtemas de LA MISMA "category" que elegiste. Solo si NO encaja en NINGÚN subtema oficial de su categoría, creá una etiqueta libre de 1 a 3 palabras.
-3. "geoScope": El país principal donde ocurren los hechos (ej: "Argentina", "México"). Usá "Global" SOLO si afecta a todo el mundo por igual.
+3. "geoScope": El país principal donde ocurren los hechos (ej: "Argentina", "México"). Usá "Global" SOLO si afecta a todo el mundo por igual. Si el texto o la "url" muestran que la nota es de otro país (por ejemplo "/colombia/" en la ruta, o una cotización en pesos colombianos), el geoScope es ESE país, aunque el medio sea argentino.
 4. 🌍 REGLA GEOGRÁFICA ESTRICTA: Las categorías "Política" y "Economía" son EXCLUSIVAS para Argentina. Si el evento ocurre en OTRO PAÍS (ej: España, Brasil), DEBE ir a "Internacional".
+5. "contentType": el género de la nota. Elegí EXACTAMENTE uno de estos valores:
+   - "noticia": informa un hecho nuevo o su desarrollo. También las cotizaciones y datos del día (dólar hoy, resultados, tablas), los policiales y los comunicados oficiales.
+   - "analisis": explica el contexto o las consecuencias de un hecho con datos y sin una posición propia del autor.
+   - "opinion": columna, editorial, carta de lectores o nota firmada donde el autor defiende un punto de vista (ej: "Es la democracia, estúpido", "Por qué el modelo no cierra").
+   - "entrevista": nota armada sobre el diálogo con una persona (pregunta y respuesta, o perfil con sus declaraciones).
+   - "color": historia humana, curiosidad, viral o crónica sin urgencia informativa.
+   - "servicio": nota útil que no cuenta una novedad: tutorial, "cómo hacer", "dónde ver", receta, horóscopo, guía de compra, lista de recomendaciones, "qué hacer este fin de semana".
+   - "previa_agenda": previa de un partido o evento, agenda del día, minuto a minuto, "en vivo".
+   - "publicidad": contenido patrocinado o de marca (In House, "contenido de marca"), promociones o notas que venden un producto o servicio.
+   Pistas en la "url": "/opinion/", "/columnistas/" o "/editorial/" suelen ser opinión; "/inhouse/" es publicidad. Si la nota no encaja claramente en un tipo, elegí "noticia".
 
 OTRAS REGLAS:
 - Devolvé exactamente una review por cada artículo recibido usando su "id" numérico.
@@ -190,6 +203,7 @@ ${JSON.stringify(payload, null, 2)}
       tagScores,
       importanceScore: Number(item.importanceScore),
       importanceLevel: getImportanceLevel(item.importanceScore),
+      contentType: sanitizeContentType(item.contentType),
       aiConfidence: Number(item.aiConfidence),
       aiReviewed: true,
       classificationStatus: 'ai_reviewed',
@@ -221,6 +235,7 @@ ${JSON.stringify(payload, null, 2)}
       tagScores: review.tagScores,
       importanceScore: review.importanceScore,
       importanceLevel: review.importanceLevel,
+      contentType: review.contentType,
       aiConfidence: review.aiConfidence,
       classificationStatus: review.classificationStatus,
     };

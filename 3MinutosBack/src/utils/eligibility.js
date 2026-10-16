@@ -21,6 +21,7 @@
  */
 
 const { MAX_ARTICLE_AGE_HOURS, IDEAL_ARTICLE_AGE_HOURS, isPreviewOrAgenda } = require('./freshness');
+const { exclusionReasonOf } = require('./contentTypes');
 
 // ---------------------------------------------------------------- umbrales
 const IMPORTANCE_GOOD_MIN = 50;        // >= 50: nota "buena"
@@ -206,6 +207,10 @@ function checkEligibility(article, { now = Date.now(), usedUrls = new Set() } = 
   if (isOpinionArticle(article)) reasons.push('opinion');
   if (isAdvertisingArticle(article)) reasons.push('publicidad');
   if (isPreviewOrAgenda(article?.title)) reasons.push('previa_o_agenda');
+  // El tipo que dijo el clasificador (opinion, servicio, previa_agenda, publicidad). Las notas anteriores a ese
+  // campo no lo tienen y se tratan como noticia. Si la URL o el título ya dieron el mismo motivo, no se repite.
+  const typeReason = exclusionReasonOf(article?.contentType);
+  if (typeReason && !reasons.includes(typeReason)) reasons.push(typeReason);
 
   return {
     ok: reasons.length === 0,

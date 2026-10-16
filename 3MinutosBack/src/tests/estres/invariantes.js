@@ -25,6 +25,8 @@ const SEGMENTOS_OPINION = new Set(['opinion', 'opiniones', 'columna', 'columnas'
 const SEGMENTOS_PUBLICIDAD = new Set(['inhouse']);
 const ETIQUETAS_OPINION = new Set(['opinion', 'columna', 'editorial', 'columnista', 'columna de opinion']);
 const MARCA_DE_TITULO = /^(opinion|columna|editorial|analisis)\s*[:|\-–—]/;
+// Tipos de nota (campo contentType que pone el clasificador) que no se pueden entregar nunca.
+const TIPOS_EXCLUIDOS = new Set(['opinion', 'servicio', 'previa_agenda', 'publicidad']);
 // Sociedad solo admite notas de Argentina o de alcance Global (espejo de la regla de eligibility.js).
 const ALCANCES_LOCALES = new Set(['argentina', 'global']);
 
@@ -142,6 +144,9 @@ function chequearNota(r, a, ahora, add, esperado = {}) {
   }
   if (esOpinion(a)) add('I6b-OPINION', 'MEDIA', `se entregó una nota de opinión/columna: ${String(a.url || a.title).slice(0, 90)}`);
   if (esPublicidad(a)) add('I6c-PUBLICIDAD', 'ALTA', `se entregó contenido patrocinado: ${String(a.url).slice(0, 90)}`);
+  if (a.contentType && TIPOS_EXCLUIDOS.has(a.contentType)) {
+    add('I6d-TIPO-EXCLUIDO', 'ALTA', `se entregó una nota de tipo "${a.contentType}": "${String(a.title).slice(0, 70)}"`);
+  }
   if (isPreviewOrAgenda(a.title)) add('I15-PREVIA', 'ALTA', `se entregó una previa/agenda/en vivo: "${String(a.title).slice(0, 70)}"`);
 
   const h = edadHoras(a, ahora);

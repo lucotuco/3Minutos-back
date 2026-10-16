@@ -4,6 +4,9 @@ const { openaiReview, OPENAI_MODEL } = require('../config/openai');
 const { buildEmbeddingText } = require('../embeddings/buildEmbeddingsText');
 const { toPlainText } = require('../utils/plainText');
 const { CONTENT_TYPE_VALUES, sanitizeContentType } = require('../utils/contentTypes');
+// La taxonomía es UNA sola (la misma que usa el motor para leer por etiqueta): si acá hubiera otra copia, un subtema
+// agregado en un lado dejaría notas con una etiqueta que el otro no reconoce.
+const { CATEGORIES, ALL_CATEGORIES, TOPIC_TO_CATEGORY } = require('../utils/officialTopics');
 const GlobalContext = require('../models/GlobalContext');
 
 const BatchReviewSchema = z.object({
@@ -20,21 +23,6 @@ const BatchReviewSchema = z.object({
     })
   ),
 });
-
-const CATEGORIES = {
-  'Política':       ['Gobierno Nacional', 'Justicia', 'Elecciones', 'Educación', 'Seguridad'],
-  'Economía':       ['Dólar y Mercados', 'Inflación y Consumo', 'Empresas y Negocios', 'Inversiones', 'Emprendedores'],
-  'Internacional':  ['EEUU', 'Medio Oriente', 'Europa', 'América Latina', 'Conflictos', 'Geopolítica'],
-  'Deportes':       ['Fútbol', 'F1', 'Básquet', 'Tenis', 'Rugby'],
-  'Sociedad':       ['Salud', 'Bienestar', 'Clima y Ambiente', 'Historias Humanas', 'Tendencias y Vida'],
-  'Tecnología':     ['Inteligencia Artificial', 'Ciencia y Espacio', 'Apps y Redes', 'Innovación', 'Videojuegos'],
-  'Entretenimiento/Cultura': ['Cine y Series', 'Música', 'Turismo y Viajes', 'Streaming', 'Autos', 'Viral y Trending', 'Teatro y Literatura'],
-};
-
-const ALL_CATEGORIES = Object.keys(CATEGORIES);
-const TOPIC_TO_CATEGORY = Object.fromEntries(
-  Object.entries(CATEGORIES).flatMap(([cat, topics]) => topics.map((t) => [t, cat]))
-);
 
 const LOWERCASE_WORDS = new Set(['y', 'de', 'del', 'la', 'el', 'los', 'las', 'en', 'a']);
 function normalizeFreeTopic(value) {
@@ -172,10 +160,10 @@ ${JSON.stringify(payload, null, 2)}
     let topic = String(item.topic || 'General').trim();
     const geoScope = String(item.geoScope || 'Global').trim();
 
-    // hasOwn: con un objeto comun, un topic "constructor" o "__proto__" (aunque la IA casi nunca lo devuelva)
-    // daria como categoria una funcion o un objeto en vez de caer en la etiqueta libre.
-    if (Object.hasOwn(TOPIC_TO_CATEGORY, topic)) {
-      category = TOPIC_TO_CATEGORY[topic];
+    // TOPIC_TO_CATEGORY es un Map: un topic "constructor" o "__proto__" (aunque la IA casi nunca lo devuelva) no se
+    // confunde con un subtema oficial y cae en la etiqueta libre.
+    if (TOPIC_TO_CATEGORY.has(topic)) {
+      category = TOPIC_TO_CATEGORY.get(topic);
     } else {
       topic = normalizeFreeTopic(topic);
     }

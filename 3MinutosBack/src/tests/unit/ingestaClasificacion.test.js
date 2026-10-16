@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 
 const SRC = path.join(__dirname, '..', '..');
+const { CATEGORIES, ALL_CATEGORIES, TOPIC_TO_CATEGORY } = require('../../utils/officialTopics');
 
 function instalarStub(relPath, exports) {
   const abs = require.resolve(path.join(SRC, relPath));
@@ -205,4 +206,40 @@ test('el prompt define los 8 tipos, da la pista de la URL y la regla del país',
 test('una nota extranjera de Economía con geoScope por la URL pasa a Internacional', async () => {
   const [n] = await clasificar([review(0, { category: 'Economía', topic: 'Dólar y Mercados', geoScope: 'Colombia', contentType: 'noticia' })]);
   assert.deepEqual([n.category, n.topic, n.geoScope], ['Internacional', 'América Latina', 'Colombia']);
+});
+
+// ---------------------------------------------------------------- una sola taxonomía
+/** La lista de categorías y subtemas tal como la lee la IA en el prompt: { categoría: [subtemas] }. */
+function listaDelPrompt(sistema) {
+  const bloque = sistema.slice(sistema.indexOf('LISTA DE CATEGORÍAS'), sistema.indexOf('REGLAS DE CLASIFICACIÓN'));
+  const lista = {};
+  let actual = null;
+  for (const linea of bloque.split('\n')) {
+    const cat = linea.match(/^\s*Categoría: "(.+)"$/);
+    if (cat) { actual = cat[1]; lista[actual] = []; continue; }
+    const sub = linea.match(/^\s*\d+\. "(.+)"$/);
+    if (sub && actual) lista[actual].push(sub[1]);
+  }
+  return lista;
+}
+
+test('el prompt ofrece EXACTAMENTE la taxonomía oficial del motor (7 categorías y todos sus subtemas, en orden)', async () => {
+  const { llamada } = await payloadEnviado([{ title: 'A', rawSummary: 'x', sourceName: 'M' }]);
+  const sistema = llamada.input.find((m) => m.role === 'system').content;
+  const enElPrompt = listaDelPrompt(sistema);
+  assert.deepEqual(enElPrompt, CATEGORIES, 'si el clasificador y el motor se desparejan, las notas quedan con etiquetas que el motor no lee');
+  assert.equal(Object.keys(enElPrompt).length, 7);
+  assert.equal(Object.values(enElPrompt).flat().length, 38);
+});
+
+test('todo subtema oficial, dicho por la IA, deja a la nota en SU categoría (sin importar la categoría que haya dicho)', async () => {
+  const subtemas = [...TOPIC_TO_CATEGORY.keys()];
+  const reviews = subtemas.map((topic, i) => review(i, { category: 'Sociedad', topic, geoScope: 'Argentina' }));
+  const notas = await clasificar(reviews);
+  notas.forEach((n, i) => {
+    assert.equal(n.topic, subtemas[i], 'un subtema oficial se guarda tal cual, sin pasar por la normalización de etiquetas libres');
+    assert.ok(ALL_CATEGORIES.includes(n.category), `${n.topic}: ${n.category}`);
+    // (Política y Economía de otro país pasan a Internacional: acá todo es de Argentina, así que la categoría es la del subtema)
+    assert.equal(n.category, TOPIC_TO_CATEGORY.get(subtemas[i]));
+  });
 });

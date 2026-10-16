@@ -284,9 +284,11 @@ test('juez de tema: si ninguna dice SI hay rescate en el rubro, y las notas del 
   const rescate = nota({ category: 'Deportes', topic: 'Tenis', title: 'Nota del rubro', importanceScore: 60, publishedAt: hace(4) });
   const juezTema = juezTemaFalso(porId({}, 'NO'));
   const r = await correr(['river plate'], {
-    busqueda: busquedaFalsa({ 'river plate': [a, b, c], 'Deportes Argentina actualidad nacional': [rescate] }),
+    busqueda: busquedaFalsa({ 'river plate': [a, b, c] }),
+    docs: [rescate], // el rescate lee el rubro por etiqueta, no con otra búsqueda
     juezTema,
   });
+  assert.equal(r.busqueda.llamadas.length, 1, 'una sola búsqueda: la del tema');
   const x = r.resultados[0];
   assert.equal(x.article.url, rescate.url);
   assert.equal(x.usedFallback, true);
@@ -502,10 +504,8 @@ test('un tópico libre repetido se expande y se busca UNA vez, pero el digest ll
 test('si la búsqueda de un tópico falla, ese queda en error_busqueda (con su rescate) y los demás siguen', async () => {
   const boca = nota({ title: 'Boca empató' });
   const rescate = nota({ category: 'Sociedad', topic: 'Salud', importanceScore: 60 });
-  const busqueda = busquedaFalsa({
-    'river plate': new Error('Atlas caído'), boca: [boca], 'Sociedad Argentina actualidad nacional': [rescate],
-  });
-  const r = await correr(['river plate', 'boca'], { busqueda, juezTema: juezTemaFalso(() => 'SI') });
+  const busqueda = busquedaFalsa({ 'river plate': new Error('Atlas caído'), boca: [boca] });
+  const r = await correr(['river plate', 'boca'], { busqueda, docs: [rescate], juezTema: juezTemaFalso(() => 'SI') });
   assert.equal(r.resultados[0].matchReason, 'error_busqueda');
   assert.equal(r.resultados[0].article.url, rescate.url);
   assert.equal(r.resultados[0].usedFallback, true);

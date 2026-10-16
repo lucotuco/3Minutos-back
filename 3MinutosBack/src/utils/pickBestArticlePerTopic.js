@@ -1,9 +1,9 @@
 const { searchArticlesBySimilarityAtlas } = require('../embeddings/searchArticlesBySimilarityAtlas');
 const { selectBestCandidate, inferCorralCategory } = require('./topicMatching');
 const { MAX_ARTICLE_AGE_HOURS } = require('./freshness');
-const { resolveOfficialTopic } = require('./officialTopics');
-const { checkEligibility, rankEligible, hintLevel } = require('./eligibility');
-const { pickOfficialArticle, firstNotRepeated } = require('./officialPick');
+const { resolveOfficialTopic, ALL_CATEGORIES } = require('./officialTopics');
+const { checkEligibility, rankEligible, hintLevel, normalizeText } = require('./eligibility');
+const { pickOfficialArticle, pickRescueArticle, firstNotRepeated, withoutEmbedding } = require('./officialPick');
 const { JudgeSession, judgeWaitBudgetMs } = require('./llmJudge');
 const { createSameStoryJudge, PREFETCH_MAX_CANDIDATES } = require('./sameEventJudge');
 const { createTopicJudge, createTopicCheck } = require('./topicJudge');
@@ -35,6 +35,10 @@ const articleStore = require('./articleStore');
  *      de sus primeras candidatas.
  *   2. (en orden, como siempre) por cada tópico: elegir la nota con lo ya elegido para los anteriores. La elección es
  *      idéntica a hacerlo todo en fila; la fase 1 solo adelanta el trabajo de red.
+ *
+ * Si un tópico libre no encuentra nada, el RESCATE entrega una nota "sugerida" del mismo rubro (officialPick.js,
+ * pickRescueArticle: la misma que usan los subtemas oficiales): se lee por etiqueta, solo notas "buenas", y a igual
+ * calidad pasan primero las del subtema y la categoría que la IA sugirió al expandir el tópico.
  */
 
 // Cuántas veces perTopicLimit se pide a la búsqueda como ventana de candidatos (antes 2; ahora 30 con el límite por defecto).
@@ -44,6 +48,12 @@ const SEARCH_WINDOW_FACTOR = 3;
 // (userRoutes.normalizeTopics), así que nunca espera; el tope evita una ráfaga de decenas de llamadas a OpenAI y a Atlas si
 // alguien invoca el motor con una lista larga.
 const MAX_PARALLEL_FREE_TOPICS = 6;
+
+/** La categoría oficial que sugirió la IA al expandir el tópico (con su escritura exacta), o null. */
+function hintedCategory(expansion) {
+  const key = normalizeText(expansion?.cat);
+  return key ? (ALL_CATEGORIES.find((cat) => normalizeText(cat) === key) || null) : null;
+}
 
 /** loadDocs para firstNotRepeated en el camino libre: solo hace falta el embedding. */
 function embeddingLoader(store) {
@@ -115,7 +125,7 @@ async function startFreeTopic(topic, { expand, search, perTopicLimit, since, now
  * "misma historia" -> (si no queda nada) rescate dentro del rubro.
  */
 async function pickFreeTopic(trimmedTopic, prepared, {
-  perTopicLimit, now, usedUrls, seenEmbeddings, search, store, judge = null, topicJudge = null,
+  now, usedUrls, seenEmbeddings, store, judge = null, topicJudge = null,
 }) {
   const since = new Date(now - MAX_ARTICLE_AGE_HOURS * 3600e3);
   const ctx = { now, usedUrls };
@@ -194,33 +204,30 @@ async function pickFreeTopic(trimmedTopic, prepared, {
   }
 
   // ---------------------------------------------------------------- rescate dentro del rubro
-  console.log(`[RESCATE] No hubo resultados para "${trimmedTopic}". Activando rescate hibrido enfocado en categoria general...`);
+  console.log(`[RESCATE] No hubo resultados para "${trimmedTopic}". Buscando una nota buena del rubro...`);
   try {
-    // Rubro del rescate: el que votaron los candidatos del propio tema (sin listas manuales).
-    const emergencyCategory = out.corralCategory || 'Sociedad';
-    const emergencyQuery = `${emergencyCategory} Argentina actualidad nacional`;
+    // Rubro del rescate: el que votaron los candidatos del propio tema; si no hubo candidatos (o la búsqueda falló), la
+    // categoría que la IA sugirió al expandir el tema; y si tampoco, Sociedad.
+    const rescueCategory = out.corralCategory || hintedCategory(expansion) || 'Sociedad';
 
-    const emergencyCandidates = await search(emergencyQuery, emergencyQuery, {
-      limit: perTopicLimit * SEARCH_WINDOW_FACTOR,
-      minDate: since,
-      category: emergencyCategory,
-    });
+    // Solo valen notas de nivel "buena" (importancia >= 50). Se lee por etiqueta (como un tema oficial), no con una
+    // búsqueda: así el rescate anda aunque la búsqueda o OpenAI estén caídos y no hay consulta que sesgue el resultado.
+    const rescued = await pickRescueArticle(
+      { category: rescueCategory, hintOf: (a) => hintLevel(a, expansion) },
+      { ctx, since, seenEmbeddings, store, judge },
+    );
 
-    // En el rescate solo valen notas de nivel "buena" (importancia >= 50).
-    const { eligible } = rankEligible(emergencyCandidates, ctx, { goodOnly: true });
-    const found = await firstNotRepeated(eligible, { seenEmbeddings, loadDocs, needsDoc: false, judge });
-
-    if (found.hit) {
-      const { entry, embedding } = found.hit;
-      out.article = entry.article;
+    if (rescued.hit) {
+      const { entry, doc, embedding } = rescued.hit;
+      out.article = withoutEmbedding(doc);
       out.embedding = embedding;
       out.usedFallback = true;
-      out.fallbackCategory = entry.article.category || emergencyCategory;
+      out.fallbackCategory = out.article.category || rescueCategory;
       out.matchZone = 'RESCATE';
-      out.matchScore = entry.article.score ?? null;
+      out.matchScore = null; // sin búsqueda no hay puntaje de similitud con el tema
       out.tier = 'sugerida';
       out.ageHours = redondear(entry.ageHours);
-      console.log(`[RESCATE EXITOSO] Entregado: "${entry.article.title}"`);
+      console.log(`[RESCATE EXITOSO] Entregado: "${out.article.title}"`);
     }
   } catch (emergencyErr) {
     console.error(`Error en rescate de emergencia hibrido para "${trimmedTopic}":`, emergencyErr);
@@ -305,7 +312,7 @@ async function pickBestArticlePerTopic(topics = [], options = {}) {
       const prepared = await freeWork.get(trimmedTopic);
       queryExpanded = prepared.expansion.q;
       picked = await pickFreeTopic(trimmedTopic, prepared, {
-        perTopicLimit, now, usedUrls, seenEmbeddings: dynamicSeenEmbeddings, search, store, judge, topicJudge,
+        now, usedUrls, seenEmbeddings: dynamicSeenEmbeddings, store, judge, topicJudge,
       });
     }
 

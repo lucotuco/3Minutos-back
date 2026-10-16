@@ -16,6 +16,8 @@ const ARCHIVOS = {
   openai: 'config/openai.js',
   server: 'server.js',
   pick: 'utils/pickBestArticlePerTopic.js',
+  expansion: 'utils/topicExpansion.js',
+  jueces: 'utils/llmJudge.js',
   historial: 'utils/getAlreadyShownUrlsForUser.js',
   digest: 'utils/buildDigestForUser.js',
   busqueda: 'embeddings/searchArticlesBySimilarityAtlas.js',
@@ -52,8 +54,9 @@ function auditarFuentes(f) {
     detalle: 'Con 3 tópicos por digest son ~10 digests; un usuario que refresca seguido puede volver a ver notas (las notas viven 48 h). El escenario B lo mide.',
   });
 
-  // Con timeout y reintentos por pedido en las dos llamadas del camino del digest (expansión y embedding de la consulta), alcanza.
-  const caminoDelDigestAcotado = tiene(f.busqueda, /maxRetries/) && tiene(f.pick, /maxRetries/);
+  // Con timeout y reintentos por pedido en las llamadas del camino del digest (la expansión del tópico, el embedding de
+  // la consulta y las preguntas de los dos jueces con IA), alcanza.
+  const caminoDelDigestAcotado = tiene(f.busqueda, /maxRetries/) && tiene(f.expansion, /maxRetries/) && tiene(f.jueces, /maxRetries/);
   push(f.openai && !tiene(f.openai, /timeout|maxRetries/) && !caminoDelDigestAcotado, {
     id: 'S-OPENAI-SIN-TIMEOUT', severidad: 'MEDIA',
     titulo: 'Los clientes de OpenAI se crean sin timeout ni maxRetries',
@@ -71,12 +74,6 @@ function auditarFuentes(f) {
     id: 'S-CACHE-EXPANSION-SIN-LIMITE', severidad: 'BAJA',
     titulo: 'queryExpansionCache es un Map que solo crece',
     detalle: 'Cada tópico distinto queda guardado hasta reiniciar el proceso. Con tópicos libres escritos a mano la cantidad es acotada en la práctica; el soak (F) mide la pendiente.',
-  });
-
-  push(f.pick && tiene(f.pick, /actualidad nacional/), {
-    id: 'S-RESCATE-CONSULTA-FIJA', severidad: 'MEDIA',
-    titulo: 'El rescate de los temas libres usa una consulta fija por categoría ("<categoría> Argentina actualidad nacional")',
-    detalle: 'Todos los usuarios cuyo tema libre falla dentro de una categoría reciben la misma nota de relleno (la mejor "buena" de esa consulta), y la consulta mete "nacional" aunque el tópico no lo sea. Los escenarios A y B miden cuántos tópicos terminan en la misma nota.',
   });
 
   // Lo mismo vale para el motor (pickBestArticlePerTopic) y para la ingesta (la IA casi nunca devuelve "constructor", pero puede).

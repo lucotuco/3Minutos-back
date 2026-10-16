@@ -98,9 +98,10 @@ function busquedaFalsa(...respuestas) {
   return fn;
 }
 
-function expansionFalsa() {
+/** Expansión falsa: `${tema} expandido`, o la que se indique para ese tema (texto o { q, cat, sub }, como la IA real). */
+function expansionFalsa(porTema = {}) {
   const llamadas = [];
-  const fn = async (t) => { llamadas.push(t); return `${t} expandido`; };
+  const fn = async (t) => { llamadas.push(t); return porTema[t] ?? `${t} expandido`; };
   fn.llamadas = llamadas;
   return fn;
 }
@@ -108,9 +109,9 @@ function expansionFalsa() {
 // `juez: null` = sin juez de "misma historia" (solo el coseno); `juezTema: null` = sin juez de tema (el corral de
 // categoría descarta, como siempre). Los tests de cada juez pasan uno falso (mismaHistoria.test.js, temaLibre.test.js);
 // ninguno de estos tests puede llamar a OpenAI.
-async function correr(topics, { docs = [], busqueda = busquedaFalsa([]), historial = [], vistos = [], store = null, perTopicLimit = 10, juez = null, juezTema = null } = {}) {
+async function correr(topics, { docs = [], busqueda = busquedaFalsa([]), historial = [], vistos = [], store = null, perTopicLimit = 10, juez = null, juezTema = null, expansiones = {} } = {}) {
   const st = store || storeFalso(docs);
-  const expand = expansionFalsa();
+  const expand = expansionFalsa(expansiones);
   const resultados = await pickBestArticlePerTopic(topics, {
     perTopicLimit,
     alreadyShownUrls: historial,
@@ -440,8 +441,9 @@ test('tópicos vacíos o solo espacios se ignoran (y no desalinean los demás)',
 test('nombres de prototipo ("constructor", "__proto__") son tópicos libres, no oficiales', async () => {
   const r = await correr(['constructor', '__proto__', 'toString'], { busqueda: busquedaFalsa([]) });
   assert.equal(r.resultados.length, 3);
-  assert.equal(r.store.llamadas.list.length, 0, 'ninguno se leyó como oficial');
-  assert.deepEqual(r.expand.llamadas, ['constructor', '__proto__', 'toString']);
+  assert.deepEqual(r.expand.llamadas, ['constructor', '__proto__', 'toString'], 'los tres pasaron por la expansión: son libres');
+  assert.ok(r.store.llamadas.list.every((q) => q.topic === undefined && q.minImportance === 50),
+    'ninguno se leyó como oficial: solo hubo lecturas del rescate (categoría completa, notas buenas)');
   for (const x of r.resultados) assert.equal(x.article, null);
 });
 
@@ -547,32 +549,38 @@ test('libre: lo ya visto (URL o misma historia) se saltea y se entrega la siguie
 
 test('libre: sin ningún candidato válido hay rescate en el rubro, solo con notas buenas (>= 50)', async () => {
   const c = candidatosRiver();
-  const rescateFloja = nota({ category: 'Deportes', title: 'Nota del rubro', importanceScore: 45, publishedAt: hace(1) });
-  const rescateBuena = nota({ category: 'Deportes', title: 'Otra nota del rubro', importanceScore: 52, publishedAt: hace(5) });
-  const sinTema = [c.roja]; // 1 candidato rojo: no hay tema ni corral
-  const r = await correr(['river plate'], { busqueda: busquedaFalsa(sinTema, [rescateFloja, rescateBuena]) });
+  const floja = nota({ category: 'Sociedad', topic: 'Salud', title: 'Nota floja del rubro', importanceScore: 45, publishedAt: hace(1) });
+  const buena = nota({ category: 'Sociedad', topic: 'Salud', title: 'Otra nota del rubro', importanceScore: 52, publishedAt: hace(5) });
+  const sinTema = [c.roja]; // 1 candidato rojo: no hay tema, ni corral, ni pista de la IA
+  const r = await correr(['river plate'], {
+    busqueda: busquedaFalsa(sinTema),
+    store: storeFalso([floja, buena], { ignorarImportancia: true }), // el filtro de importancia lo hace el motor, no la lectura
+  });
   const x = r.resultados[0];
-  assert.equal(x.article.url, rescateBuena.url);
+  assert.equal(x.article.url, buena.url);
   assert.equal(x.usedFallback, true);
   assert.equal(x.matchZone, 'RESCATE');
   assert.equal(x.tier, 'sugerida');
+  assert.equal(x.matchScore, null, 'sin búsqueda no hay puntaje de similitud con el tema');
   assert.equal(x.matchReason, 'ningun_candidato_valido');
-  assert.equal(x.fallbackCategory, 'Deportes');
+  assert.equal(x.fallbackCategory, 'Sociedad');
+  assert.equal(x.ageHours, 5);
+  assert.equal(x.article.rawSummary, 'resumen de la nota', 'la nota llega completa (la bajada que lee la curación)');
+  assert.equal(x.article.embedding, undefined, 'pero sin el vector');
 
-  const segunda = r.busqueda.llamadas[1];
-  assert.equal(segunda.exacta, 'Sociedad Argentina actualidad nacional', 'sin corral inferido el rescate cae en Sociedad');
-  assert.equal(segunda.opts.category, 'Sociedad');
-  assert.equal(segunda.opts.limit, 30, 'el rescate también mira una ventana de 30 candidatos');
-  assert.equal(segunda.opts.minDate.getTime(), NOW - 24 * 3600e3);
+  // se lee por etiqueta (como un tema oficial): la categoría completa, solo buenas y de las últimas 24 h;
+  // la búsqueda se usó una sola vez (para el tema), no hay una segunda con una frase armada
+  assert.equal(r.busqueda.llamadas.length, 1);
+  assert.deepEqual(r.store.llamadas.list, [{ category: 'Sociedad', excludeTopic: null, minImportance: 50, since: new Date(NOW - 24 * 3600e3) }]);
 });
 
 test('libre: si el rescate solo tiene notas aceptables (40-49) queda el hueco', async () => {
   const c = candidatosRiver();
-  const aceptable = nota({ category: 'Deportes', title: 'Nota del rubro', importanceScore: 45, publishedAt: hace(1) });
-  const r = await correr(['river plate'], { busqueda: busquedaFalsa([c.roja], [aceptable]) });
+  const aceptable = nota({ category: 'Sociedad', title: 'Nota del rubro', importanceScore: 45, publishedAt: hace(1) });
+  const r = await correr(['river plate'], { busqueda: busquedaFalsa([c.roja]), store: storeFalso([aceptable], { ignorarImportancia: true }) });
   assert.equal(r.resultados[0].article, null, 'una aceptable no sirve de rescate: mejor un hueco');
   assert.equal(r.resultados[0].usedFallback, false);
-  assert.equal(r.busqueda.llamadas.length, 2, 'se intentó el rescate');
+  assert.equal(r.store.llamadas.list.length, 1, 'se intentó el rescate');
 });
 
 test('libre: dos tópicos con los mismos candidatos y sin embeddings no repiten la nota (la frena la URL)', async () => {
@@ -582,18 +590,87 @@ test('libre: dos tópicos con los mismos candidatos y sin embeddings no repiten 
   assert.notEqual(r.resultados[0].article.url, r.resultados[1].article.url);
 });
 
-test('libre: el rescate usa el corral que votaron los candidatos del propio tema', async () => {
+test('libre: el rescate usa el corral que votaron los candidatos del propio tema (no el de otra categoría, por más importante que sea)', async () => {
   const c = candidatosRiver();
   const todasVistas = [c.verdeVieja, c.amarillaFresca, c.amarilla2, c.amarilla3];
-  const rescate = nota({ category: 'Deportes', title: 'Algo del rubro', importanceScore: 60 });
+  const rescate = nota({ category: 'Deportes', topic: 'Tenis', title: 'Algo del rubro', importanceScore: 60 });
+  const otroRubro = nota({ category: 'Economía', topic: 'Dólar', title: 'Sube el dólar', importanceScore: 99 });
   const r = await correr(['river plate'], {
-    busqueda: busquedaFalsa(todasVistas, [rescate]),
+    busqueda: busquedaFalsa(todasVistas),
+    docs: [...todasVistas, rescate, otroRubro],
     historial: todasVistas.map((a) => a.url),
   });
-  assert.equal(r.busqueda.llamadas[1].exacta, 'Deportes Argentina actualidad nacional');
-  assert.equal(r.busqueda.llamadas[1].opts.category, 'Deportes');
+  assert.equal(r.store.llamadas.list[0].category, 'Deportes');
   assert.equal(r.resultados[0].article.url, rescate.url);
   assert.equal(r.resultados[0].corralCategory, 'Deportes');
+  assert.equal(r.resultados[0].fallbackCategory, 'Deportes');
+});
+
+test('libre: el corral de los candidatos manda sobre la categoría que sugirió la IA', async () => {
+  const c = candidatosRiver();
+  const todasVistas = [c.verdeVieja, c.amarillaFresca, c.amarilla2, c.amarilla3];
+  const deportes = nota({ category: 'Deportes', topic: 'Tenis', importanceScore: 60 });
+  const tecno = nota({ category: 'Tecnología', topic: 'Inteligencia Artificial', importanceScore: 99 });
+  const r = await correr(['river plate'], {
+    busqueda: busquedaFalsa(todasVistas),
+    docs: [deportes, tecno],
+    historial: todasVistas.map((a) => a.url),
+    expansiones: { 'river plate': { q: 'river plate ia', cat: 'Tecnología', sub: 'Inteligencia Artificial' } },
+  });
+  assert.equal(r.resultados[0].article.url, deportes.url);
+  assert.equal(r.store.llamadas.list[0].category, 'Deportes');
+});
+
+test('libre: sin candidatos que voten un rubro, el rescate usa la categoría que sugirió la IA al expandir el tema', async () => {
+  const tenis = nota({ category: 'Deportes', topic: 'Tenis', importanceScore: 60 });
+  const sociedad = nota({ category: 'Sociedad', topic: 'Salud', importanceScore: 99 });
+  const r = await correr(['zverev'], {
+    busqueda: busquedaFalsa([]),
+    docs: [tenis, sociedad],
+    expansiones: { zverev: { q: 'zverev tenis atp', cat: 'Deportes', sub: 'Tenis' } },
+  });
+  const x = r.resultados[0];
+  assert.equal(x.matchReason, 'sin_candidatos');
+  assert.equal(x.article.url, tenis.url, 'sin la pista habría caído en Sociedad');
+  assert.equal(x.fallbackCategory, 'Deportes');
+  assert.equal(r.store.llamadas.list[0].category, 'Deportes');
+
+  // una categoría que no existe en la taxonomía no sirve: Sociedad
+  const inventada = await correr(['zverev'], {
+    busqueda: busquedaFalsa([]),
+    docs: [tenis, sociedad],
+    expansiones: { zverev: { q: 'zverev', cat: 'Cosas raras', sub: '' } },
+  });
+  assert.equal(inventada.resultados[0].article.url, sociedad.url);
+  assert.equal(inventada.store.llamadas.list[0].category, 'Sociedad');
+
+  // la categoría de la IA se reconoce sin importar mayúsculas ni tildes, y se lee con su escritura oficial
+  const sinTildes = await correr(['zverev'], {
+    busqueda: busquedaFalsa([]),
+    docs: [nota({ category: 'Economía', topic: 'Dólar', importanceScore: 70 })],
+    expansiones: { zverev: { q: 'zverev', cat: 'economia', sub: '' } },
+  });
+  assert.equal(sinTildes.store.llamadas.list[0].category, 'Economía');
+  assert.ok(sinTildes.resultados[0].article);
+});
+
+test('libre: a igual calidad, el rescate prefiere el subtema y después la categoría que sugirió la IA', async () => {
+  const futbolFresca = nota({ category: 'Deportes', topic: 'Fútbol', importanceScore: 90, publishedAt: hace(1) });
+  const tenisMasVieja = nota({ category: 'Deportes', topic: 'Tenis', importanceScore: 55, publishedAt: hace(8) });
+  const expansiones = { zverev: { q: 'zverev tenis atp', cat: 'Deportes', sub: 'Tenis' } };
+
+  const conSubtema = await correr(['zverev'], { busqueda: busquedaFalsa([]), docs: [futbolFresca, tenisMasVieja], expansiones });
+  assert.equal(conSubtema.resultados[0].article.url, tenisMasVieja.url, 'el tenis, aunque el fútbol sea más fresco e importante');
+
+  const sinSubtema = await correr(['zverev'], { busqueda: busquedaFalsa([]), docs: [futbolFresca], expansiones });
+  assert.equal(sinSubtema.resultados[0].article.url, futbolFresca.url, 'sin notas de tenis, la mejor de la categoría');
+
+  // la pista ordena, no filtra ni pasa por encima de la calidad: una aceptable de tenis no le gana a una buena de fútbol
+  const tenisFloja = nota({ category: 'Deportes', topic: 'Tenis', importanceScore: 45, publishedAt: hace(1) });
+  const soloBuenas = await correr(['zverev'], {
+    busqueda: busquedaFalsa([]), store: storeFalso([futbolFresca, tenisFloja], { ignorarImportancia: true }), expansiones,
+  });
+  assert.equal(soloBuenas.resultados[0].article.url, futbolFresca.url);
 });
 
 test('libre: el rubro y el ancla del tema no dependen de lo que el usuario ya vio (votan las notas entregables en general)', async () => {
@@ -621,26 +698,72 @@ test('libre: una publicidad o una nota de otro país que nombra el tema no decid
   assert.equal(r.resultados[0].article.url, noticias[0].url);
 });
 
-test('libre: si la búsqueda falla se informa error_busqueda y se intenta el rescate', async () => {
+test('libre: si la búsqueda falla se informa error_busqueda y el rescate igual anda, porque no usa la búsqueda', async () => {
   const rescate = nota({ category: 'Sociedad', topic: 'Salud', importanceScore: 60 });
-  const r = await correr(['river plate'], { busqueda: busquedaFalsa(new Error('Atlas caído'), [rescate]) });
+  const r = await correr(['river plate'], { busqueda: busquedaFalsa(new Error('Atlas caído')), docs: [rescate] });
   assert.equal(r.resultados[0].matchReason, 'error_busqueda');
   assert.equal(r.resultados[0].usedFallback, true);
   assert.equal(r.resultados[0].article.url, rescate.url);
+  assert.equal(r.busqueda.llamadas.length, 1, 'no se vuelve a buscar: el rescate lee por etiqueta');
 
-  const todoCaido = await correr(['river plate'], { busqueda: busquedaFalsa(new Error('caído')) });
-  assert.equal(todoCaido.resultados[0].article, null);
-  assert.equal(todoCaido.resultados[0].matchReason, 'error_busqueda');
-  assert.equal(todoCaido.resultados[0].usedFallback, false);
+  // y con la pista de la IA, el rescate es de su rubro aunque la búsqueda no haya devuelto nada
+  const tenis = nota({ category: 'Deportes', topic: 'Tenis', importanceScore: 60 });
+  const conPista = await correr(['zverev'], {
+    busqueda: busquedaFalsa(new Error('Atlas caído')),
+    docs: [rescate, tenis],
+    expansiones: { zverev: { q: 'zverev tenis', cat: 'Deportes', sub: 'Tenis' } },
+  });
+  assert.equal(conPista.resultados[0].matchReason, 'error_busqueda');
+  assert.equal(conPista.resultados[0].article.url, tenis.url);
+
+  const sinNada = await correr(['river plate'], { busqueda: busquedaFalsa(new Error('caído')) });
+  assert.equal(sinNada.resultados[0].article, null);
+  assert.equal(sinNada.resultados[0].matchReason, 'error_busqueda');
+  assert.equal(sinNada.resultados[0].usedFallback, false);
 });
 
-test('libre: el rescate también respeta la elegibilidad (24 h, historial, país de Sociedad)', async () => {
+test('libre: si la lectura del rescate falla, queda el hueco y los demás tópicos siguen', async () => {
+  const boca = nota({ title: 'Boca empató', score: 0.9, importanceScore: 70, publishedAt: hace(2) });
+  const st = storeFalso([], { falla: 'Mongo caído' });
+  const r = await correr(['river plate', 'boca'], { busqueda: busquedaFalsa([], [boca]), store: st });
+  assert.equal(r.resultados.length, 2);
+  assert.equal(r.resultados[0].article, null, 'river plate: sin candidatos y sin poder leer el rescate');
+  assert.equal(r.resultados[0].usedFallback, false);
+  assert.equal(r.resultados[0].matchReason, 'sin_candidatos');
+  assert.equal(r.resultados[1].article.url, boca.url, 'boca no se entera');
+  assert.equal(r.resultados[1].usedFallback, false);
+});
+
+test('libre: el rescate también respeta la elegibilidad (24 h, historial, país de Sociedad, opinión)', async () => {
   const vieja = nota({ category: 'Sociedad', importanceScore: 90, publishedAt: hace(40) });
   const extranjera = nota({ category: 'Sociedad', geoScope: 'Colombia', importanceScore: 90 });
   const vista = nota({ category: 'Sociedad', importanceScore: 90 });
+  const columna = nota({ category: 'Sociedad', importanceScore: 90, contentType: 'opinion' });
   const buena = nota({ category: 'Sociedad', geoScope: 'Global', importanceScore: 51, publishedAt: hace(20) });
-  const r = await correr(['qzxvbnm'], { busqueda: busquedaFalsa([], [vieja, extranjera, vista, buena]), historial: [vista.url] });
+  const r = await correr(['qzxvbnm'], {
+    busqueda: busquedaFalsa([]),
+    store: storeFalso([vieja, extranjera, vista, columna, buena], { ignorarDesde: true }),
+    historial: [vista.url],
+  });
   assert.equal(r.resultados[0].article.url, buena.url);
+});
+
+test('libre: el rescate no entrega la misma historia que algo ya visto', async () => {
+  const repetida = nota({ category: 'Sociedad', importanceScore: 90, embedding: conCoseno(0.95) });
+  const otra = nota({ category: 'Sociedad', importanceScore: 60, embedding: conCoseno(0.1) });
+  const vistos = [{ title: 'ya la vio', vector: [1, 0] }];
+  const r = await correr(['qzxvbnm'], { busqueda: busquedaFalsa([]), docs: [repetida, otra], vistos });
+  assert.equal(r.resultados[0].article.url, otra.url);
+  assert.equal(r.resultados[0].usedFallback, true);
+});
+
+test('libre: dos tópicos que caen en rescate no reciben la misma nota, ni la misma historia', async () => {
+  const mejor = nota({ category: 'Sociedad', importanceScore: 90, embedding: conCoseno(0.2) });
+  const mismaHistoria = nota({ category: 'Sociedad', importanceScore: 80, embedding: conCoseno(0.2) });
+  const otra = nota({ category: 'Sociedad', importanceScore: 60, embedding: conCoseno(0.9) });
+  const r = await correr(['qzxvbnm', 'plmokn'], { busqueda: busquedaFalsa([]), docs: [mejor, mismaHistoria, otra] });
+  assert.deepEqual(urls(r), [mejor.url, otra.url], 'el segundo se queda con la siguiente que no cuenta lo mismo');
+  assert.ok(r.resultados.every((x) => x.usedFallback));
 });
 
 test('mezcla: oficial y libre en un mismo digest, sin repetir nota', async () => {

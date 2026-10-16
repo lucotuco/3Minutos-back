@@ -14,6 +14,7 @@
  *      o entre 0,80 y 0,88 si el juez de sameEventJudge.js dice que cuenta el mismo hecho)
  *   4. si no queda ninguna y el tópico es un SUBTEMA: rescate = misma categoría, importancia >= 50,
  *      marcada como "sugerida" (usedFallback). Las categorías no tienen rescate: cualquier nota de la categoría ya vale.
+ *      El rescate (pickRescueArticle) es el mismo para los temas libres (pickBestArticlePerTopic.js).
  *   5. si tampoco hay: sin nota (mejor un hueco que una mala).
  *
  * El acceso a Mongo llega por `store` (articleStore.js), así esto se prueba con datos falsos.
@@ -137,6 +138,32 @@ function withoutEmbedding(doc) {
 }
 
 /**
+ * Rescate dentro del rubro: la mejor nota "buena" (importancia >= 50) de la categoría que no sea la misma historia que
+ * algo visto. Se lee por etiqueta, igual que un tema oficial: sin búsqueda por significado, sin embedding de consulta y
+ * sin IA más que el juez de misma historia, así que anda aunque la búsqueda o OpenAI estén caídos.
+ *
+ * @param {object} rubro
+ * @param {string} rubro.category            categoría oficial en la que se busca
+ * @param {string|null} [rubro.excludeTopic] subtema que no se mira (el del tópico que no encontró nada)
+ * @param {((a:object)=>number)|null} [rubro.hintOf] pista de orden (eligibility.hintLevel): las notas del subtema o de
+ *                                           la categoría que sugirió la IA pasan primero, a igual nivel de calidad
+ * @param {object} p
+ * @param {{now:number, usedUrls:Set<string>}} p.ctx  igual que checkEligibility
+ * @param {Date} p.since
+ * @param {{id?:string, title?:string, lead?:string, vector:number[]}[]} p.seenEmbeddings
+ * @param {object} p.store  articleStore (o uno falso)
+ * @param {object|null} [p.judge]
+ * @returns {Promise<{hit:object|null, examined:number, skipped:object[], listed:number}>}
+ *   hit = { entry, doc (completo, con embedding), embedding, topicVerdict } como firstNotRepeated; listed = notas leídas
+ */
+async function pickRescueArticle({ category, excludeTopic = null, hintOf = null }, { ctx, since, seenEmbeddings = [], store, judge = null }) {
+  const near = await store.listCandidates({ category, excludeTopic, minImportance: IMPORTANCE_GOOD_MIN, since });
+  const ranked = rankEligible(near, ctx, { goodOnly: true, hintOf });
+  const found = await firstNotRepeated(ranked.eligible, { seenEmbeddings, loadDocs: store.loadFull, needsDoc: true, judge });
+  return { ...found, listed: near.length };
+}
+
+/**
  * @param {{kind:'category'|'subtopic', name:string, category:string}} official  salida de resolveOfficialTopic
  * @param {object} p
  * @param {number} [p.now]
@@ -196,14 +223,9 @@ async function pickOfficialArticle(official, { now = Date.now(), usedUrls = new 
   // ---------------------------------------------------------------- 2) rescate (solo subtemas)
   if (official.kind !== 'subtopic') return out;
 
-  const near = await store.listCandidates({
-    category: official.category,
-    excludeTopic: official.name,
-    minImportance: IMPORTANCE_GOOD_MIN,
-    since,
+  const foundNear = await pickRescueArticle({ category: official.category, excludeTopic: official.name }, {
+    ctx, since, seenEmbeddings, store, judge,
   });
-  const rankedNear = rankEligible(near, ctx, { goodOnly: true });
-  const foundNear = await firstNotRepeated(rankedNear.eligible, { seenEmbeddings, loadDocs: store.loadFull, needsDoc: true, judge });
 
   if (foundNear.hit) {
     const { entry, doc, embedding } = foundNear.hit;
@@ -224,5 +246,7 @@ module.exports = {
   BATCH_SIZE,
   MAX_BATCHES,
   firstNotRepeated,
+  pickRescueArticle,
   pickOfficialArticle,
+  withoutEmbedding,
 };

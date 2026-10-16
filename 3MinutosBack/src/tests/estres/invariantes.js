@@ -18,9 +18,13 @@ const { coseno, similitudTitulos } = require('./estadisticas');
 const ZONAS = new Set(['ETIQUETA', 'VERDE', 'AMARILLA', 'RESCATE']);
 const CAUSAS_RESCATE = new Set(['sin_candidatos', 'ningun_candidato_valido', 'error_busqueda']);
 const NIVELES = new Set(['buena', 'aceptable', 'sugerida']);
-// Espejo de OPINION_KEYWORDS en utils/eligibility.js (a propósito independiente: así el test no coincide
-// con el motor por construcción. Si cambia allá, actualizar acá).
-const OPINION = ['opinion', 'columna', 'columnista', 'editorial', 'analisis'];
+// Espejo de la regla de opinión / publicidad de utils/eligibility.js, escrito aparte a propósito (así el test no
+// coincide con el motor por construcción: si el motor se equivoca, este chequeo no se equivoca igual). Si la regla
+// cambia allá, actualizar acá. Se compara por palabra COMPLETA, nunca por "contiene".
+const SEGMENTOS_OPINION = new Set(['opinion', 'opiniones', 'columna', 'columnas', 'columnista', 'columnistas', 'editorial', 'editoriales', 'cartas-al-pais', 'ambito-debate']);
+const SEGMENTOS_PUBLICIDAD = new Set(['inhouse']);
+const ETIQUETAS_OPINION = new Set(['opinion', 'columna', 'editorial', 'columnista', 'columna de opinion']);
+const MARCA_DE_TITULO = /^(opinion|columna|editorial|analisis)\s*[:|\-–—]/;
 // Sociedad solo admite notas de Argentina o de alcance Global (espejo de la regla de eligibility.js).
 const ALCANCES_LOCALES = new Set(['argentina', 'global']);
 
@@ -46,10 +50,24 @@ function mencionaAlguna(topic, a) {
   return palabras.some((p) => tokens.has(p));
 }
 
+/** Carpetas de la ruta de la URL (sin el host ni la última parte, que es el título de la nota). */
+function carpetasDeUrl(url) {
+  const sinHost = String(url || '').replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, '').split(/[?#]/)[0];
+  const partes = sinHost.split('/').filter(Boolean).map((p) => {
+    try { return norm(decodeURIComponent(p)); } catch { return norm(p); }
+  });
+  return partes.length > 1 ? partes.slice(0, -1) : partes;
+}
+
 function esOpinion(a) {
-  if (/\/opinion(es)?\//i.test(String(a?.url || ''))) return true;
-  const campos = [a?.section, a?.category, a?.title, ...(Array.isArray(a?.tags) ? a.tags : [])];
-  return campos.some((c) => OPINION.some((k) => norm(c).includes(k)));
+  if (carpetasDeUrl(a?.url).some((p) => SEGMENTOS_OPINION.has(p))) return true;
+  const etiquetas = [a?.section, a?.topic, ...(Array.isArray(a?.tags) ? a.tags : [])];
+  if (etiquetas.some((e) => ETIQUETAS_OPINION.has(norm(e)))) return true;
+  return MARCA_DE_TITULO.test(norm(a?.title));
+}
+
+function esPublicidad(a) {
+  return carpetasDeUrl(a?.url).some((p) => SEGMENTOS_PUBLICIDAD.has(p));
 }
 
 function edadHoras(a, ahora) {
@@ -122,7 +140,8 @@ function chequearNota(r, a, ahora, add, esperado = {}) {
     if (typeof a.score !== 'number' || !Number.isFinite(a.score) || a.score < 0 || a.score > 1) add('I10-SCORE', 'MEDIA', `score fuera de [0,1]: ${a.score}`);
     if (typeof a.finalScore !== 'number' || !Number.isFinite(a.finalScore)) add('I10-SCORE', 'MEDIA', 'finalScore no numérico');
   }
-  if (esOpinion(a)) add('I6b-OPINION', 'MEDIA', 'se entregó una nota de opinión/columna/análisis');
+  if (esOpinion(a)) add('I6b-OPINION', 'MEDIA', `se entregó una nota de opinión/columna: ${String(a.url || a.title).slice(0, 90)}`);
+  if (esPublicidad(a)) add('I6c-PUBLICIDAD', 'ALTA', `se entregó contenido patrocinado: ${String(a.url).slice(0, 90)}`);
   if (isPreviewOrAgenda(a.title)) add('I15-PREVIA', 'ALTA', `se entregó una previa/agenda/en vivo: "${String(a.title).slice(0, 70)}"`);
 
   const h = edadHoras(a, ahora);
@@ -270,6 +289,6 @@ function paresCasiDuplicados(notas, { vectores = null } = {}) {
 }
 
 module.exports = {
-  clasificar, tokensDe, mencionaAlguna, esOpinion, edadHoras, resumenArticulo,
+  clasificar, tokensDe, mencionaAlguna, esOpinion, esPublicidad, edadHoras, resumenArticulo,
   verificarResultado, verificarLlamada, paresCasiDuplicados,
 };

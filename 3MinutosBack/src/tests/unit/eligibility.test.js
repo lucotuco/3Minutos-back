@@ -10,8 +10,8 @@ const assert = require('node:assert/strict');
 
 const {
   IMPORTANCE_GOOD_MIN, IMPORTANCE_ACCEPTABLE_MIN, SAME_STORY_COSINE, TIER,
-  cosine, ageHoursOf, tierOf, ageBandOf, isOpinionArticle, isForeignInLocalCategory,
-  findSameStory, mostSimilarSeen, checkEligibility, compareCandidates, rankEligible,
+  cosine, ageHoursOf, tierOf, ageBandOf, isOpinionArticle, isAdvertisingArticle, isForeignInLocalCategory,
+  OPINION_URL_SEGMENTS, ADVERTISING_URL_SEGMENTS, findSameStory, mostSimilarSeen, checkEligibility, compareCandidates, rankEligible,
 } = require('../../utils/eligibility');
 
 const NOW = Date.parse('2026-10-15T12:00:00.000Z');
@@ -155,15 +155,110 @@ test('Política y Economía tampoco: la ingesta ya manda a Internacional lo que 
 
 // ---------------------------------------------------------------- opinión y previas
 
-test('opinión: por URL, sección, categoría, tags o título', () => {
-  assert.equal(isOpinionArticle(nota({ url: 'https://medio.test/opinion/columna-1' })), true);
-  assert.equal(isOpinionArticle(nota({ url: 'https://medio.test/opiniones/x' })), true);
+test('opinión: se reconoce por el segmento de la URL (las secciones reales de los medios)', () => {
+  const urls = [
+    'https://medio.test/opinion/columna-1',
+    'https://medio.test/opiniones/x',
+    'https://www.perfil.com/noticias/columnistas/es-la-democracia-estupido.phtml',     // se coló en Política (Perfil)
+    'https://www.cronista.com/columnistas/inflacion-y-dolar/',
+    'https://www.ambito.com/ambito-debate/el-modelo-de-pais-n5900000',
+    'https://www.clarin.com/cartas-al-pais/cartas-de-lectores_0_abc.html',
+    'https://www.lanacion.com.ar/editoriales/titulo-nid15102026/',
+    'https://www.clarin.com/OPINION/Titulo_0_abc.html',                                 // mayúsculas
+    'https://www.lanacion.com.ar/opini%C3%B3n/titulo-nid1/',                            // acento codificado
+  ];
+  for (const url of urls) assert.equal(isOpinionArticle(nota({ url })), true, url);
+  assert.deepEqual(checkEligibility(nota({ url: 'https://medio.test/columnistas/x/nota' }), ctx()).reasons, ['opinion']);
+});
+
+test('opinión: el segmento tiene que ser la palabra entera, y no cuenta la última parte (el título de la nota)', () => {
+  const urls = [
+    'https://www.clarin.com/politica/columnistas-de-la-semana_0_abc.html',   // el título contiene la palabra
+    'https://medio.test/politica/editorial-planeta-lanzo-su-catalogo',
+    'https://medio.test/politica/editorial-de-la-semana/nota-1',             // carpeta que contiene la palabra, no es la palabra
+    'https://medio.test/sociedad/analisis-de-sangre',
+    'https://www.perfil.com/noticias/empresas-y-protagonistas/aysa.phtml',   // sección mixta: no se bloquea por URL
+    'https://medio.test/politica/nota?ref=/opinion/',                        // la palabra en el query no es una sección
+    'https://medio.test/politica/nota#opinion',
+    'https://medio.test/opinion',                                            // una sola parte: es la portada de la sección
+    'https://medio.test/sociedad/editorial',                                 // la última parte es el título de la nota, aunque sea la palabra
+  ];
+  const esperado = [false, false, false, false, false, false, false, true, false];
+  urls.forEach((url, i) => assert.equal(isOpinionArticle(nota({ url })), esperado[i], url));
+});
+
+test('opinión: también funciona con rutas relativas, URLs raras y acentos mal codificados', () => {
+  assert.equal(isOpinionArticle(nota({ url: '/opinion/algo/nota' })), true);
+  assert.equal(isOpinionArticle(nota({ url: 'medio.test/columnistas/fulano/nota' })), true);
+  assert.equal(isOpinionArticle(nota({ url: 'https://medio.test/opini%ZZn/nota' })), false, 'un % mal formado no rompe nada');
+  assert.equal(isOpinionArticle(nota({ url: 'https://medio.test/opini%C3%B3n/nota' })), true);
+  assert.equal(isOpinionArticle(nota({ url: 'no es una url' })), false);
+  assert.equal(isOpinionArticle(nota({ url: undefined })), false);
+});
+
+test('opinión: etiquetas, sección y subtema solo cuentan si SON la palabra', () => {
   assert.equal(isOpinionArticle(nota({ section: 'Opinión' })), true);
-  assert.equal(isOpinionArticle(nota({ category: 'Opinion' })), true);
+  assert.equal(isOpinionArticle(nota({ topic: 'Columna de opinión' })), true);
   assert.equal(isOpinionArticle(nota({ tags: ['política', 'Columnista'] })), true);
-  assert.equal(isOpinionArticle(nota({ title: 'Análisis: qué viene después del dólar' })), true);
-  assert.equal(isOpinionArticle(nota()), false);
+  assert.equal(isOpinionArticle(nota({ tags: ['editorial'] })), true);
   assert.deepEqual(checkEligibility(nota({ section: 'opinion' }), ctx()).reasons, ['opinion']);
+  // Contienen la palabra pero hablan de otra cosa.
+  assert.equal(isOpinionArticle(nota({ tags: ['opinión pública', 'editorial planeta', 'columnas de humo'] })), false);
+  assert.equal(isOpinionArticle(nota({ topic: 'Opinión pública' })), false);
+  assert.equal(isOpinionArticle(nota({ section: 'Análisis de datos' })), false);
+});
+
+test('opinión: la categoría no se mira (es una lista fija: nunca es "Opinión")', () => {
+  assert.equal(isOpinionArticle(nota({ category: 'Opinion' })), false);
+});
+
+test('opinión: una marca de género al principio del título alcanza', () => {
+  for (const title of [
+    'Análisis: qué viene después del dólar',
+    'Opinión: por qué sube la inflación',
+    'OPINIÓN | El país que viene',
+    'Columna - Lo que dejó la marcha',
+    'Editorial: la deuda y el futuro',
+    'Análisis – el mapa del Congreso',
+  ]) {
+    assert.equal(isOpinionArticle(nota({ title })), true, title);
+  }
+});
+
+test('opinión: una nota que solo CONTIENE la palabra no es opinión (falsos positivos del criterio anterior)', () => {
+  for (const title of [
+    'Análisis de sangre: qué mide cada valor',
+    'La opinión pública y la inflación',
+    'Editorial Planeta lanzó su catálogo de otoño',
+    'Columnas de humo sobre la Casa Rosada',
+    'Según un análisis del INDEC, la inflación bajó',
+    'El editorial de The Economist sobre Milei',
+    'Opinión pública: la imagen del Gobierno cae',
+    'Nuevo análisis: Boca y River',
+  ]) {
+    assert.equal(isOpinionArticle(nota({ title })), false, title);
+  }
+  assert.equal(isOpinionArticle(nota()), false);
+  assert.equal(isOpinionArticle({}), false);
+  assert.equal(isOpinionArticle(nota({ url: '' })), false);
+});
+
+test('publicidad: el contenido patrocinado de Infobae (/inhouse/) se descarta con su propio motivo', () => {
+  const url = 'https://www.infobae.com/inhouse/2026/10/13/la-experiencia-que-transforma-a-las-empresas/';
+  assert.equal(isAdvertisingArticle(nota({ url })), true);
+  assert.equal(isOpinionArticle(nota({ url })), false);
+  assert.deepEqual(checkEligibility(nota({ url }), ctx()).reasons, ['publicidad']);
+  assert.equal(isAdvertisingArticle(nota({ url: 'https://www.infobae.com/politica/2026/10/13/nota/' })), false);
+  assert.equal(isAdvertisingArticle(nota({ url: 'https://medio.test/politica/inhouse-lo-que-sea' })), false);
+  assert.equal(isAdvertisingArticle({}), false);
+});
+
+test('las listas de segmentos son las acordadas', () => {
+  assert.deepEqual([...OPINION_URL_SEGMENTS].sort(), [
+    'ambito-debate', 'cartas-al-pais', 'columna', 'columnas', 'columnista', 'columnistas',
+    'editorial', 'editoriales', 'opinion', 'opiniones',
+  ]);
+  assert.deepEqual([...ADVERTISING_URL_SEGMENTS], ['inhouse']);
 });
 
 test('previas, agenda y "en vivo" se descartan', () => {

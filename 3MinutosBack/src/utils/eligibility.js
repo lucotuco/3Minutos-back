@@ -11,7 +11,8 @@
  *   1. vigente        publishedAt dentro de MAX_ARTICLE_AGE_HOURS (24 h) y con fecha creíble
  *   2. sustancia      importanceScore >= 40 (>= 50 = "buena", 40-49 = "aceptable")
  *   3. país           en Sociedad, geoScope Argentina o Global (Política/Economía ya lo garantiza la ingesta)
- *   4. no opinión     ni columnas/editoriales/análisis
+ *   4. no opinión     ni columnas ni editoriales (por la URL, el título, las etiquetas o el tipo que dijo la IA)
+ *      ni publicidad  ni contenido patrocinado ("In House") ni notas de servicio (tutoriales, "dónde ver", recetas)
  *   5. no previa      ni agenda ni "en vivo" ni minuto a minuto
  *   6. no repetida    URL no vista, y no es "la misma historia" que algo visto en 48 h ni que algo ya elegido
  *
@@ -42,7 +43,23 @@ const TIER = Object.freeze({ GOOD: 'buena', ACCEPTABLE: 'aceptable' });
 const TIER_RANK = { [TIER.GOOD]: 0, [TIER.ACCEPTABLE]: 1 };
 const ZONE_RANK = { VERDE: 0, AMARILLA: 1 };
 
-const OPINION_KEYWORDS = ['opinion', 'opinión', 'columna', 'columnista', 'editorial', 'analisis', 'análisis'];
+// Opinión y publicidad se reconocen por PALABRA COMPLETA, nunca por "contiene": con "contiene", un título como
+// "Análisis de sangre: qué mide", "La opinión pública y la inflación" o "Editorial Planeta lanzó..." quedaba
+// descartado, y a la vez no se reconocía "/columnistas/" porque nadie había pensado en esa palabra.
+
+// Segmentos de la ruta de la URL (igualdad exacta con el segmento entero, sin la última parte, que es el
+// título de la nota). Salen de las notas que de verdad se colaron en los reportes: /columnistas/ (Perfil, El
+// Cronista), /ambito-debate/ (Ámbito), /cartas-al-pais/ (Clarín).
+const OPINION_URL_SEGMENTS = new Set([
+  'opinion', 'opiniones', 'columna', 'columnas', 'columnista', 'columnistas',
+  'editorial', 'editoriales', 'cartas-al-pais', 'ambito-debate',
+]);
+// Contenido pago de un anunciante, presentado como nota (Infobae lo publica bajo /inhouse/).
+const ADVERTISING_URL_SEGMENTS = new Set(['inhouse']);
+// Etiquetas, sección y subtema: solo si SON la palabra (la IA etiqueta "opinión", no "opinión pública").
+const OPINION_LABELS = new Set(['opinion', 'columna', 'editorial', 'columnista', 'columna de opinion']);
+// Marca de género al principio del título: "Opinión: ...", "Columna | ...", "Análisis - ...".
+const OPINION_TITLE_MARKER = /^(?:opinion|columna|editorial|analisis)\s*[:|\-–—]/;
 
 // ---------------------------------------------------------------- utilidades
 function normalizeText(value) {
@@ -94,21 +111,38 @@ function ageBandOf(ageHours) {
   return ageHours <= IDEAL_ARTICLE_AGE_HOURS ? 'ideal' : 'valida';
 }
 
-// ---------------------------------------------------------------- opinión
-function includesOpinionKeyword(value) {
-  const normalized = normalizeText(value);
-  return OPINION_KEYWORDS.some((kw) => normalized.includes(normalizeText(kw)));
+// ---------------------------------------------------------------- opinión y publicidad
+/** Segmentos de la ruta de una URL, sin acentos ni mayúsculas, sin el último (el título de la nota). */
+function urlSectionSegments(rawUrl) {
+  const raw = String(rawUrl || '').trim();
+  if (!raw) return [];
+  let path;
+  try {
+    path = new URL(raw).pathname;
+  } catch {
+    path = raw.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, '').split(/[?#]/)[0];
+  }
+  const segments = path.split('/').filter(Boolean).map((segment) => {
+    let decoded = segment;
+    try { decoded = decodeURIComponent(segment); } catch { /* segmento con % mal formado: se compara tal cual */ }
+    return normalizeText(decoded);
+  });
+  return segments.length > 1 ? segments.slice(0, -1) : segments;
 }
 
 function isOpinionArticle(article = {}) {
-  const url = normalizeText(article.url);
+  if (urlSectionSegments(article.url).some((segment) => OPINION_URL_SEGMENTS.has(segment))) return true;
+  // La sección solo existe si el adaptador la completa (hoy ninguno); la categoría es una lista fija y no se mira.
+  if (OPINION_LABELS.has(normalizeText(article.section))) return true;
+  if (OPINION_LABELS.has(normalizeText(article.topic))) return true;
   const tags = Array.isArray(article.tags) ? article.tags : [];
+  if (tags.some((tag) => OPINION_LABELS.has(normalizeText(tag)))) return true;
+  return OPINION_TITLE_MARKER.test(normalizeText(article.title));
+}
 
-  if (url.includes('/opiniones/') || url.includes('/opinion/')) return true;
-  if (includesOpinionKeyword(article.section) || includesOpinionKeyword(article.category)) return true;
-  if (tags.some((tag) => includesOpinionKeyword(tag))) return true;
-  if (includesOpinionKeyword(article.title)) return true;
-  return false;
+/** true si la nota es contenido patrocinado presentado como nota. */
+function isAdvertisingArticle(article = {}) {
+  return urlSectionSegments(article.url).some((segment) => ADVERTISING_URL_SEGMENTS.has(segment));
 }
 
 // ---------------------------------------------------------------- país
@@ -170,6 +204,7 @@ function checkEligibility(article, { now = Date.now(), usedUrls = new Set() } = 
   if (!tier) reasons.push('importancia_baja');
   if (isForeignInLocalCategory(article)) reasons.push('otro_pais');
   if (isOpinionArticle(article)) reasons.push('opinion');
+  if (isAdvertisingArticle(article)) reasons.push('publicidad');
   if (isPreviewOrAgenda(article?.title)) reasons.push('previa_o_agenda');
 
   return {
@@ -256,7 +291,8 @@ module.exports = {
   HISTORY_MAX_NOTES,
   LOCAL_ONLY_CATEGORIES,
   TIER,
-  OPINION_KEYWORDS,
+  OPINION_URL_SEGMENTS,
+  ADVERTISING_URL_SEGMENTS,
   normalizeText,
   cosine,
   ageHoursOf,
@@ -264,6 +300,7 @@ module.exports = {
   tierOf,
   ageBandOf,
   isOpinionArticle,
+  isAdvertisingArticle,
   isForeignInLocalCategory,
   mostSimilarSeen,
   findSameStory,

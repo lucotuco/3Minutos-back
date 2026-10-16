@@ -13,6 +13,8 @@
  * de nombres propios ni de equipos.
  */
 
+const { toPlainText } = require('./plainText');
+
 const VERDE_MIN = 0.94;
 const AMARILLA_MIN = 0.80;
 
@@ -60,10 +62,12 @@ function topicWords(topic) {
 }
 
 function articleTokenSet(article) {
+  // El resumen se limpia antes de partirlo en palabras: en una nota guardada con HTML, "auth", "smart", "width",
+  // "height" o "div" contaban como palabras de la nota (y "composici" / "xf3" como trozos de una palabra con tilde).
   const text = [
     article?.title,
-    article?.rawSummary,
-    article?.contentSnippet,
+    toPlainText(article?.rawSummary),
+    toPlainText(article?.contentSnippet),
     ...(Array.isArray(article?.tags) ? article.tags : []),
   ].join(' ');
   return new Set(tokenize(text));

@@ -1,4 +1,9 @@
 const { normalizeText } = require('../../utils/normalizeText');
+const { pickReadableText } = require('../../utils/plainText');
+
+// Un campo del feed cuenta como "texto de la nota" si, ya limpio, tiene al menos esto. Un campo que es solo una
+// imagen (<img .../>) o una volanta de pocas letras no alcanza y se pasa al siguiente.
+const MIN_READABLE_CHARS = 40;
 
 const FALLBACK_IMAGE_URL = 'https://st2.depositphotos.com/1036149/5381/i/950/depositphotos_53811511-stock-illustration-duck-with-sunglasses.jpg'; 
 
@@ -93,15 +98,23 @@ function extractImage(item = {}) {
   return FALLBACK_IMAGE_URL;
 }
 
+/**
+ * Resumen de la nota como TEXTO PLANO. Se prefiere el mismo campo de siempre (content, content:encoded,
+ * contentSnippet, summary, description), pero se elige el primero que tenga texto legible: en Infobae y
+ * Perfil el campo principal empieza con una imagen y, sin esto, el resumen quedaba como una etiqueta <img>.
+ */
 function extractSummary(item = {}) {
-  return (
-    item.content ||
-    item['content:encoded'] ||
-    item.contentSnippet ||
-    item.summary ||
-    item.description ||
-    ''
-  );
+  return pickReadableText(
+    [item.content, item['content:encoded'], item.contentSnippet, item.summary, item.description],
+    { minChars: MIN_READABLE_CHARS },
+  ).text;
+}
+
+function extractSnippet(item = {}) {
+  return pickReadableText(
+    [item.contentSnippet, item.summary, item.description],
+    { minChars: MIN_READABLE_CHARS },
+  ).text;
 }
 
 function adaptRssArticle(item = {}, source = {}) {
@@ -122,7 +135,7 @@ function adaptRssArticle(item = {}, source = {}) {
     author: item.creator || item.author || '',
     rawSummary,
     imageUrl: extractImage(item),
-    contentSnippet: item.contentSnippet || item.summary || item.description || '',
+    contentSnippet: extractSnippet(item),
     normalizedTitle: normalizeText(title),
     _sourceMeta: {
       type: 'rss',
@@ -134,4 +147,5 @@ function adaptRssArticle(item = {}, source = {}) {
 
 module.exports = {
   adaptRssArticle,
+  MIN_READABLE_CHARS,
 };

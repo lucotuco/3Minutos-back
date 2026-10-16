@@ -85,3 +85,63 @@ test('una categoría que no existe cae en Sociedad', async () => {
   const [n] = await clasificar([review(0, { category: 'Inventada', topic: 'Cosas' })]);
   assert.equal(n.category, 'Sociedad');
 });
+
+// ---------------------------------------------------------------- lo que ve la IA
+/** Clasifica `notas` y devuelve el arreglo de artículos que se le mandó a la IA (leído del prompt). */
+async function payloadEnviado(notas) {
+  let llamada = null;
+  instalarStub('config/openai.js', {
+    OPENAI_MODEL: 'test',
+    openaiReview: {
+      responses: {
+        parse: async (args) => {
+          llamada = args;
+          return { output_parsed: { reviews: notas.map((_, i) => review(i)) } };
+        },
+      },
+    },
+  });
+  instalarStub('models/GlobalContext.js', { findOne: () => ({ sort: async () => null }) });
+
+  const archivo = require.resolve(path.join(SRC, 'ingestion', 'reviewArticlesWithAIBatch.js'));
+  delete require.cache[archivo];
+  const { reviewArticlesWithAIBatch, CLASSIFIER_SUMMARY_CHARS } = require(archivo);
+  await reviewArticlesWithAIBatch(notas);
+
+  const usuario = llamada.input.find((m) => m.role === 'user').content;
+  const json = usuario.slice(usuario.indexOf('Artículos a evaluar:') + 'Artículos a evaluar:'.length);
+  return { payload: JSON.parse(json), limite: CLASSIFIER_SUMMARY_CHARS };
+}
+
+const IMG = '<img src="https://www.infobae.com/resizer/v2/ABC.JPG?auth=a88d0a4bfa9ededd841c0af6e98a2bb32dc89f9ba759588dd73a4df394d13ed8&smart=true&width=4000&height=2668" alt="" height="2668" width="4000"/>';
+
+test('la IA recibe 600 caracteres de resumen en texto plano (antes eran 150 de HTML crudo)', async () => {
+  const cuerpo = 'El dólar abrió este viernes con compras de reservas del Banco Central y una jornada de mucha volatilidad. '.repeat(12);
+  const { payload, limite } = await payloadEnviado([
+    { title: 'Dólar hoy', sourceName: 'Infobae', rawSummary: `${IMG}<p>${cuerpo}</p>` },
+  ]);
+  assert.equal(limite, 600);
+  const resumen = payload[0].summary;
+  assert.ok(resumen.startsWith('El dólar abrió este viernes'), `empieza por el texto de la nota, no por la imagen: ${resumen.slice(0, 60)}`);
+  assert.ok(resumen.endsWith('...'), 'avisa que está cortado');
+  assert.ok(resumen.length <= 600 + 3, `largo ${resumen.length}`);
+  assert.ok(resumen.length > 500);
+  assert.ok(!/[<>]|&#|auth=/.test(resumen), 'sin etiquetas, entidades ni tokens de imagen');
+});
+
+test('un resumen corto llega entero y sin puntos suspensivos', async () => {
+  const { payload } = await payloadEnviado([
+    { title: 'Nota', sourceName: 'Medio', rawSummary: '<p>Texto corto con acentos: canci&#xF3;n.</p>' },
+  ]);
+  assert.equal(payload[0].summary, 'Texto corto con acentos: canción.');
+});
+
+test('una nota cuyo resumen era solo una imagen llega con resumen vacío (no con la etiqueta)', async () => {
+  const { payload } = await payloadEnviado([{ title: 'Nota', sourceName: 'Medio', rawSummary: IMG }]);
+  assert.equal(payload[0].summary, '');
+});
+
+test('si no hay rawSummary se usa contentSnippet', async () => {
+  const { payload } = await payloadEnviado([{ title: 'Nota', sourceName: 'Medio', rawSummary: '', contentSnippet: 'Del snippet.' }]);
+  assert.equal(payload[0].summary, 'Del snippet.');
+});

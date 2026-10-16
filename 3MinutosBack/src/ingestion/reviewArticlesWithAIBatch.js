@@ -2,6 +2,7 @@ const { z } = require('zod');
 const { zodTextFormat } = require('openai/helpers/zod');
 const { openaiReview, OPENAI_MODEL } = require('../config/openai');
 const { buildEmbeddingText } = require('../embeddings/buildEmbeddingsText');
+const { toPlainText } = require('../utils/plainText');
 const GlobalContext = require('../models/GlobalContext');
 
 const BatchReviewSchema = z.object({
@@ -67,15 +68,16 @@ function getImportanceLevel(score = 0) {
   return 'low';
 }
 
-function buildArticlePayload(article = {}, index) {
-  const summarySource = String(article.rawSummary || article.contentSnippet || '').trim();
-  const truncatedSummary = summarySource.substring(0, 150) + (summarySource.length > 150 ? '...' : '');
+// Cuánto del resumen ve el clasificador. Con 150 caracteres (lo que había) una nota con una imagen o una volanta
+// llegaba casi sin texto; 600 alcanzan para el primer párrafo, que es donde está la noticia.
+const CLASSIFIER_SUMMARY_CHARS = 600;
 
+function buildArticlePayload(article = {}, index) {
   return {
     id: index,
     sourceName: article.sourceName || '',
     title: article.title || '',
-    summary: truncatedSummary,
+    summary: toPlainText(article.rawSummary || article.contentSnippet || '', { maxChars: CLASSIFIER_SUMMARY_CHARS, ellipsis: true }),
   };
 }
 
@@ -237,4 +239,5 @@ ${JSON.stringify(payload, null, 2)}
 
 module.exports = {
   reviewArticlesWithAIBatch,
+  CLASSIFIER_SUMMARY_CHARS,
 };

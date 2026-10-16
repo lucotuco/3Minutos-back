@@ -62,6 +62,9 @@ const redondear = (n) => Math.round(n * 10) / 10;
 function rankFreeCandidates(topic, expansion, candidates, ctx, { softCorral }) {
   const selection = selectBestCandidate(topic, candidates, {
     isUsable: (a) => checkEligibility(a, ctx).ok,
+    // Votan para el ancla y el corral las notas entregables EN GENERAL (sin mirar lo que este usuario ya vio ni lo que
+    // se eligió para otros tópicos): el significado de un tema no depende del historial de quien lo pide.
+    isRepresentative: (a) => checkEligibility(a, { now: ctx.now }).ok,
     exhaustive: true,
     softCorral,
   });

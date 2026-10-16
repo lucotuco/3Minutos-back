@@ -596,6 +596,31 @@ test('libre: el rescate usa el corral que votaron los candidatos del propio tema
   assert.equal(r.resultados[0].corralCategory, 'Deportes');
 });
 
+test('libre: el rubro y el ancla del tema no dependen de lo que el usuario ya vio (votan las notas entregables en general)', async () => {
+  const base = { category: 'Deportes', topic: 'Fútbol', tags: [], rawSummary: '', contentSnippet: '' };
+  const deportes = Array.from({ length: 7 }, (_, i) => nota({ ...base, title: `River informe ${i}`, score: 0.96 - i * 0.01, importanceScore: 60, publishedAt: hace(2 + i) }));
+  const sociedad = Array.from({ length: 4 }, (_, i) => nota({ ...base, category: 'Sociedad', topic: 'Tendencias y Vida', title: `River Plate Resort ${i}`, score: 0.9, importanceScore: 60, publishedAt: hace(2) }));
+  const vistas = deportes.slice(0, 6);
+
+  const r = await correr(['river plate'], { busqueda: busquedaFalsa([...deportes, ...sociedad]), historial: vistas.map((a) => a.url) });
+  assert.equal(r.resultados[0].article.url, deportes[6].url, 'la única de Deportes que no vio sigue dentro del corral');
+  assert.equal(r.resultados[0].corralCategory, 'Deportes', 'con las 6 vistas fuera del pool el rubro habría sido Sociedad (4 contra 1)');
+  assert.equal(r.resultados[0].usedFallback, false);
+});
+
+test('libre: una publicidad o una nota de otro país que nombra el tema no decide su rubro', async () => {
+  const base = { category: 'Deportes', topic: 'Fútbol', tags: [], rawSummary: '', contentSnippet: '' };
+  const noticias = Array.from({ length: 4 }, (_, i) => nota({ ...base, title: `River informe ${i}`, score: 0.95 - i * 0.01, importanceScore: 60, publishedAt: hace(2 + i) }));
+  const avisos = Array.from({ length: 7 }, (_, i) => nota({
+    ...base, category: 'Sociedad', topic: 'Tendencias y Vida', contentType: 'publicidad', title: `Promo River Plate Experience ${i}`, score: 0.92, importanceScore: 60,
+  }));
+
+  const r = await correr(['river plate'], { busqueda: busquedaFalsa([...avisos, ...noticias]) });
+  assert.equal(r.resultados[0].corralCategory, 'Deportes', 'las 7 publicidades no votan: el rubro lo ponen las noticias');
+  assert.equal(r.resultados[0].usedFallback, false);
+  assert.equal(r.resultados[0].article.url, noticias[0].url);
+});
+
 test('libre: si la búsqueda falla se informa error_busqueda y se intenta el rescate', async () => {
   const rescate = nota({ category: 'Sociedad', topic: 'Salud', importanceScore: 60 });
   const r = await correr(['river plate'], { busqueda: busquedaFalsa(new Error('Atlas caído'), [rescate]) });

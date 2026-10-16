@@ -79,10 +79,17 @@ function zoneOf(score) {
   return 'ROJA';
 }
 
-function buildPool(candidates) {
-  return candidates
-    .filter((a) => (a.score || 0) >= POOL_MIN_SCORE)
-    .slice(0, POOL_MAX_SIZE);
+/**
+ * Las notas que "votan" para inferir el ancla léxica y la categoría. Entre las que la búsqueda trajo con puntaje
+ * suficiente votan las REPRESENTATIVAS (`isRepresentative`: sin publicidad, opinión, otro país ni importancia baja):
+ * esas son las que podrían entregarse, y una publicidad que nombra el tema o una nota de otro país no deberían decidir
+ * qué significa el tema ni en qué rubro cae. Con menos de POOL_MIN_SIZE representativas no hay evidencia suficiente
+ * solo con ellas, y se vota con todas las que trajo la búsqueda (como antes).
+ */
+function buildPool(candidates, isRepresentative = () => true) {
+  const strong = candidates.filter((a) => (a.score || 0) >= POOL_MIN_SCORE);
+  const representative = strong.filter(isRepresentative);
+  return (representative.length >= POOL_MIN_SIZE ? representative : strong).slice(0, POOL_MAX_SIZE);
 }
 
 /**
@@ -141,6 +148,9 @@ function inferCorralCategory(pool) {
  * @param {object[]} candidates  salida de searchArticlesBySimilarityAtlas (con .score y .category)
  * @param {object}   opts
  * @param {(a:object)=>boolean} [opts.isUsable]  filtro de duplicados / edad / opinión
+ * @param {(a:object)=>boolean} [opts.isRepresentative]  qué notas votan para el ancla y el corral (ver buildPool). A
+ *                                               diferencia de isUsable no mira el historial del usuario: lo que significa un
+ *                                               tema no cambia porque el usuario ya haya leído algunas notas.
  * @param {string|null} [opts.strictCategory]    corral fijo (tópicos oficiales); si viene, no se infiere
  * @param {boolean} [opts.exhaustive]            evalúa todos; por defecto corta en el primero válido
  * @param {boolean} [opts.softCorral]            el corral deja de descartar: una nota de otra categoría se acepta marcada
@@ -152,9 +162,9 @@ function inferCorralCategory(pool) {
  * por calidad (eligibility.js) en vez de quedarse con el primero que dejó la búsqueda.
  */
 function selectBestCandidate(topic, candidates, {
-  isUsable = () => true, strictCategory = null, exhaustive = false, softCorral = false,
+  isUsable = () => true, isRepresentative = () => true, strictCategory = null, exhaustive = false, softCorral = false,
 } = {}) {
-  const pool = buildPool(candidates);
+  const pool = buildPool(candidates, isRepresentative);
   const { anchors, mode } = extractAnchorWords(topic, pool);
   const corral = strictCategory || inferCorralCategory(pool);
 

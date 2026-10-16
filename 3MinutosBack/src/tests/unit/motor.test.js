@@ -52,7 +52,7 @@ function nota(extra = {}) {
 }
 
 /** Store falso: imita articleStore.js (lectura liviana, documentos completos, embeddings). */
-function storeFalso(docs, { ignorarDesde = false, falla = null } = {}) {
+function storeFalso(docs, { ignorarDesde = false, ignorarImportancia = false, falla = null } = {}) {
   const llamadas = { list: [], full: [], emb: [] };
   const liviano = (d) => {
     const { embedding, rawSummary, ...resto } = d; // eslint-disable-line no-unused-vars
@@ -65,7 +65,7 @@ function storeFalso(docs, { ignorarDesde = false, falla = null } = {}) {
       if (falla) throw new Error(falla);
       return docs
         .filter((d) => (ignorarDesde || d.publishedAt >= q.since)
-          && d.importanceScore >= q.minImportance
+          && (ignorarImportancia || d.importanceScore >= q.minImportance)
           && (!q.category || d.category === q.category)
           && (!q.topic || d.topic === q.topic)
           && (!q.excludeTopic || d.topic !== q.excludeTopic))
@@ -233,6 +233,24 @@ test('oficial: sin historial ni notas ya elegidas alcanza con traer la primera',
   assert.equal(r.store.llamadas.full[0].length, 1);
 });
 
+test('oficial: si todo el primer lote (8) es la misma historia que algo visto, sigue con el lote siguiente', async () => {
+  const repetidas = Array.from({ length: 8 }, (_, i) => nota({ importanceScore: 90, publishedAt: hace(1 + i * 0.1), embedding: conCoseno(0.95) }));
+  const distinta = nota({ importanceScore: 55, publishedAt: hace(9), embedding: conCoseno(0.1) });
+  const r = await correr(['Fútbol'], { docs: [...repetidas, distinta], vistos: [{ title: 'ya vista', vector: [1, 0] }] });
+  assert.equal(r.resultados[0].article.url, distinta.url);
+  assert.deepEqual(r.store.llamadas.full.map((l) => l.length), [8, 1], 'dos lotes: 8 finalistas y después el siguiente');
+});
+
+test('oficial: se rinde después de 32 finalistas (4 lotes de 8): mejor un hueco que traer cientos de documentos', async () => {
+  const repetidas = Array.from({ length: 32 }, (_, i) => nota({ importanceScore: 90, publishedAt: hace(1 + i * 0.05), embedding: conCoseno(0.95) }));
+  const lejana = nota({ importanceScore: 55, publishedAt: hace(9), embedding: conCoseno(0.1) });
+  const r = await correr(['Fútbol'], { docs: [...repetidas, lejana], vistos: [{ title: 'ya vista', vector: [1, 0] }] });
+  assert.equal(r.store.llamadas.full.length, 4, 'como mucho 4 lotes');
+  assert.ok(r.store.llamadas.full.every((l) => l.length === 8));
+  assert.equal(r.resultados[0].article, null, 'la 33.ª nota no se llega a mirar');
+  assert.equal(r.resultados[0].matchReason, 'ningun_candidato_valido');
+});
+
 test('oficial: si la nota se borró entre la lectura liviana y la completa, se prueba con la siguiente', async () => {
   const a = nota({ publishedAt: hace(1), importanceScore: 90 });
   const b = nota({ publishedAt: hace(2), importanceScore: 80 });
@@ -291,6 +309,30 @@ test('oficial: el rescate nunca sale de otra categoría; sin nada, el hueco qued
   assert.equal(x.corralCategory, 'Deportes');
 });
 
+test('oficial: la lectura del rescate pide la categoría SIN el subtema, buenas (>= 50) y de las últimas 24 h', async () => {
+  const tenis = nota({ topic: 'Tenis', importanceScore: 70, publishedAt: hace(4) });
+  const r = await correr(['Fútbol'], { docs: [tenis] });
+  assert.equal(r.store.llamadas.list.length, 2, 'una lectura del tema exacto y otra del rescate');
+  const [exacta, rescate] = r.store.llamadas.list;
+  assert.equal(exacta.category, 'Deportes');
+  assert.equal(exacta.topic, 'Fútbol');
+  assert.equal(exacta.minImportance, 40);
+  assert.equal(exacta.since.getTime(), NOW - 24 * 3600e3);
+  assert.equal(rescate.category, 'Deportes');
+  assert.equal(rescate.excludeTopic, 'Fútbol');
+  assert.ok(!rescate.topic, 'el rescate no pide un subtema en particular');
+  assert.equal(rescate.minImportance, 50);
+  assert.equal(rescate.since.getTime(), NOW - 24 * 3600e3);
+});
+
+test('oficial: el rescate vuelve a exigir nota "buena" aunque la lectura devuelva notas de 40-49', async () => {
+  const tenisFlojo = nota({ topic: 'Tenis', importanceScore: 45, publishedAt: hace(1) });
+  const store = storeFalso([tenisFlojo], { ignorarImportancia: true });
+  const r = await correr(['Fútbol'], { store });
+  assert.equal(r.resultados[0].article, null, 'una aceptable no sirve de rescate: mejor un hueco');
+  assert.equal(r.resultados[0].usedFallback, false);
+});
+
 test('oficial (categoría): toma la mejor de toda la categoría y no tiene rescate', async () => {
   const futbol = nota({ topic: 'Fútbol', importanceScore: 60, publishedAt: hace(4) });
   const tenis = nota({ topic: 'Tenis', importanceScore: 85, publishedAt: hace(6) });
@@ -335,6 +377,13 @@ test('oficial: tópicos que comparten notas no repiten URL ni historia dentro de
   assert.equal(r.resultados[0].article.url, a.url);
   assert.equal(r.resultados[1].article.url, c.url, 'la 2.ª nota es la misma historia que la 1.ª: sigue la 3.ª');
   assert.equal(new Set(urls(r)).size, 2);
+});
+
+test('oficial: una nota sin embedding tampoco se repite entre tópicos (la frena la URL)', async () => {
+  const sola = nota({ publishedAt: hace(2), importanceScore: 80, embedding: [] });
+  const r = await correr(['Deportes', 'Fútbol'], { docs: [sola] });
+  assert.equal(r.resultados[0].article.url, sola.url);
+  assert.equal(r.resultados[1].article, null, 'sin vector no se puede comparar la historia, pero la URL ya salió');
 });
 
 test('oficial: mismos datos, mismo resultado, sin importar el orden en que llegan las notas', async () => {
@@ -468,6 +517,22 @@ test('libre: sin ningún candidato válido hay rescate en el rubro, solo con not
   assert.equal(segunda.exacta, 'Sociedad Argentina actualidad nacional', 'sin corral inferido el rescate cae en Sociedad');
   assert.equal(segunda.opts.category, 'Sociedad');
   assert.equal(segunda.opts.minDate.getTime(), NOW - 24 * 3600e3);
+});
+
+test('libre: si el rescate solo tiene notas aceptables (40-49) queda el hueco', async () => {
+  const c = candidatosRiver();
+  const aceptable = nota({ category: 'Deportes', title: 'Nota del rubro', importanceScore: 45, publishedAt: hace(1) });
+  const r = await correr(['river plate'], { busqueda: busquedaFalsa([c.roja], [aceptable]) });
+  assert.equal(r.resultados[0].article, null, 'una aceptable no sirve de rescate: mejor un hueco');
+  assert.equal(r.resultados[0].usedFallback, false);
+  assert.equal(r.busqueda.llamadas.length, 2, 'se intentó el rescate');
+});
+
+test('libre: dos tópicos con los mismos candidatos y sin embeddings no repiten la nota (la frena la URL)', async () => {
+  const c = candidatosRiver();
+  const r = await correr(['river plate', 'river'], { busqueda: busquedaFalsa([c.verdeVieja, c.amarillaFresca, c.amarilla2, c.amarilla3]) });
+  assert.ok(r.resultados[0].article && r.resultados[1].article, 'los dos tópicos entregan una nota');
+  assert.notEqual(r.resultados[0].article.url, r.resultados[1].article.url);
 });
 
 test('libre: el rescate usa el corral que votaron los candidatos del propio tema', async () => {

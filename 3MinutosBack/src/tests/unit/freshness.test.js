@@ -26,9 +26,9 @@ test.after(() => { test.mock.restoreAll(); });
 
 const hace = (horas) => new Date(AHORA - horas * 3600 * 1000);
 
-test('el tope de antigüedad es de 24 h y lo ideal 10 h', () => {
+test('el tope de antigüedad es de 24 h y lo ideal 8 h', () => {
   assert.equal(MAX_ARTICLE_AGE_HOURS, 24);
-  assert.equal(IDEAL_ARTICLE_AGE_HOURS, 10);
+  assert.equal(IDEAL_ARTICLE_AGE_HOURS, 8);
   assert.ok(IDEAL_ARTICLE_AGE_HOURS < MAX_ARTICLE_AGE_HOURS);
 });
 

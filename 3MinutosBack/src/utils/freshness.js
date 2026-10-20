@@ -15,13 +15,13 @@ const IDEAL_ARTICLE_AGE_HOURS = 8;
 
 // Curva de frescura (0-100): premia fuerte lo de hoy sin matar lo de anoche.
 const FRESHNESS_CURVE = [
-  [2, 100],   // recien salido del horno
+  [2, 100],
   [6, 90], 
-  [8,80]   // muy fresco
+  [8,80],
   [10, 70],
   [12, 60],
-  [18, 70],
-  [24, 30],   // hace un dia
+  [18, 40],
+  [24, 30],
 ];
 
 const PREVIEW_OR_AGENDA_KEYWORDS = [

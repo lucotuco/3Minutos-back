@@ -105,7 +105,7 @@ function tablaResumen(titulo, A, B, esLibre) {
   filas.push('<tr class="sep"><td colspan="4">Frescura de la noticia entregada (en tema)</td></tr>');
   fila('Edad mediana (h)', A.edad.mediana, B.edad.mediana, false, 'h');
   fila('Edad p90 (h)', A.edad.p90, B.edad.p90, false, 'h');
-  fila('Hasta 10 h, lo ideal (%)', A.edad.pctHasta10, B.edad.pctHasta10, true, 'h');
+  fila('Hasta 8 h, lo ideal (%)', A.edad.pctHasta8, B.edad.pctHasta8, true, 'h');
   fila('Hasta 24 h (%)', A.edad.pctHasta24, B.edad.pctHasta24, true, 'h');
   fila('Más de 24 h (%)', A.edad.pctMasDe24, B.edad.pctMasDe24, false, 'h');
   fila('La más vieja de todas (h)', A.edad.maxTodas, B.edad.maxTodas, false, 'h');
@@ -251,7 +251,7 @@ function textoConsola({ resA, resB, filas, cordura, veredicto }) {
     fila('Sin noticia', c(a, 'sin_noticia'), c(b, 'sin_noticia'));
     fila('Fuera de tema sin aviso', c(a, 'tema_no'), c(b, 'tema_no'));
     fila('Edad mediana (h)', f1(a.edad.mediana), f1(b.edad.mediana));
-    fila('Hasta 10 h (lo ideal)', `${f1(a.edad.pctHasta10)} %`, `${f1(b.edad.pctHasta10)} %`);
+    fila('Hasta 8 h (lo ideal)', `${f1(a.edad.pctHasta8)} %`, `${f1(b.edad.pctHasta8)} %`);
     fila('La más vieja (h)', f1(a.edad.maxTodas), f1(b.edad.maxTodas));
     if (a.sustancia?.n || b.sustancia?.n) fila('Buenas (importancia 50+)', `${f1(a.sustancia?.pctBuenas)} %`, `${f1(b.sustancia?.pctBuenas)} %`);
     fila('p95 por tema (ms)', f1(a.tiempo.p95), f1(b.tiempo.p95));

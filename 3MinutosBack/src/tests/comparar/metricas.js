@@ -21,7 +21,7 @@ const { toPlainText, firstReadableText } = require('../../utils/plainText');
 // El código anterior permitía hasta 48 h: se usa solo como referencia al informar.
 const MAX_EDAD_HORAS = 24;
 const MAX_EDAD_HORAS_ANTES = 48;
-const EDAD_IDEAL_HORAS = 10;
+const EDAD_IDEAL_HORAS = 8;
 // En Sociedad solo valen notas de Argentina o de alcance Global.
 const ALCANCES_SOCIEDAD = new Set(['argentina', 'global']);
 

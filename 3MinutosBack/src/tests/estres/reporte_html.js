@@ -88,7 +88,7 @@ function seccionD(e) {
   const r = e.resumen;
   const extra = [];
   if (r.lock && r.lock.mismoUsuario) extra.push(`Candado: ${r.lock.mismoUsuario.llamadas} pedidos simultáneos → ${r.lock.mismoUsuario.lecturasUsuario} ejecución(es).`);
-  if (r.stampede) extra.push(`Ráfaga sobre un tópico nuevo: ${r.stampede.concurrentes} pedidos → ${r.stampede.llamadasChat} expansión(es) en OpenAI.`);
+  if (r.stampede) extra.push(`Ráfaga sobre un tópico nuevo: ${r.stampede.concurrentes} pedidos → ${r.stampede.llamadasExpansion ?? r.stampede.llamadasChat} expansión(es) en OpenAI.`);
   if (r.mega) extra.push(`Una llamada con ${r.mega.topics} tópicos: ${num(r.mega.ms)} ms.`);
   return tablaRampa('Rampa de llamadas a pickBestArticlePerTopic', r.rampaPick?.filas) +
     tablaRampa('Rampa de digests completos (usuarios reales)', r.rampaDigest?.filas) +

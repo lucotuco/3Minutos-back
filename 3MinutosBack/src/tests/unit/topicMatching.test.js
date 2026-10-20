@@ -232,3 +232,127 @@ test('selectBestCandidate: sin candidatos o todo rojo, `accepted` queda vacío',
   const rojas = RIVER_SIN_EXPANSION.map((a) => ({ ...a, score: 0.5 }));
   assert.deepEqual(selectBestCandidate('river plate', rojas, { exhaustive: true }).accepted, []);
 });
+
+// ---------------------------------------------------------------- corral blando (con juez de tema)
+
+/** Una nota de otra categoría que dice "River" + 9 de Deportes: el corral infiere Deportes. */
+function conNotaDeAfuera() {
+  const fuera = nota('Airbag suspendió su sexto River por la visita del Papa', 0.9, 'Entretenimiento/Cultura');
+  return { fuera, lista: [fuera, ...RIVER_SIN_EXPANSION.slice(1, 10)] };
+}
+
+test('corral blando: una nota de otra categoría se acepta MARCADA (outOfCorral) para que la decida el juez de tema', () => {
+  const { fuera, lista } = conNotaDeAfuera();
+  const r = selectBestCandidate('river plate', lista, { exhaustive: true, softCorral: true });
+  const aceptada = r.accepted.find((x) => x.article === fuera);
+  assert.ok(aceptada, 'entra a la lista de aceptadas');
+  assert.equal(aceptada.outOfCorral, true);
+  assert.equal(aceptada.rank, 1);
+  assert.equal(r.evaluated[0].verdict, 'ACEPTADO (fuera del corral Deportes: lo decide el juez)');
+  assert.ok(r.accepted.filter((x) => x.article !== fuera).every((x) => x.outOfCorral === false), 'las de adentro no se marcan');
+  assert.equal(r.corral, 'Deportes', 'el corral se infiere igual: sirve para marcar y para el rescate');
+});
+
+test('corral blando: sin la opción el corral sigue descartando, como siempre', () => {
+  const { fuera, lista } = conNotaDeAfuera();
+  const r = selectBestCandidate('river plate', lista, { exhaustive: true });
+  assert.ok(!r.accepted.some((x) => x.article === fuera));
+  assert.ok(r.accepted.every((x) => x.outOfCorral === false));
+  assert.match(r.evaluated[0].verdict, /^rechazo: fuera del corral Deportes$/);
+});
+
+test('corral blando: la zona ROJA, el ancla léxica y isUsable se siguen aplicando a las notas de afuera', () => {
+  const roja = nota('River jugó contra otro club', 0.5, 'Sociedad');
+  const sinAncla = nota('Un tema que no tiene relación alguna', 0.88, 'Sociedad');
+  const yaVista = nota('River en otro rubro', 0.97, 'Sociedad');
+  const verdeDeAfuera = nota('River y la política', 0.97, 'Política');
+  const adentro = RIVER_SIN_EXPANSION.slice(1, 10);
+  const r = selectBestCandidate('river plate', [roja, sinAncla, yaVista, verdeDeAfuera, ...adentro], {
+    exhaustive: true, softCorral: true, isUsable: (a) => a !== yaVista,
+  });
+  const veredicto = (titulo) => r.evaluated.find((e) => e.title === titulo).verdict;
+  assert.equal(veredicto(roja.title), 'rechazo: score bajo');
+  assert.match(veredicto(sinAncla.title), /^rechazo: sin ancla léxica/);
+  assert.match(veredicto(yaVista.title), /^rechazo: ya visto/);
+  assert.match(veredicto(verdeDeAfuera.title), /^ACEPTADO \(fuera del corral Deportes/, 'una VERDE no necesita ancla');
+  assert.deepEqual(r.accepted.filter((x) => x.outOfCorral).map((x) => x.article), [verdeDeAfuera]);
+});
+
+test('corral blando con strictCategory: lo que no es de esa categoría queda marcado en vez de descartado', () => {
+  const r = selectBestCandidate('river plate', RIVER_SIN_EXPANSION, { strictCategory: 'Economía', softCorral: true, exhaustive: true });
+  assert.equal(r.corral, 'Economía');
+  assert.ok(r.accepted.length > 0);
+  assert.ok(r.accepted.every((x) => x.outOfCorral === true));
+});
+
+test('corral blando: sin corral (no hay evidencia suficiente) nadie está afuera', () => {
+  const lista = [nota('river a', 0.97, 'Deportes'), nota('river b', 0.9, 'Sociedad'), nota('river c', 0.9, 'Política')];
+  const r = selectBestCandidate('river', lista, { exhaustive: true, softCorral: true });
+  assert.equal(r.corral, null);
+  assert.equal(r.accepted.length, 3);
+  assert.ok(r.accepted.every((x) => x.outOfCorral === false));
+});
+
+// ---------------------------------------------------------------- quiénes votan (ancla y corral)
+
+/** 4 notas de Deportes de las que podrían entregarse + 6 publicidades de Sociedad que también dicen "River Plate". */
+function conPublicidadQueVota() {
+  const noticias = [
+    nota('River venció a Racing con un gol agónico', 0.95),
+    nota('River define el equipo para el clásico', 0.93),
+    nota('El mercado de pases de River se calienta', 0.9),
+    nota('River y la lesión que preocupa a Gallardo', 0.88),
+  ];
+  const publicidades = Array.from({ length: 6 }, (_, i) =>
+    nota(`Promo River Plate Experience ${i}: entradas y tours`, 0.92, 'Sociedad', { contentType: 'publicidad' }));
+  const esPublicidad = (a) => a.contentType === 'publicidad';
+  return { noticias, publicidades, lista: [...publicidades, ...noticias], esRepresentativa: (a) => !esPublicidad(a) };
+}
+
+test('quiénes votan: una publicidad no decide el rubro del tema (con el filtro, el corral sale de las noticias)', () => {
+  const { lista, esRepresentativa } = conPublicidadQueVota();
+  assert.equal(selectBestCandidate('river plate', lista, { exhaustive: true }).corral, 'Sociedad',
+    'sin el filtro las 6 publicidades (más puntaje en total) deciden el rubro');
+  assert.equal(selectBestCandidate('river plate', lista, { exhaustive: true, isRepresentative: esRepresentativa }).corral, 'Deportes');
+});
+
+test('quiénes votan: tampoco deciden qué palabras del tema usa la prensa (ancla léxica)', () => {
+  const { lista, esRepresentativa } = conPublicidadQueVota();
+  // Las publicidades dicen "River Plate"; las noticias, solo "River".
+  const sinFiltro = selectBestCandidate('river plate', lista, { exhaustive: true });
+  assert.deepEqual(sinFiltro.anchors, ['river', 'plate'], 'sin el filtro "plate" parece una palabra que la prensa usa');
+  const conFiltro = selectBestCandidate('river plate', lista, { exhaustive: true, isRepresentative: esRepresentativa });
+  assert.deepEqual(conFiltro.anchors, ['river']);
+  assert.equal(conFiltro.anchorMode, 'pool_df');
+});
+
+test('quiénes votan: el filtro no cambia qué notas se aceptan (eso lo decide isUsable) ni su orden', () => {
+  const { lista, esRepresentativa } = conPublicidadQueVota();
+  const a = selectBestCandidate('river plate', lista, { exhaustive: true, softCorral: true });
+  const b = selectBestCandidate('river plate', lista, { exhaustive: true, softCorral: true, isRepresentative: () => true });
+  assert.deepEqual(a.accepted.map((x) => x.article), b.accepted.map((x) => x.article), 'sin filtro explícito = todas votan');
+  const c = selectBestCandidate('river plate', lista, { exhaustive: true, softCorral: true, isRepresentative: esRepresentativa });
+  assert.ok(c.accepted.some((x) => x.article.contentType === 'publicidad'), 'una publicidad no vota, pero eso no la descarta acá');
+});
+
+test('quiénes votan: con menos de 3 representativas no hay evidencia solo con ellas y votan todas las fuertes (como antes)', () => {
+  const { noticias, publicidades } = conPublicidadQueVota();
+  const lista = [...publicidades, ...noticias.slice(0, 2)];
+  const r = selectBestCandidate('river plate', lista, { exhaustive: true, isRepresentative: (a) => a.contentType !== 'publicidad' });
+  assert.equal(r.corral, 'Sociedad', 'solo 2 noticias: se vota con las 8 y manda el rubro de la mayoría');
+  const justo = selectBestCandidate('river plate', [...publicidades, ...noticias.slice(0, 3)], { exhaustive: true, isRepresentative: (a) => a.contentType !== 'publicidad' });
+  assert.equal(justo.corral, 'Deportes', 'con 3 representativas (el mínimo) alcanzan');
+});
+
+test('quiénes votan: las notas de puntaje bajo no votan aunque sean representativas, y el pool tiene un tope de 10', () => {
+  const rojas = Array.from({ length: 8 }, (_, i) => nota(`River Plate nota floja ${i}`, 0.5, 'Sociedad'));
+  const buenas = Array.from({ length: 12 }, (_, i) => nota(`River informe ${i}`, 0.9 - i * 0.001, 'Deportes'));
+  const r = selectBestCandidate('river plate', [...rojas, ...buenas], { exhaustive: true, isRepresentative: () => true });
+  assert.equal(r.corral, 'Deportes');
+  assert.deepEqual(r.anchors, ['river']);
+
+  // Las 10 primeras representativas votan; las que vienen después, no: 10 de Deportes mandan sobre 10 de Sociedad.
+  const primeras = Array.from({ length: 10 }, (_, i) => nota(`River Deportes ${i}`, 0.9, 'Deportes'));
+  const despues = Array.from({ length: 10 }, (_, i) => nota(`River Sociedad ${i}`, 0.9, 'Sociedad'));
+  assert.equal(selectBestCandidate('river', [...primeras, ...despues], { exhaustive: true, isRepresentative: () => true }).corral, 'Deportes');
+});

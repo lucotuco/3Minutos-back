@@ -13,6 +13,8 @@
  * de nombres propios ni de equipos.
  */
 
+const { toPlainText } = require('./plainText');
+
 const VERDE_MIN = 0.94;
 const AMARILLA_MIN = 0.80;
 
@@ -60,10 +62,12 @@ function topicWords(topic) {
 }
 
 function articleTokenSet(article) {
+  // El resumen se limpia antes de partirlo en palabras: en una nota guardada con HTML, "auth", "smart", "width",
+  // "height" o "div" contaban como palabras de la nota (y "composici" / "xf3" como trozos de una palabra con tilde).
   const text = [
     article?.title,
-    article?.rawSummary,
-    article?.contentSnippet,
+    toPlainText(article?.rawSummary),
+    toPlainText(article?.contentSnippet),
     ...(Array.isArray(article?.tags) ? article.tags : []),
   ].join(' ');
   return new Set(tokenize(text));
@@ -75,10 +79,17 @@ function zoneOf(score) {
   return 'ROJA';
 }
 
-function buildPool(candidates) {
-  return candidates
-    .filter((a) => (a.score || 0) >= POOL_MIN_SCORE)
-    .slice(0, POOL_MAX_SIZE);
+/**
+ * Las notas que "votan" para inferir el ancla léxica y la categoría. Entre las que la búsqueda trajo con puntaje
+ * suficiente votan las REPRESENTATIVAS (`isRepresentative`: sin publicidad, opinión, otro país ni importancia baja):
+ * esas son las que podrían entregarse, y una publicidad que nombra el tema o una nota de otro país no deberían decidir
+ * qué significa el tema ni en qué rubro cae. Con menos de POOL_MIN_SIZE representativas no hay evidencia suficiente
+ * solo con ellas, y se vota con todas las que trajo la búsqueda (como antes).
+ */
+function buildPool(candidates, isRepresentative = () => true) {
+  const strong = candidates.filter((a) => (a.score || 0) >= POOL_MIN_SCORE);
+  const representative = strong.filter(isRepresentative);
+  return (representative.length >= POOL_MIN_SIZE ? representative : strong).slice(0, POOL_MAX_SIZE);
 }
 
 /**
@@ -137,15 +148,23 @@ function inferCorralCategory(pool) {
  * @param {object[]} candidates  salida de searchArticlesBySimilarityAtlas (con .score y .category)
  * @param {object}   opts
  * @param {(a:object)=>boolean} [opts.isUsable]  filtro de duplicados / edad / opinión
+ * @param {(a:object)=>boolean} [opts.isRepresentative]  qué notas votan para el ancla y el corral (ver buildPool). A
+ *                                               diferencia de isUsable no mira el historial del usuario: lo que significa un
+ *                                               tema no cambia porque el usuario ya haya leído algunas notas.
  * @param {string|null} [opts.strictCategory]    corral fijo (tópicos oficiales); si viene, no se infiere
  * @param {boolean} [opts.exhaustive]            evalúa todos; por defecto corta en el primero válido
+ * @param {boolean} [opts.softCorral]            el corral deja de descartar: una nota de otra categoría se acepta marcada
+ *                                               `outOfCorral` y la decide el juez de tema (topicJudge.js). Sin juez el
+ *                                               corral sigue siendo un descarte duro.
  *
- * Devuelve además `accepted`: TODOS los candidatos aceptados, cada uno con su zona, su score y su
- * posición (`rank`, desde 1) en la lista original. Con exhaustive=true el motor reordena `accepted`
+ * Devuelve además `accepted`: TODOS los candidatos aceptados, cada uno con su zona, su score, su
+ * posición (`rank`, desde 1) en la lista original y `outOfCorral`. Con exhaustive=true el motor reordena `accepted`
  * por calidad (eligibility.js) en vez de quedarse con el primero que dejó la búsqueda.
  */
-function selectBestCandidate(topic, candidates, { isUsable = () => true, strictCategory = null, exhaustive = false } = {}) {
-  const pool = buildPool(candidates);
+function selectBestCandidate(topic, candidates, {
+  isUsable = () => true, isRepresentative = () => true, strictCategory = null, exhaustive = false, softCorral = false,
+} = {}) {
+  const pool = buildPool(candidates, isRepresentative);
   const { anchors, mode } = extractAnchorWords(topic, pool);
   const corral = strictCategory || inferCorralCategory(pool);
 
@@ -163,15 +182,16 @@ function selectBestCandidate(topic, candidates, { isUsable = () => true, strictC
 
     if (zone === 'ROJA') { row.verdict = 'rechazo: score bajo'; continue; }
     if (!isUsable(a)) { row.verdict = 'rechazo: ya visto/vencido/opinión'; continue; }
-    if (corral && a.category && a.category !== corral) { row.verdict = `rechazo: fuera del corral ${corral}`; continue; }
+    const outOfCorral = Boolean(corral && a.category && a.category !== corral);
+    if (outOfCorral && !softCorral) { row.verdict = `rechazo: fuera del corral ${corral}`; continue; }
 
     if (zone === 'AMARILLA' && !matchesAnchors(a, anchors)) {
       row.verdict = `rechazo: sin ancla léxica [${anchors.join(', ')}]`;
       continue;
     }
 
-    row.verdict = 'ACEPTADO';
-    accepted.push({ article: a, zone, score, rank });
+    row.verdict = outOfCorral ? `ACEPTADO (fuera del corral ${corral}: lo decide el juez)` : 'ACEPTADO';
+    accepted.push({ article: a, zone, score, rank, outOfCorral });
     if (!picked) picked = { article: a, zone, score };
     if (!exhaustive) break;
   }

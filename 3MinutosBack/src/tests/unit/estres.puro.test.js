@@ -365,11 +365,23 @@ test('I2 (temas oficiales): la zona es ETIQUETA y no hay score; ETIQUETA no exis
   assert.ok(ids(libreConEtiqueta).includes('I2-ZONA'));
 });
 
-test('I10 (temas oficiales): sus notas no traen score; las de un tema libre sí', () => {
+test('I10 (temas oficiales y rescates): sus notas no traen score; las que eligió la búsqueda de un tema libre sí', () => {
   assert.deepEqual(verificarOficial(resultadoOficial()), []);
   const libreSinScore = resultado({}, nota({ score: undefined, finalScore: undefined }));
   const v = verificar(libreSinScore, { tipo: 'libre' });
   assert.equal(ids(v).filter((x) => x === 'I10-SCORE').length, 2);
+
+  // El rescate de un tema libre se lee por etiqueta (sin búsqueda): su nota viene sin score y eso es lo normal.
+  const rescateLibre = resultado(
+    { usedFallback: true, matchZone: 'RESCATE', matchScore: null, matchReason: 'sin_candidatos', tier: 'sugerida', fallbackCategory: 'Deportes' },
+    nota({ score: undefined, finalScore: undefined, importanceScore: 70, geoScope: 'Argentina' }),
+  );
+  assert.deepEqual(verificar(rescateLibre, { tipo: 'libre' }), []);
+  // Pero una nota que eligió la búsqueda (en cualquier zona) y no trae score sigue siendo una violación.
+  for (const [zona, matchScore] of [['VERDE', 0.97], ['AMARILLA', 0.91]]) {
+    const sinScore = verificar({ ...rescateLibre, usedFallback: false, matchZone: zona, matchScore }, { tipo: 'libre' });
+    assert.equal(ids(sinScore).filter((x) => x === 'I10-SCORE').length, 2, zona);
+  }
 });
 
 test('I14: importancia mínima 40 (50 en el rescate); si la nota no la trae no se mide', () => {
@@ -480,12 +492,67 @@ test('I5, I6, I6b e I10: trazabilidad, forma de la nota, opinión y scores', () 
   assert.ok(ids(verificar(resultado({}, nota({ _id: undefined })))).includes('I6-FORMA'));
 
   assert.ok(ids(verificar(resultado({}, nota({ url: 'https://x.test/opinion/columna-1' })))).includes('I6b-OPINION'));
-  assert.ok(ids(verificar(resultado({}, nota({ title: 'Columna de Fulano: river' })))).includes('I6b-OPINION'));
+  assert.ok(ids(verificar(resultado({}, nota({ url: 'https://www.perfil.com/noticias/columnistas/es-la-democracia.phtml' })))).includes('I6b-OPINION'));
+  assert.ok(ids(verificar(resultado({}, nota({ title: 'Columna: Fulano sobre river' })))).includes('I6b-OPINION'));
   assert.ok(ids(verificar(resultado({}, nota({ tags: ['editorial'] })))).includes('I6b-OPINION'));
   assert.equal(I.esOpinion(nota()), false);
+  // Palabra entera: estos títulos y rutas CONTIENEN la palabra pero no son opinión.
+  for (const t of ['Análisis de sangre: qué mide', 'La opinión pública y la inflación', 'Editorial Planeta lanzó su catálogo']) {
+    assert.equal(I.esOpinion(nota({ title: t })), false, t);
+  }
+  assert.equal(I.esOpinion(nota({ url: 'https://x.test/politica/editorial-planeta-lanzo-catalogo' })), false);
+  assert.equal(I.esOpinion(nota({ url: 'https://x.test/politica/nota?ref=/opinion/' })), false);
+
+  // I6c: contenido patrocinado. I6d: tipo de nota que la IA marcó como no entregable.
+  assert.ok(ids(verificar(resultado({}, nota({ url: 'https://www.infobae.com/inhouse/2026/10/13/nota/' })))).includes('I6c-PUBLICIDAD'));
+  assert.equal(I.esPublicidad(nota()), false);
+  for (const contentType of ['opinion', 'servicio', 'previa_agenda', 'publicidad']) {
+    const v = verificar(resultado({}, nota({ contentType })));
+    assert.ok(ids(v).includes('I6d-TIPO-EXCLUIDO'), contentType);
+    assert.equal(v.find((x) => x.id === 'I6d-TIPO-EXCLUIDO').severidad, 'ALTA');
+  }
+  for (const contentType of ['noticia', 'analisis', 'entrevista', 'color', '', undefined]) {
+    assert.ok(!ids(verificar(resultado({}, nota({ contentType })))).includes('I6d-TIPO-EXCLUIDO'), String(contentType));
+  }
 
   assert.ok(ids(verificar(resultado({}, nota({ score: 1.5 })))).includes('I10-SCORE'));
   assert.ok(ids(verificar(resultado({}, nota({ finalScore: 'alto' })))).includes('I10-SCORE'));
+});
+
+test('el espejo independiente de opinión y publicidad coincide con la regla del motor en una misma batería', () => {
+  const { isOpinionArticle, isAdvertisingArticle } = require('../../utils/eligibility');
+  const casos = [
+    { url: 'https://www.perfil.com/noticias/columnistas/es-la-democracia-estupido.phtml' },
+    { url: 'https://www.cronista.com/columnistas/inflacion/' },
+    { url: 'https://www.ambito.com/ambito-debate/el-modelo-n5900000' },
+    { url: 'https://www.clarin.com/cartas-al-pais/cartas_0_abc.html' },
+    { url: 'https://www.clarin.com/opinion/titulo_0_abc.html' },
+    { url: 'https://www.lanacion.com.ar/editoriales/titulo-nid1/' },
+    { url: 'https://www.lanacion.com.ar/opini%C3%B3n/titulo-nid1/' },
+    { url: 'https://www.infobae.com/inhouse/2026/10/13/nota/' },
+    { url: 'https://www.perfil.com/noticias/empresas-y-protagonistas/aysa.phtml' },
+    { url: 'https://medio.test/politica/editorial-planeta-lanzo-catalogo' },
+    { url: 'https://medio.test/politica/nota?ref=/opinion/' },
+    { url: 'https://medio.test/sociedad/editorial' },
+    { url: '/opinion/algo/nota' },
+    { url: 'no es una url' },
+    { url: 'https://medio.test/x/nota', section: 'Opinión' },
+    { url: 'https://medio.test/x/nota', topic: 'Columna de opinión' },
+    { url: 'https://medio.test/x/nota', tags: ['política', 'Columnista'] },
+    { url: 'https://medio.test/x/nota', tags: ['opinión pública'] },
+    { url: 'https://medio.test/x/nota', title: 'Análisis: qué viene después del dólar' },
+    { url: 'https://medio.test/x/nota', title: 'OPINIÓN | El país que viene' },
+    { url: 'https://medio.test/x/nota', title: 'Análisis de sangre: qué mide cada valor' },
+    { url: 'https://medio.test/x/nota', title: 'La opinión pública y la inflación' },
+    { url: 'https://medio.test/x/nota', title: 'Nuevo análisis: Boca y River' },
+    { url: 'https://medio.test/x/nota', title: 'Columnas de humo' },
+    { url: 'https://medio.test/x/nota', category: 'Opinion' },
+    { url: 'https://medio.test/x/nota' },
+  ];
+  for (const c of casos) {
+    assert.equal(I.esOpinion(c), isOpinionArticle(c), `opinión: ${JSON.stringify(c)}`);
+    assert.equal(I.esPublicidad(c), isAdvertisingArticle(c), `publicidad: ${JSON.stringify(c)}`);
+  }
 });
 
 test('I7: repetir una nota del historial es CRÍTICO', () => {

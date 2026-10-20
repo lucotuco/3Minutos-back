@@ -42,7 +42,9 @@ Cada tema termina en **una** de estas categorías (de mejor a peor):
 | **Fuera de tema, sin aviso** | Entregó como si fuera del tema algo que no lo es. **Es la falla más grave** |
 
 - **Temas libres:** la relevancia la juzga `gpt-4o-mini` con título y resumen (`--sin-juez` la reemplaza por una mención del
-  tema en el título). Es una guía: **revisá a mano** las secciones «Mejoran» y «Empeoran», que traen los logs de cada versión.
+  tema en el título). El título y el resumen van en texto plano (sin etiquetas ni entidades de la bajada del feed) y la
+  mención del tema se mide sobre ese mismo texto. Es una guía: **revisá a mano** las secciones «Mejoran» y «Empeoran», que
+  traen los logs de cada versión.
 - **Temas oficiales:** no usan juez; se compara la categoría y el subtema que le asignó el clasificador. La versión nueva los
   lee por etiqueta (zona `ETIQUETA`, sin score); la anterior los resolvía con la búsqueda por significado.
 - **Chequeos de cordura:** cosas que deben cumplirse siempre (la versión nueva no entrega nada de más de 24 h — la anterior

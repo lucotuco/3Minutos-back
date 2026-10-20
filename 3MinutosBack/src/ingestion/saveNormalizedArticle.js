@@ -1,7 +1,26 @@
 const Article = require('../models/Article');
 const { buildEmbeddingText } = require('../embeddings/buildEmbeddingsText');
-const { generateArticleEmbedding } = require('../embeddings/generateArticleEmbeddings');
+const { generateArticleEmbedding, EMBEDDING_MODEL } = require('../embeddings/generateArticleEmbeddings');
 const { cosineSimilarity } = require('../embeddings/searchArticlesBySimilarity');
+
+/**
+ * El vector que la nota ya trae (lo calculó el chequeo de duplicados de la ingesta, filterVectorDuplicates), SOLO si se
+ * calculó con exactamente el texto que se va a guardar. Si el texto cambió —la IA le puso otros tags, y los tags forman
+ * parte del texto del embedding a propósito— ese vector describe otra cosa y hay que calcular uno nuevo.
+ *
+ * @param {object} article        la nota, con `embeddingText` ya recalculado para guardar
+ * @param {string} previousText   el `embeddingText` con que se calculó el vector que trae
+ * @returns {{vector:number[], embeddingModel:string}|null}
+ */
+function reusableEmbedding(article, previousText) {
+  const vector = article?.embedding;
+  if (!Array.isArray(vector) || vector.length === 0) return null;
+  if (article.embeddingStatus !== 'done' || article.embeddingModel !== EMBEDDING_MODEL) return null;
+
+  const before = String(previousText || '').trim();
+  if (!before || before !== String(article.embeddingText || '').trim()) return null;
+  return { vector, embeddingModel: article.embeddingModel };
+}
 
 async function saveNormalizedArticle(article = {}) {
   if (!article.url) {
@@ -19,12 +38,17 @@ async function saveNormalizedArticle(article = {}) {
   // =========================================================
   // FASE 2: Deduplicación Semántica (Vectorial)
   // =========================================================
+  const previousText = article.embeddingText;
   article.embeddingText = buildEmbeddingText(article);
   let newVector = [];
   let embeddingModel = '';
+  let embeddingReused = false;
 
   try {
-    const result = await generateArticleEmbedding(article);
+    // Con el mismo texto no se paga otra llamada a OpenAI por el mismo vector.
+    const reused = reusableEmbedding(article, previousText);
+    const result = reused || await generateArticleEmbedding(article);
+    embeddingReused = Boolean(reused);
     newVector = result.vector;
     embeddingModel = result.embeddingModel;
   } catch (error) {
@@ -96,7 +120,8 @@ async function saveNormalizedArticle(article = {}) {
     articleId: created._id,
     classificationStatus: created.classificationStatus,
     curationStatus: created.curationStatus,
+    embeddingReused,
   };
 }
 
-module.exports = { saveNormalizedArticle };
+module.exports = { saveNormalizedArticle, reusableEmbedding };

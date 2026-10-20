@@ -1,27 +1,6 @@
 const Article = require('../models/Article');
 const { openaiReview, OPENAI_MODEL } = require('../config/openai');
-
-function stripHtml(value) {
-  return String(value || '')
-    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function cleanText(value) {
-  return stripHtml(value)
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+const { toPlainText, firstReadableText } = require('../utils/plainText');
 
 function getIncompleteReason(response) {
   return (
@@ -33,13 +12,13 @@ function getIncompleteReason(response) {
 }
 
 function buildFallbackSummary(article) {
-  const sourceText = cleanText(article.rawSummary || article.contentSnippet);
+  const sourceText = firstReadableText(article.rawSummary, article.contentSnippet);
 
   if (sourceText) {
     return sourceText;
   }
 
-  const title = cleanText(article.title);
+  const title = toPlainText(article.title);
 
   if (title) {
     return title;
@@ -49,8 +28,8 @@ function buildFallbackSummary(article) {
 }
 
 function buildSummaryPrompt(article) {
-  const title = cleanText(article.title);
-  const sourceText = cleanText(article.rawSummary || article.contentSnippet);
+  const title = toPlainText(article.title);
+  const sourceText = firstReadableText(article.rawSummary, article.contentSnippet);
 
   return `
 Resumí esta noticia para una app mobile de noticias.
@@ -74,7 +53,7 @@ Resumen:
 }
 
 function extractResponseText(response) {
-  const directText = cleanText(response?.output_text);
+  const directText = toPlainText(response?.output_text);
 
   if (directText) {
     return directText;
@@ -97,7 +76,7 @@ function extractResponseText(response) {
     }
   }
 
-  return cleanText(parts.join(' '));
+  return toPlainText(parts.join(' '));
 }
 
 async function saveFallbackSummary(article, errorMessage) {
@@ -125,7 +104,7 @@ async function generateArticleSummary(articleId) {
     throw new Error('Article not found');
   }
 
-  const existingSummary = cleanText(article.summary);
+  const existingSummary = toPlainText(article.summary);
 
   if (existingSummary) {
     return {

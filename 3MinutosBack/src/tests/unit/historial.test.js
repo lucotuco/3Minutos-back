@@ -108,13 +108,13 @@ test('no mezcla notas de otros usuarios', async () => {
   assert.equal(h.seenEmbeddings.length, 1);
 });
 
-test('devuelve urls y títulos sin repetir, y los embeddings con su título', async () => {
+test('devuelve las urls sin repetir y los embeddings con su título', async () => {
   const Shown = modeloFalso([vista(1, 1), vista(1, 2, { shownAt: hace(2) }), vista(2, 3)]);
   const Art = modeloFalso([articulo(1, [1, 0]), articulo(2, [0, 1])]);
   const h = await getAlreadyShownHistoryForUser('u1', { now: NOW, models: { UserShownArticle: Shown, Article: Art } });
 
   assert.equal(h.urls.length, 2, 'la misma URL vista dos veces cuenta una');
-  assert.deepEqual(h.titles.sort(), ['Titulo 1', 'Titulo 2']);
+  assert.equal('titles' in h, false, 'la lista de títulos sueltos ya no existe: el título viaja con cada embedding');
   assert.deepEqual(h.seenEmbeddings.map((e) => e.vector), [[1, 0], [0, 1]]);
   assert.ok(h.seenEmbeddings.every((e) => typeof e.title === 'string' && e.title.length > 0));
   assert.deepEqual(Art.llamadas[0].filtro._id.$in.sort(), ['a1', 'a2'], 'cada id se pide una sola vez');
@@ -134,6 +134,27 @@ test('sin historial devuelve todo vacío y no consulta los artículos', async ()
   const Shown = modeloFalso([]);
   const Art = modeloFalso([articulo(1)]);
   const h = await getAlreadyShownHistoryForUser('u1', { now: NOW, models: { UserShownArticle: Shown, Article: Art } });
-  assert.deepEqual(h, { urls: [], titles: [], seenEmbeddings: [] });
+  assert.deepEqual(h, { urls: [], seenEmbeddings: [] });
   assert.equal(Art.llamadas.length, 0);
+});
+
+test('el historial entrega id, título y bajada de cada nota vista: es lo que ve el juez de misma historia', async () => {
+  const Shown = modeloFalso([vista(1, 1), vista(2, 2), vista(3, 3)]);
+  const Art = modeloFalso([
+    { _id: 'a1', title: 'Original 1', neutralTitle: 'Neutral 1', neutralLead: 'Bajada neutral 1', embedding: [1, 0] },
+    { _id: 'a2', title: 'Original 2', embedding: [0, 1] },
+    { _id: 'a3', title: '<b>Original</b> &amp; 3', neutralLead: '<p>Bajada con HTML</p>', embedding: [1, 1] },
+  ]);
+  const h = await getAlreadyShownHistoryForUser('u1', { now: NOW, models: { UserShownArticle: Shown, Article: Art } });
+  const porId = Object.fromEntries(h.seenEmbeddings.map((e) => [e.id, e]));
+
+  assert.deepEqual(porId.a1, { id: 'a1', title: 'Neutral 1', lead: 'Bajada neutral 1', vector: [1, 0] });
+  assert.deepEqual(porId.a2, { id: 'a2', title: 'Original 2', lead: '', vector: [0, 1] });
+  assert.deepEqual(porId.a3, { id: 'a3', title: 'Original & 3', lead: 'Bajada con HTML', vector: [1, 1] });
+
+  // y la consulta trae solo lo que hace falta (con el _id, que antes se descartaba)
+  const campos = Art.llamadas[0].select.split(/\s+/);
+  for (const campo of ['_id', 'title', 'neutralTitle', 'neutralLead', 'embedding']) assert.ok(campos.includes(campo), campo);
+  assert.ok(!campos.includes('-_id'));
+  assert.ok(!campos.includes('rawSummary'), 'no se trae el resumen entero de 150 notas');
 });

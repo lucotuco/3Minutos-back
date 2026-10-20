@@ -1,32 +1,17 @@
 const { pickBestArticlePerTopic }    = require('../utils/pickBestArticlePerTopic');
 const { generateNeutralCuration }    = require('../curation/generateNeutralCuration');
 const { startTimer, timeAsync }      = require('./timing');
-
-function cleanText(value) {
-  return String(value || '')
-    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+const { toPlainText, firstReadableText } = require('./plainText');
 
 function truncateWords(text, maxWords) {
-  const words = cleanText(text).split(/\s+/).filter(Boolean);
+  const words = toPlainText(text).split(/\s+/).filter(Boolean);
   if (words.length <= maxWords) return words.join(' ');
   return words.slice(0, maxWords).join(' ');
 }
 
 function buildFallbackCuration(article) {
-  const title      = truncateWords(article.title || 'Noticia relevante del día', 12);
-  const sourceText = cleanText(article.rawSummary || article.contentSnippet || article.summary || article.title || '');
+  const title      = truncateWords(article.title, 12) || 'Noticia relevante del día';
+  const sourceText = firstReadableText(article.rawSummary, article.contentSnippet, article.summary, article.title);
   const lead       = truncateWords(sourceText || title, 24);
   const neutralSummary = truncateWords(sourceText || title, 70);
 
@@ -44,8 +29,8 @@ async function buildUserNewsDigest({
   topics          = [],
   alreadyShownUrls = [],
   perTopicLimit   = 10,
-  alreadyShownTitles = [],
-  seenEmbeddings   = []
+  seenEmbeddings   = [],
+  judgeWaitMs      = null   // cuánto espera este digest, en total, a los jueces con IA (null = el de un digest en vivo)
 } = {}) {
   const totalTimer = startTimer('buildUserNewsDigest total', {
     topics,
@@ -61,7 +46,7 @@ async function buildUserNewsDigest({
 
     const picks = await timeAsync(
       'pickBestArticlePerTopic',
-      () => pickBestArticlePerTopic(topics, { perTopicLimit, alreadyShownUrls,alreadyShownTitles, seenEmbeddings}),
+      () => pickBestArticlePerTopic(topics, { perTopicLimit, alreadyShownUrls, seenEmbeddings, judgeWaitMs }),
       { topics, perTopicLimit }
     );
 
@@ -122,11 +107,11 @@ async function buildUserNewsDigest({
 
         const neutralLead = curationResult.neutralLead
           || pick.article.neutralLead
-          || truncateWords(pick.article.rawSummary || pick.article.contentSnippet || pick.article.title, 24);
+          || truncateWords(firstReadableText(pick.article.rawSummary, pick.article.contentSnippet, pick.article.title), 24);
 
         const neutralSummary = curationResult.neutralSummary
           || pick.article.neutralSummary
-          || truncateWords(pick.article.rawSummary || pick.article.contentSnippet || pick.article.title, 70);
+          || truncateWords(firstReadableText(pick.article.rawSummary, pick.article.contentSnippet, pick.article.title), 70);
 
         return {
           topic:         pick.topic,

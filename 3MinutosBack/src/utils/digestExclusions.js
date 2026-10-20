@@ -7,21 +7,21 @@
  *   - lo que el usuario ya vio en las últimas 48 h (getAlreadyShownUrlsForUser.js)
  *   - las notas que se quedan en el digest cuando solo se reponen algunas (staleDigest.js)
  *
- * Cada exclusión tiene tres partes: urls (no repetir la nota), titles (logs) y
- * seenEmbeddings [{ title, vector }] (no repetir la misma historia contada por otro medio).
+ * Cada exclusión tiene dos partes: urls (no repetir la nota) y
+ * seenEmbeddings [{ id, title, lead, vector }] (no repetir la misma historia contada por otro medio; el id, el título
+ * y la bajada son lo que ve el juez de sameEventJudge.js cuando el coseno no alcanza).
  */
 
 const articleStore = require('./articleStore');
+const { noteForJudge } = require('./judgeNote');
 
 const SEPARATOR = '␟';
 
 /** Exclusiones que salen de notas de un digest (por ejemplo, las que no se reemplazan). */
 async function exclusionsFromItems(items = [], { loadEmbeddings = articleStore.loadEmbeddings } = {}) {
   const list = (Array.isArray(items) ? items : []).filter(Boolean);
-  const titleOf = (item) => item.neutralTitle || item.title || '';
 
   const urls = [...new Set(list.map((i) => i.url).filter(Boolean))];
-  const titles = list.map(titleOf).filter(Boolean);
   const ids = [...new Set(list.map((i) => i.articleId).filter(Boolean).map(String))];
 
   const seenEmbeddings = [];
@@ -29,23 +29,21 @@ async function exclusionsFromItems(items = [], { loadEmbeddings = articleStore.l
     const vectors = await loadEmbeddings(ids);
     for (const item of list) {
       const vector = item.articleId ? vectors.get(String(item.articleId)) : null;
-      if (Array.isArray(vector) && vector.length > 0) seenEmbeddings.push({ title: titleOf(item), vector });
+      if (Array.isArray(vector) && vector.length > 0) seenEmbeddings.push({ ...noteForJudge(item), vector });
     }
   }
-  return { urls, titles, seenEmbeddings };
+  return { urls, seenEmbeddings };
 }
 
-/** Junta varias exclusiones en una (urls y títulos sin repetir). */
+/** Junta varias exclusiones en una (urls sin repetir). */
 function mergeExclusions(...parts) {
   const urls = new Set();
-  const titles = new Set();
   const seenEmbeddings = [];
   for (const part of parts) {
     for (const url of part?.urls || []) urls.add(url);
-    for (const title of part?.titles || []) titles.add(title);
     seenEmbeddings.push(...(part?.seenEmbeddings || []));
   }
-  return { urls: [...urls], titles: [...titles], seenEmbeddings };
+  return { urls: [...urls], seenEmbeddings };
 }
 
 /**

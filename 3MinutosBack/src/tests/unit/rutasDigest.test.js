@@ -224,7 +224,11 @@ test('GET digest (otro día, todo vigente): se entrega y se refresca en segundo 
     assert.deepEqual(urlsDe(r.body), urlsDe(vigente));
     await new Promise((ok) => setTimeout(ok, 20));
     assert.equal(t.registro.rearmados.length, 1);
-    assert.equal(t.registro.rearmados[0].opciones, undefined, 'armado completo, sin opciones');
+    assert.deepEqual(
+      t.registro.rearmados[0].opciones,
+      { background: true },
+      'armado completo, en segundo plano: los jueces con IA pueden esperar más porque nadie mira la pantalla'
+    );
   } finally { await t.cerrar(); restaurar(); }
 });
 

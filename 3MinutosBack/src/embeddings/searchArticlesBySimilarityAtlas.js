@@ -1,5 +1,6 @@
 const { openaiEmbeddings } = require('../config/openai');
 const { getFreshnessScore, isPreviewOrAgenda } = require('../utils/freshness');
+const { TtlCache } = require('../utils/llmJudge');
 const Article = require('../models/Article');
 
 const EMBEDDING_MODEL = 'text-embedding-3-small';
@@ -25,6 +26,57 @@ async function generateQueryEmbedding(query = '') {
   return vector;
 }
 
+// ---------------------------------------------------------------------------
+// Caché del embedding de la consulta
+// ---------------------------------------------------------------------------
+// El embedding de un texto no cambia (mismo modelo, mismo texto, mismo vector) y la consulta es la expansión de un tema,
+// que repiten todos los usuarios que lo tienen: sin caché cada búsqueda pagaba una llamada a OpenAI (~0,2-0,4 s) por el
+// mismo vector. El tope y el vencimiento son solo para acotar la memoria (500 vectores ≈ 6 MB).
+const QUERY_EMBEDDING_CACHE_TTL_MS = 6 * 3600e3;
+const QUERY_EMBEDDING_CACHE_MAX_ENTRIES = 500;
+
+/**
+ * @param {object} [p]
+ * @param {(query:string)=>Promise<number[]>} [p.fetch]  cómo se calcula el vector (por defecto, OpenAI)
+ * @returns {{ get:(query:string)=>Promise<number[]>, cache:TtlCache, inflight:Map, clear:()=>void }}
+ *   get comparte la llamada en curso entre pedidos simultáneos del mismo texto y NO guarda los fallos. El vector que
+ *   devuelve es el de la caché (no una copia): quien lo recibe no debe modificarlo.
+ */
+function createQueryEmbeddingCache({
+  fetch = (query) => generateQueryEmbedding(query),
+  ttlMs = QUERY_EMBEDDING_CACHE_TTL_MS,
+  maxEntries = QUERY_EMBEDDING_CACHE_MAX_ENTRIES,
+  now = Date.now,
+} = {}) {
+  const cache = new TtlCache({ maxEntries, ttlMs, now });
+  const inflight = new Map();
+
+  async function get(query) {
+    const key = String(query || '').trim();
+    if (!key) return fetch(query); // sin texto: falla como siempre ("Missing query text")
+
+    const cached = cache.get(key);
+    if (cached) return cached;
+    if (inflight.has(key)) return inflight.get(key);
+
+    const pending = (async () => {
+      const vector = await fetch(key);
+      cache.set(key, vector);
+      return vector;
+    })();
+    inflight.set(key, pending);
+    try {
+      return await pending;
+    } finally {
+      inflight.delete(key);
+    }
+  }
+
+  return { get, cache, inflight, clear: () => { cache.clear(); inflight.clear(); } };
+}
+
+const queryEmbeddings = createQueryEmbeddingCache();
+
 // 💥 NUEVO: Ahora recibimos la consulta exacta (texto) y la expandida (vector)
 async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options = {}) {
   const {
@@ -37,7 +89,7 @@ async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options 
     category
   } = options;
 
-  const queryVector = await generateQueryEmbedding(vectorQuery);
+  const queryVector = await queryEmbeddings.get(vectorQuery);
 
   const filter = {};
   if (category) filter.category = category;
@@ -47,7 +99,7 @@ async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options 
 
   const projectFields = {
     _id: 1, title: 1, url: 1, sourceName: 1, section: 1, region: 1, tags: 1,
-    importanceScore: 1, importanceLevel: 1, publishedAt: 1, topic: 1, category: 1, geoScope: 1,
+    importanceScore: 1, importanceLevel: 1, publishedAt: 1, topic: 1, category: 1, geoScope: 1, contentType: 1,
     imageUrl: 1, neutralTitle: 1, neutralLead: 1, neutralSummary: 1, rawSummary: 1,
     contentSnippet: 1, neutralityScore: 1, politicalBiasRisk: 1, curationStatus: 1,
   };
@@ -172,5 +224,9 @@ function computeFinalScore(article = {}) {
 module.exports = {
   searchArticlesBySimilarityAtlas,
   generateQueryEmbedding,
+  createQueryEmbeddingCache,
+  queryEmbeddings,
+  QUERY_EMBEDDING_CACHE_TTL_MS,
+  QUERY_EMBEDDING_CACHE_MAX_ENTRIES,
   computeFinalScore,
 };

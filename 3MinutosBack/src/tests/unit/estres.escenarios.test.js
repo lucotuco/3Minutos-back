@@ -306,11 +306,20 @@ test('D: el candado de digest — sano, roto y que no se libera', async () => {
 });
 
 test('D: la ráfaga sobre un tópico nuevo cuenta las expansiones de OpenAI', async () => {
-  const sinCache = (await correr(D, { fallas: { alBuscar: (c) => { c.openai.chat.llamadas++; } } })).r;
+  const sinCache = (await correr(D, { fallas: { alBuscar: (c) => { c.openai.chat.llamadas++; c.openai.chat.tipos.expansion++; } } })).r;
   const h = hallazgo(sinCache, 'D-STAMPEDE-EXPANSION');
   assert.equal(h.severidad, 'MEDIA');
   assert.match(h.titulo, /5 llamadas simultáneas .* 5 expansiones/);
   assert.ok(ids((await correr(D)).r).includes('D-EXPANSION-OK'));
+});
+
+test('D: las preguntas de los jueces con IA no se cuentan como expansiones (una ráfaga que solo pregunta al juez está sana)', async () => {
+  const conJueces = (await correr(D, { fallas: { alBuscar: (c) => { c.openai.chat.llamadas++; c.openai.chat.tipos.juezTema++; } } })).r;
+  assert.ok(ids(conJueces).includes('D-EXPANSION-OK'), 'cinco preguntas al juez de tema no son cinco expansiones');
+  assert.ok(!ids(conJueces).includes('D-STAMPEDE-EXPANSION'));
+  assert.equal(conJueces.resumen.stampede.llamadasExpansion, 0);
+  assert.equal(conJueces.resumen.stampede.llamadasJuez, 5);
+  assert.equal(conJueces.resumen.stampede.llamadasChat, 5);
 });
 
 test('D sin usuarios: omite los digests y el candado, y lo dice', async () => {

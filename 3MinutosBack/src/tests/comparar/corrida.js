@@ -21,7 +21,7 @@ const { execFileSync } = require('child_process');
 
 const { parseArgs, norm, redondear } = require('./utilidades');
 const { instalarCacheOpenAI } = require('./cache');
-const { mencionaTema } = require('./metricas');
+const { mencionaTema, textosDeNota } = require('./metricas');
 
 const PER_TOPIC_LIMIT = 10; // igual que buildUserNewsDigest (el motor nuevo busca perTopicLimit * 3 = 30; el anterior, * 2 = 20)
 const UMBRAL_VERDE = 0.94;
@@ -94,11 +94,12 @@ function armarRegistro(t, r, error, ms, logs) {
 
   let articulo = null;
   if (a) {
-    const cuerpo = `${a.title} ${a.rawSummary || ''} ${a.contentSnippet || ''} ${(a.tags || []).join(' ')}`;
+    // Texto plano: las bajadas traen HTML y eso ni lo entiende el juez ni dice si la nota menciona el tema.
+    const texto = textosDeNota(a);
     const publicada = a.publishedAt ? new Date(a.publishedAt) : null;
     articulo = {
       id: a._id ? String(a._id) : null,
-      titulo: a.title || '',
+      titulo: texto.titulo,
       url: a.url || null,
       fuente: a.sourceName || null,
       categoria: a.category || null,
@@ -110,9 +111,9 @@ function armarRegistro(t, r, error, ms, logs) {
       importancia: a.importanceScore ?? null,
       geoScope: a.geoScope || null,
       tags: (a.tags || []).slice(0, 8),
-      resumen: String(a.rawSummary || a.contentSnippet || '').replace(/\s+/g, ' ').trim().slice(0, 400),
-      menciona: t.tipo === 'libre' ? mencionaTema(t.tema, cuerpo) : null,
-      mencionaEnTitulo: t.tipo === 'libre' ? mencionaTema(t.tema, a.title || '') : null,
+      resumen: texto.resumen,
+      menciona: t.tipo === 'libre' ? mencionaTema(t.tema, texto.cuerpo) : null,
+      mencionaEnTitulo: t.tipo === 'libre' ? mencionaTema(t.tema, texto.titulo) : null,
       categoriaOk: t.tipo === 'oficial' ? norm(a.category) === norm(t.categoria) : null,
       subtemaOk: t.tipo === 'oficial' ? norm(a.topic) === norm(t.tema) : null,
     };
@@ -130,7 +131,7 @@ function armarRegistro(t, r, error, ms, logs) {
     entregada: Boolean(a),
     rescate,
     zona,
-    // En un rescate el score es contra la consulta genérica del rescate, no contra el tema: no se informa.
+    // En un rescate no hay score contra el tema (el motor nuevo lo lee por etiqueta; el viejo buscaba una consulta genérica): no se informa.
     scoreBusqueda: rescate ? null : (r?.matchScore ?? articulo?.score ?? null),
     motivo: r ? (r.matchReason ?? null) : undefined,
     corral: r?.corralCategory ?? null,
@@ -269,7 +270,7 @@ async function main() {
     await almacen.run(logs, async () => {
       try {
         const res = await conTimeout(
-          pickBestArticlePerTopic([t.tema], { perTopicLimit: PER_TOPIC_LIMIT, alreadyShownUrls: [], alreadyShownTitles: [], seenEmbeddings: [] }),
+          pickBestArticlePerTopic([t.tema], { perTopicLimit: PER_TOPIC_LIMIT, alreadyShownUrls: [], seenEmbeddings: [] }),
           timeoutMs
         );
         r = Array.isArray(res) ? res[0] || null : null;
@@ -307,7 +308,12 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((error) => {
-  consolaOriginal.error(`✖ ${error.stack || error.message}`);
-  process.exit(1);
-});
+// Se corre como proceso hijo (cli.js). Los tests lo cargan para probar armarRegistro y juzgar sin arrancar una corrida.
+if (require.main === module) {
+  main().catch((error) => {
+    consolaOriginal.error(`✖ ${error.stack || error.message}`);
+    process.exit(1);
+  });
+}
+
+module.exports = { armarRegistro, juzgar };

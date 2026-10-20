@@ -16,7 +16,10 @@ const assert = require('node:assert/strict');
 
 const { openaiEmbeddings } = require('../../config/openai');
 const Article = require('../../models/Article');
-const { searchArticlesBySimilarityAtlas, generateQueryEmbedding } = require('../../embeddings/searchArticlesBySimilarityAtlas');
+const {
+  searchArticlesBySimilarityAtlas, generateQueryEmbedding, createQueryEmbeddingCache, queryEmbeddings,
+  QUERY_EMBEDDING_CACHE_TTL_MS, QUERY_EMBEDDING_CACHE_MAX_ENTRIES,
+} = require('../../embeddings/searchArticlesBySimilarityAtlas');
 
 // ---------------------------------------------------------------- falsos
 const embeddingsPedidos = [];
@@ -38,6 +41,7 @@ Article.aggregate = async (pipeline) => {
 };
 
 test.beforeEach(() => {
+  queryEmbeddings.clear(); // cada test empieza sin vectores en la caché de consultas
   embeddingsPedidos.length = 0;
   pipelines.length = 0;
   vectorial = [];
@@ -67,6 +71,135 @@ test('generateQueryEmbedding: texto vacío o respuesta inválida son errores (no
   await assert.rejects(() => generateQueryEmbedding('algo'), /Invalid query embedding response/);
   respuestaEmbedding = { data: [{ embedding: [] }] };
   await assert.rejects(() => generateQueryEmbedding('algo'), /Invalid query embedding response/);
+});
+
+// ================================================================ caché del embedding de la consulta
+/** Una caché con un "OpenAI" falso que cuenta las llamadas y un reloj que se mueve a mano. */
+function cacheFalsa({ ttlMs = 1000, maxEntries = 3, falla = null } = {}) {
+  const llamadas = [];
+  let ahora = 1_000_000;
+  const cache = createQueryEmbeddingCache({
+    ttlMs,
+    maxEntries,
+    now: () => ahora,
+    fetch: async (texto) => {
+      llamadas.push(texto);
+      if (!String(texto || '').trim()) throw new Error('Missing query text'); // como el cálculo real
+      await new Promise((resolve) => setImmediate(resolve));
+      if (falla && llamadas.length <= falla) throw new Error('OpenAI caído');
+      return [llamadas.length, texto.length];
+    },
+  });
+  return { cache, llamadas, avanzar: (ms) => { ahora += ms; } };
+}
+
+test('caché de consultas: el mismo texto se calcula una sola vez (sin importar los espacios de los bordes)', async () => {
+  const { cache, llamadas } = cacheFalsa();
+  const a = await cache.get('river plate millonarios');
+  const b = await cache.get('  river plate millonarios ');
+  assert.deepEqual(llamadas, ['river plate millonarios']);
+  assert.equal(b, a, 'es el mismo vector (el de la caché)');
+  assert.deepEqual(a, [1, 23]);
+});
+
+test('caché de consultas: textos distintos son vectores distintos (también si solo cambian las mayúsculas)', async () => {
+  const { cache, llamadas } = cacheFalsa();
+  await cache.get('river plate');
+  await cache.get('River Plate');
+  await cache.get('boca');
+  assert.deepEqual(llamadas, ['river plate', 'River Plate', 'boca']);
+});
+
+test('caché de consultas: pedidos simultáneos del mismo texto comparten UNA llamada', async () => {
+  const { cache, llamadas } = cacheFalsa();
+  const [x, y, z] = await Promise.all([cache.get('milei'), cache.get('milei '), cache.get(' milei')]);
+  assert.deepEqual(llamadas, ['milei']);
+  assert.equal(x, y);
+  assert.equal(y, z);
+  assert.equal(cache.inflight.size, 0, 'no queda nada en vuelo');
+});
+
+test('caché de consultas: un fallo no se guarda ni se queda pegado: el próximo pedido vuelve a intentar', async () => {
+  const { cache, llamadas } = cacheFalsa({ falla: 1 });
+  const juntos = await Promise.allSettled([cache.get('milei'), cache.get('milei')]);
+  assert.deepEqual(juntos.map((r) => r.status), ['rejected', 'rejected'], 'los que compartían la llamada comparten el fallo');
+  assert.equal(llamadas.length, 1);
+  assert.equal(cache.inflight.size, 0);
+
+  const v = await cache.get('milei');
+  assert.deepEqual(v, [2, 5]);
+  assert.equal(llamadas.length, 2);
+  await cache.get('milei');
+  assert.equal(llamadas.length, 2, 'ahora sí queda guardado');
+});
+
+test('caché de consultas: vence (el vector no cambia, pero la memoria no puede crecer sin límite)', async () => {
+  const { cache, llamadas, avanzar } = cacheFalsa({ ttlMs: 1000 });
+  await cache.get('milei');
+  avanzar(999);
+  await cache.get('milei');
+  assert.equal(llamadas.length, 1, 'a 999 ms sigue valiendo');
+  avanzar(1);
+  await cache.get('milei');
+  assert.equal(llamadas.length, 2, 'a 1000 ms venció');
+});
+
+test('caché de consultas: con el tope lleno se descarta la menos usada', async () => {
+  const { cache, llamadas } = cacheFalsa({ maxEntries: 2 });
+  await cache.get('a');
+  await cache.get('b');
+  await cache.get('a'); // a es la más reciente
+  await cache.get('c'); // se descarta b
+  assert.deepEqual(llamadas, ['a', 'b', 'c']);
+  await cache.get('a');
+  assert.equal(llamadas.length, 3, 'a sigue');
+  await cache.get('b');
+  assert.deepEqual(llamadas, ['a', 'b', 'c', 'b'], 'b se tuvo que volver a calcular');
+});
+
+test('caché de consultas: sin texto falla como siempre y no guarda nada', async () => {
+  const { cache, llamadas } = cacheFalsa();
+  for (const vacio of ['', '   ', null, undefined]) await assert.rejects(() => cache.get(vacio), /Missing query text/);
+  assert.equal(llamadas.length, 4, 'se le pasa al cálculo tal cual (que es el que rechaza el texto vacío)');
+  assert.equal(cache.cache.size, 0);
+
+  await assert.rejects(() => queryEmbeddings.get('   '), /Missing query text/);
+  assert.equal(embeddingsPedidos.length, 0);
+});
+
+test('caché de consultas: los valores de fábrica y clear()', async () => {
+  assert.equal(QUERY_EMBEDDING_CACHE_TTL_MS, 6 * 3600e3);
+  assert.equal(QUERY_EMBEDDING_CACHE_MAX_ENTRIES, 500);
+  assert.equal(queryEmbeddings.cache.ttlMs, QUERY_EMBEDDING_CACHE_TTL_MS);
+  assert.equal(queryEmbeddings.cache.maxEntries, QUERY_EMBEDDING_CACHE_MAX_ENTRIES);
+
+  const { cache, llamadas } = cacheFalsa();
+  await cache.get('a');
+  cache.clear();
+  await cache.get('a');
+  assert.equal(llamadas.length, 2);
+});
+
+test('búsqueda: dos búsquedas con la misma consulta expandida piden UN embedding (las dos van a Atlas)', async () => {
+  await searchArticlesBySimilarityAtlas('river plate', 'river plate millonarios');
+  await searchArticlesBySimilarityAtlas('river', 'river plate millonarios', { category: 'Deportes' });
+  assert.equal(embeddingsPedidos.length, 1);
+  assert.equal(pipelines.length, 4, 'cada búsqueda consulta los dos motores');
+  assert.deepEqual(pipelines.filter((p) => p[0].$vectorSearch).map((p) => p[0].$vectorSearch.queryVector), [[0.1, 0.2, 0.3], [0.1, 0.2, 0.3]]);
+
+  await searchArticlesBySimilarityAtlas('boca', 'boca bombonera');
+  assert.equal(embeddingsPedidos.length, 2, 'otra consulta, otro embedding');
+});
+
+test('búsqueda: si el embedding falla la búsqueda falla, y el próximo intento lo vuelve a pedir', async () => {
+  respuestaEmbedding = { data: [] };
+  await assert.rejects(() => searchArticlesBySimilarityAtlas('river', 'river club'), /Invalid query embedding response/);
+  assert.equal(pipelines.length, 0, 'sin vector no se consulta Atlas');
+
+  respuestaEmbedding = { data: [{ embedding: [0.5, 0.5] }] };
+  await searchArticlesBySimilarityAtlas('river', 'river club');
+  assert.equal(embeddingsPedidos.length, 2);
+  assert.deepEqual(pipelines.find((p) => p[0].$vectorSearch)[0].$vectorSearch.queryVector, [0.5, 0.5]);
 });
 
 // ================================================================ pipelines
@@ -111,7 +244,7 @@ test('proyección: trae los campos que mira la elegibilidad (geoScope, importanc
   await searchArticlesBySimilarityAtlas('river', 'river club');
   for (const p of pipelines) {
     const proyeccion = p.find((etapa) => etapa.$project).$project;
-    for (const campo of ['_id', 'title', 'url', 'publishedAt', 'importanceScore', 'category', 'topic', 'geoScope', 'section', 'tags', 'sourceName',
+    for (const campo of ['_id', 'title', 'url', 'publishedAt', 'importanceScore', 'category', 'topic', 'geoScope', 'contentType', 'section', 'tags', 'sourceName',
       'neutralTitle', 'neutralLead', 'neutralSummary', 'rawSummary', 'contentSnippet', 'imageUrl', 'curationStatus']) {
       assert.equal(proyeccion[campo], 1, `falta ${campo} en la proyección`);
     }

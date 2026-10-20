@@ -110,7 +110,7 @@ async function crearEntorno({ nivel, args = {}, log = () => {}, presupuesto, con
 
   async function pick(topics, opts = {}) {
     const t0 = Date.now();
-    const base = { perTopicLimit: CONTRATO.perTopicLimit, alreadyShownUrls: [], alreadyShownTitles: [], seenEmbeddings: [] };
+    const base = { perTopicLimit: CONTRATO.perTopicLimit, alreadyShownUrls: [], seenEmbeddings: [] };
     try {
       const { r, logs } = await captura.correr(() => conTimeout(pickBestArticlePerTopic(topics, { ...base, ...opts }), timeoutMs));
       return { resultados: r, ms: Date.now() - t0, error: null, timeout: false, logs, ahora: Date.now() };

@@ -11,20 +11,33 @@
  *   1. vigente        publishedAt dentro de MAX_ARTICLE_AGE_HOURS (24 h) y con fecha creíble
  *   2. sustancia      importanceScore >= 40 (>= 50 = "buena", 40-49 = "aceptable")
  *   3. país           en Sociedad, geoScope Argentina o Global (Política/Economía ya lo garantiza la ingesta)
- *   4. no opinión     ni columnas/editoriales/análisis
+ *   4. no opinión     ni columnas ni editoriales (por la URL, el título, las etiquetas o el tipo que dijo la IA)
+ *      ni publicidad  ni contenido patrocinado ("In House") ni notas de servicio (tutoriales, "dónde ver", recetas)
  *   5. no previa      ni agenda ni "en vivo" ni minuto a minuto
  *   6. no repetida    URL no vista, y no es "la misma historia" que algo visto en 48 h ni que algo ya elegido
+ *                     (coseno >= 0,88; entre 0,80 y 0,88 decide el juez de sameEventJudge.js)
  *
- * Entre las elegibles el orden es: nivel (buena antes que aceptable) -> [zona de similitud, solo
- * temas libres] -> banda de edad (hasta 10 h primero) -> importancia -> más nueva -> _id (desempate estable).
+ * Entre las elegibles el orden es: nivel (buena antes que aceptable) -> [pista de subtema, solo temas libres] ->
+ * banda de edad (hasta 10 h primero) -> importancia -> más nueva -> _id (desempate estable).
+ *
+ * La zona de similitud de la búsqueda (VERDE / AMARILLA) NO ordena: sale del puesto que ocupó la nota en dos listas
+ * (puntaje por posición, no por parecido real), así que dos notas de calidad muy distinta quedaban separadas por un
+ * escalón arbitrario. La relevancia la deciden el ancla léxica, el corral y el juez de tema; el orden, la calidad.
  */
 
 const { MAX_ARTICLE_AGE_HOURS, IDEAL_ARTICLE_AGE_HOURS, isPreviewOrAgenda } = require('./freshness');
+const { exclusionReasonOf } = require('./contentTypes');
 
 // ---------------------------------------------------------------- umbrales
 const IMPORTANCE_GOOD_MIN = 50;        // >= 50: nota "buena"
 const IMPORTANCE_ACCEPTABLE_MIN = 40;  // 40-49: "aceptable" (solo si no hay una buena)
 const SAME_STORY_COSINE = 0.88;        // coseno entre embeddings de notas: >= esto es la misma historia
+// Por debajo de 0,88 también hay notas que cuentan el MISMO hecho con otras palabras (otro medio, otro enfoque).
+// En la banda [0,80; 0,88) el coseno no alcanza para decidir y se le pregunta al juez (sameEventJudge.js);
+// por debajo de 0,80 son hechos distintos. El borde de 0,80 es una estimación: se afina con tests/medirCosenos.js,
+// que muestra el coseno real de las notas repetidas de un reporte.
+const SAME_STORY_JUDGE_MIN_COSINE = 0.80;
+const JUDGE_MAX_PAIRS_PER_CANDIDATE = 2; // contra cuántas notas vistas se compara una candidata como máximo
 const MAX_FUTURE_SKEW_HOURS = 3;       // una fecha más de 3 h en el futuro no es creíble
 
 // Cuánto mira hacia atrás el historial de lo que el usuario ya vio (getAlreadyShownUrlsForUser.js).
@@ -40,9 +53,24 @@ const LOCAL_SCOPES = new Set(['argentina', 'global']);
 
 const TIER = Object.freeze({ GOOD: 'buena', ACCEPTABLE: 'aceptable' });
 const TIER_RANK = { [TIER.GOOD]: 0, [TIER.ACCEPTABLE]: 1 };
-const ZONE_RANK = { VERDE: 0, AMARILLA: 1 };
 
-const OPINION_KEYWORDS = ['opinion', 'opinión', 'columna', 'columnista', 'editorial', 'analisis', 'análisis'];
+// Opinión y publicidad se reconocen por PALABRA COMPLETA, nunca por "contiene": con "contiene", un título como
+// "Análisis de sangre: qué mide", "La opinión pública y la inflación" o "Editorial Planeta lanzó..." quedaba
+// descartado, y a la vez no se reconocía "/columnistas/" porque nadie había pensado en esa palabra.
+
+// Segmentos de la ruta de la URL (igualdad exacta con el segmento entero, sin la última parte, que es el
+// título de la nota). Salen de las notas que de verdad se colaron en los reportes: /columnistas/ (Perfil, El
+// Cronista), /ambito-debate/ (Ámbito), /cartas-al-pais/ (Clarín).
+const OPINION_URL_SEGMENTS = new Set([
+  'opinion', 'opiniones', 'columna', 'columnas', 'columnista', 'columnistas',
+  'editorial', 'editoriales', 'cartas-al-pais', 'ambito-debate',
+]);
+// Contenido pago de un anunciante, presentado como nota (Infobae lo publica bajo /inhouse/).
+const ADVERTISING_URL_SEGMENTS = new Set(['inhouse']);
+// Etiquetas, sección y subtema: solo si SON la palabra (la IA etiqueta "opinión", no "opinión pública").
+const OPINION_LABELS = new Set(['opinion', 'columna', 'editorial', 'columnista', 'columna de opinion']);
+// Marca de género al principio del título: "Opinión: ...", "Columna | ...", "Análisis - ...".
+const OPINION_TITLE_MARKER = /^(?:opinion|columna|editorial|analisis)\s*[:|\-–—]/;
 
 // ---------------------------------------------------------------- utilidades
 function normalizeText(value) {
@@ -94,21 +122,38 @@ function ageBandOf(ageHours) {
   return ageHours <= IDEAL_ARTICLE_AGE_HOURS ? 'ideal' : 'valida';
 }
 
-// ---------------------------------------------------------------- opinión
-function includesOpinionKeyword(value) {
-  const normalized = normalizeText(value);
-  return OPINION_KEYWORDS.some((kw) => normalized.includes(normalizeText(kw)));
+// ---------------------------------------------------------------- opinión y publicidad
+/** Segmentos de la ruta de una URL, sin acentos ni mayúsculas, sin el último (el título de la nota). */
+function urlSectionSegments(rawUrl) {
+  const raw = String(rawUrl || '').trim();
+  if (!raw) return [];
+  let path;
+  try {
+    path = new URL(raw).pathname;
+  } catch {
+    path = raw.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, '').split(/[?#]/)[0];
+  }
+  const segments = path.split('/').filter(Boolean).map((segment) => {
+    let decoded = segment;
+    try { decoded = decodeURIComponent(segment); } catch { /* segmento con % mal formado: se compara tal cual */ }
+    return normalizeText(decoded);
+  });
+  return segments.length > 1 ? segments.slice(0, -1) : segments;
 }
 
 function isOpinionArticle(article = {}) {
-  const url = normalizeText(article.url);
+  if (urlSectionSegments(article.url).some((segment) => OPINION_URL_SEGMENTS.has(segment))) return true;
+  // La sección solo existe si el adaptador la completa (hoy ninguno); la categoría es una lista fija y no se mira.
+  if (OPINION_LABELS.has(normalizeText(article.section))) return true;
+  if (OPINION_LABELS.has(normalizeText(article.topic))) return true;
   const tags = Array.isArray(article.tags) ? article.tags : [];
+  if (tags.some((tag) => OPINION_LABELS.has(normalizeText(tag)))) return true;
+  return OPINION_TITLE_MARKER.test(normalizeText(article.title));
+}
 
-  if (url.includes('/opiniones/') || url.includes('/opinion/')) return true;
-  if (includesOpinionKeyword(article.section) || includesOpinionKeyword(article.category)) return true;
-  if (tags.some((tag) => includesOpinionKeyword(tag))) return true;
-  if (includesOpinionKeyword(article.title)) return true;
-  return false;
+/** true si la nota es contenido patrocinado presentado como nota. */
+function isAdvertisingArticle(article = {}) {
+  return urlSectionSegments(article.url).some((segment) => ADVERTISING_URL_SEGMENTS.has(segment));
 }
 
 // ---------------------------------------------------------------- país
@@ -143,6 +188,23 @@ function findSameStory(embedding, seen = [], threshold = SAME_STORY_COSINE) {
   return best.similarity >= threshold ? best : null;
 }
 
+/**
+ * Las notas vistas que caen en la banda del juez: coseno en [min, max). Las más parecidas primero, hasta `limit`.
+ * Devuelve [{ similarity, entry }] con la entrada completa de `seen` (id, título y bajada para la pregunta).
+ */
+function seenInJudgeBand(embedding, seen = [], {
+  min = SAME_STORY_JUDGE_MIN_COSINE, max = SAME_STORY_COSINE, limit = JUDGE_MAX_PAIRS_PER_CANDIDATE,
+} = {}) {
+  if (!Array.isArray(embedding) || embedding.length === 0) return [];
+  const near = [];
+  for (const entry of seen) {
+    const similarity = cosine(embedding, entry?.vector);
+    if (similarity >= min && similarity < max) near.push({ similarity, entry });
+  }
+  near.sort((a, b) => b.similarity - a.similarity);
+  return near.slice(0, limit);
+}
+
 // ---------------------------------------------------------------- elegibilidad
 /**
  * Chequeos baratos (no necesitan embedding). La comparación "misma historia" va aparte
@@ -170,7 +232,12 @@ function checkEligibility(article, { now = Date.now(), usedUrls = new Set() } = 
   if (!tier) reasons.push('importancia_baja');
   if (isForeignInLocalCategory(article)) reasons.push('otro_pais');
   if (isOpinionArticle(article)) reasons.push('opinion');
+  if (isAdvertisingArticle(article)) reasons.push('publicidad');
   if (isPreviewOrAgenda(article?.title)) reasons.push('previa_o_agenda');
+  // El tipo que dijo el clasificador (opinion, servicio, previa_agenda, publicidad). Las notas anteriores a ese
+  // campo no lo tienen y se tratan como noticia. Si la URL o el título ya dieron el mismo motivo, no se repite.
+  const typeReason = exclusionReasonOf(article?.contentType);
+  if (typeReason && !reasons.includes(typeReason)) reasons.push(typeReason);
 
   return {
     ok: reasons.length === 0,
@@ -184,9 +251,10 @@ function checkEligibility(article, { now = Date.now(), usedUrls = new Set() } = 
 
 // ---------------------------------------------------------------- orden
 /**
- * Comparador de candidatos ya elegibles. Cada entrada: { article, tier, zone?, ageHours, importance }.
+ * Comparador de candidatos ya elegibles. Cada entrada: { article, tier, hint?, ageHours, importance }.
  *   1. nivel      buena antes que aceptable
- *   2. zona       VERDE antes que AMARILLA (solo temas libres; si no hay zona, no desempata)
+ *   2. pista      (solo temas libres) 2 = la nota tiene el subtema que se esperaba del tema, 1 = solo la categoría, 0 = ninguna;
+ *                 la mayor primero. Sin pista (temas oficiales) no desempata.
  *   3. banda      hasta 10 h antes que 10-24 h
  *   4. importancia la mayor primero
  *   5. edad       la más nueva primero
@@ -196,8 +264,8 @@ function compareCandidates(a, b) {
   const byTier = (TIER_RANK[a.tier] ?? 9) - (TIER_RANK[b.tier] ?? 9);
   if (byTier) return byTier;
 
-  const byZone = (ZONE_RANK[a.zone] ?? 0) - (ZONE_RANK[b.zone] ?? 0);
-  if (byZone) return byZone;
+  const byHint = (b.hint || 0) - (a.hint || 0);
+  if (byHint) return byHint;
 
   const bandA = a.ageHours <= IDEAL_ARTICLE_AGE_HOURS ? 0 : 1;
   const bandB = b.ageHours <= IDEAL_ARTICLE_AGE_HOURS ? 0 : 1;
@@ -212,16 +280,29 @@ function compareCandidates(a, b) {
 }
 
 /**
+ * Cuánto coincide una nota con la pista { cat, sub } de la expansión del tema: 2 = mismo subtema (y categoría),
+ * 1 = misma categoría, 0 = ninguna o sin pista. Es una pista de orden, nunca un filtro.
+ */
+function hintLevel(article, hint) {
+  if (!hint || (!hint.cat && !hint.sub)) return 0;
+  const sameCategory = !hint.cat || normalizeText(article?.category) === normalizeText(hint.cat);
+  if (hint.sub && normalizeText(article?.topic) === normalizeText(hint.sub) && sameCategory) return 2;
+  if (hint.cat && normalizeText(article?.category) === normalizeText(hint.cat)) return 1;
+  return 0;
+}
+
+/**
  * Evalúa y ordena una lista de notas. Devuelve las elegibles ordenadas y, aparte, las descartadas
  * con el motivo (para trazabilidad y tests).
  *
  * @param {object[]} articles
  * @param {object} ctx            igual que checkEligibility
  * @param {object} [opts]
- * @param {(a:object)=>string|null} [opts.zoneOf]  zona de similitud de cada nota (temas libres)
+ * @param {(a:object)=>string|null} [opts.zoneOf]  zona de similitud de cada nota (temas libres); solo informativa, no ordena
+ * @param {(a:object)=>number} [opts.hintOf]       nivel de pista de subtema de cada nota, 0-2 (temas libres); ordena
  * @param {boolean} [opts.goodOnly]               solo nivel "buena" (rescate)
  */
-function rankEligible(articles, ctx = {}, { zoneOf = null, goodOnly = false } = {}) {
+function rankEligible(articles, ctx = {}, { zoneOf = null, hintOf = null, goodOnly = false } = {}) {
   const eligible = [];
   const rejected = [];
   for (const article of articles || []) {
@@ -238,6 +319,7 @@ function rankEligible(articles, ctx = {}, { zoneOf = null, goodOnly = false } = 
       article,
       tier: ev.tier,
       zone: zoneOf ? zoneOf(article) : null,
+      hint: hintOf ? hintOf(article) : 0,
       ageHours: Math.max(0, ev.ageHours),
       band: ev.band,
       importance: ev.importance,
@@ -251,12 +333,15 @@ module.exports = {
   IMPORTANCE_GOOD_MIN,
   IMPORTANCE_ACCEPTABLE_MIN,
   SAME_STORY_COSINE,
+  SAME_STORY_JUDGE_MIN_COSINE,
+  JUDGE_MAX_PAIRS_PER_CANDIDATE,
   MAX_FUTURE_SKEW_HOURS,
   HISTORY_WINDOW_HOURS,
   HISTORY_MAX_NOTES,
   LOCAL_ONLY_CATEGORIES,
   TIER,
-  OPINION_KEYWORDS,
+  OPINION_URL_SEGMENTS,
+  ADVERTISING_URL_SEGMENTS,
   normalizeText,
   cosine,
   ageHoursOf,
@@ -264,10 +349,13 @@ module.exports = {
   tierOf,
   ageBandOf,
   isOpinionArticle,
+  isAdvertisingArticle,
   isForeignInLocalCategory,
   mostSimilarSeen,
   findSameStory,
+  seenInJudgeBand,
   checkEligibility,
   compareCandidates,
+  hintLevel,
   rankEligible,
 };

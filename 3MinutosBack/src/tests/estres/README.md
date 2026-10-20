@@ -70,12 +70,12 @@ Salen de leer el código, no de medir; los escenarios dinámicos muestran su efe
 | # | Hallazgo | ¿Sigue en el motor nuevo? |
 |---|---|---|
 | 1 | `searchArticlesBySimilarityAtlas` no proyecta `embedding` y el motor tampoco lo lee aparte: **el filtro de "misma historia" nunca bloquea nada** | No: el motor lee los embeddings de los finalistas |
-| 2 | `buildDigestForUser` lee `history.titles`, pero el historial no lo devuelve | No |
+| 2 | `buildDigestForUser` leía `history.titles`, pero el historial no lo devolvía (`alreadyShownTitles` llegaba siempre vacío y el motor no lo usaba) | Ya no hay hallazgo: se eliminó la lista de títulos sueltos (el título viaja con cada embedding) |
 | 3 | El historial mira solo las últimas **30** notas vistas | No: 48 h, hasta 150 notas |
-| 4 | Los clientes de OpenAI no tienen `timeout` ni `maxRetries` (rigen los del SDK: 10 min y 2 reintentos) | No en el camino del digest (la expansión y el embedding de la consulta llevan los suyos) |
+| 4 | Los clientes de OpenAI no tienen `timeout` ni `maxRetries` (rigen los del SDK: 10 min y 2 reintentos) | No en el camino del digest (la expansión, el embedding de la consulta y las preguntas a los jueces llevan los suyos) |
 | 5 | La conexión a Mongo no fija `maxPoolSize` ni `socketTimeoutMS` | Sí |
-| 6 | `queryExpansionCache` es un `Map` que solo crece (y no deduplica pedidos simultáneos del mismo tópico nuevo; el escenario D mide cuántas expansiones paga una ráfaga) | Sí |
-| 7 | El rescate de los temas libres usa una consulta fija por categoría: todos los que fallan reciben la misma nota | Sí (los oficiales ya no usan esa consulta) |
+| 6 | La caché de expansiones era un `Map` que solo crecía (y no deduplicaba pedidos simultáneos del mismo tópico nuevo; el escenario D mide cuántas expansiones paga una ráfaga) | No: `topicExpansion.js` tiene tope, vencimiento y comparte la llamada en curso |
+| 7 | El rescate de los temas libres usaba una consulta fija por categoría ("<categoría> Argentina actualidad nacional"): todos los que fallaban recibían la misma nota | No: lee la categoría por etiqueta, como los temas oficiales, y a igual calidad prefiere el subtema y la categoría que sugirió la IA (sin consulta, así que tampoco depende de la búsqueda ni de OpenAI). El escenario A sigue midiendo cuántos tópicos terminan en la misma nota |
 | 8 | `TOPIC_TO_CATEGORY[topic]` busca en un objeto común (`constructor`, `toString`… devuelven funciones), en el motor o en la ingesta | No |
 | 9 | La cron genera los digests uno tras otro | Sí |
 | 10 | **La app muestra el digest guardado sin volver a revisar la edad de sus notas** (una nota elegida a la mañana se sigue mostrando a la noche) | No: `ensureFreshDigest` revisa y reemplaza las vencidas |
@@ -123,6 +123,7 @@ Para interpretar bien los números:
 - La curación de OpenAI (que reescribe títulos y **escribe en `Article`**) y el `DigestTestLog` están **simulados**, para no escribir. Por eso `D-CAPACIDAD-CRON` es un techo: en producción es más lento.
 - Un "quiebre" de la rampa depende también de tu plan de Atlas (un cluster chico se satura antes) y de los límites (RPM/TPM) de tus claves de OpenAI. Si ves 429, el cuello de botella es OpenAI, no tu código.
 - Con `--cache-openai` se repite sin costo pero se pierden los 429 y la latencia real de OpenAI: no usarlo para medir carga.
+- El servidor guarda en memoria, 6 h y con tope de 500, el vector de cada consulta de búsqueda: la segunda vez que aparece un tópico en la misma corrida ya no llama a OpenAI (más rápido que en producción en frío, y `G-EMBEDDINGS-REPETIDOS` solo salta si algo los vuelve a pedir). La expansión de tópicos nuevos sigue siendo la parte cara en frío: el servidor además guarda las expansiones en Mongo (`topic_expansions`) para que un deploy no las pierda, pero eso lo activa solo `server.js`; el estrés no lo usa (seguiría siendo de solo lectura) y mide, como un usuario después de un deploy sin copia, lo que cuesta el primer pedido de cada tópico.
 - El reporte incluye **tópicos de usuarios reales** (tríos de `user_preferences`), sin sus ids y sin el host de Mongo. No lo compartas públicamente sin revisarlo.
 
 ## Seguridad
@@ -144,7 +145,7 @@ La API HTTP (rutas, autenticación, rate limits de Express), las notificaciones 
 
 `npm run test:unit` incluye 161 tests del script (`src/tests/unit/estres.*.test.js`). Usan un entorno 100 % falso (`estres.fake.js`): comprueban que cada hallazgo se detecta cuando se inyecta la falla y que **no** se inventan problemas cuando todo está sano, que el plan de `--dry-run` coincide con lo que los escenarios hacen, que cortar a la mitad deja un reporte parcial y que el CLI no filtra credenciales.
 
-Además se corrió **una vez de punta a punta con un Mongo, un OpenAI y una red simuladas** (nada se conectó): el CLI real, `entorno.js`, la búsqueda híbrida, `pickBestArticlePerTopic` y `buildDigestForUser` reales, mongoose 9 real, el SDK real de OpenAI con `fetch` falso y las clases reales de eventos del driver `mongodb` 7.1. Corrieron los 6 escenarios, no se escribió nada, no hubo red ni credenciales en la salida, y esa corrida sacó a la luz (y se arreglaron) tres defectos del propio script. La corrida se repitió con el motor nuevo (temas oficiales por etiqueta, historial de 48 h con embeddings y reposición de notas vencidas al abrir el digest): sin violaciones de invariantes y con la auditoría estática en 4 hallazgos.
+Además se corrió **una vez de punta a punta con un Mongo, un OpenAI y una red simuladas** (nada se conectó): el CLI real, `entorno.js`, la búsqueda híbrida, `pickBestArticlePerTopic` y `buildDigestForUser` reales, mongoose 9 real, el SDK real de OpenAI con `fetch` falso y las clases reales de eventos del driver `mongodb` 7.1. Corrieron los 6 escenarios, no se escribió nada, no hubo red ni credenciales en la salida, y esa corrida sacó a la luz (y se arreglaron) tres defectos del propio script. La corrida se repitió con el motor nuevo (temas oficiales por etiqueta, historial de 48 h con embeddings y reposición de notas vencidas al abrir el digest): sin violaciones de invariantes. Con el código de este PR la auditoría estática marca 2 hallazgos: el pool de Mongo (BAJA) y la cron secuencial (INFO).
 
 **Lo que nunca se ejecutó es contra tu Atlas y tu OpenAI reales**: ahí pueden aparecer cosas que ningún simulador reproduce (latencias, 429, índices de Atlas Search, el comportamiento real de `$vectorSearch`). Si algo sale raro, el reporte lo marca como `X-ERROR-DEL-TEST` y conviene avisar con el mensaje completo.
 

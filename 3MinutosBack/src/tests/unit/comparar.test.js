@@ -13,8 +13,10 @@ const path = require('node:path');
 
 const { parseArgs } = require('../comparar/utilidades');
 const {
-  mencionaTema, relevanciaDe, particion, resumir, soloEnComun, compararVersiones, chequeosCordura, veredicto,
+  mencionaTema, textosDeNota, RESUMEN_MAX_CHARS, relevanciaDe, particion, resumir, soloEnComun, compararVersiones,
+  chequeosCordura, veredicto,
 } = require('../comparar/metricas');
+const { armarRegistro, juzgar } = require('../comparar/corrida');
 const { construirTemas, temasOficiales, verificarOficialesContraCodigo } = require('../comparar/temas');
 const { htmlReporte, csvComparacion, textoConsola } = require('../comparar/reporte');
 
@@ -66,6 +68,98 @@ test('mencionaTema: frase completa o al menos la mitad de las palabras', () => {
   assert.equal(mencionaTema('milei', 'El presidente Javier Milei viajó'), true);
   assert.equal(mencionaTema('milei', 'Rivera Milena'), false); // palabra completa
   assert.equal(mencionaTema('dólar blue', 'Sube el dolar'), true); // sin tildes
+});
+
+test('textosDeNota: título, resumen y cuerpo salen en texto plano, sin etiquetas ni entidades', () => {
+  const t = textosDeNota({
+    title: '<b>Milei</b> anunci&oacute; un plan &amp; nuevas medidas',
+    rawSummary: '<p>El Gobierno anunci&oacute; medidas &#8220;urgentes&#8221;.</p>',
+    contentSnippet: 'Otro texto &amp; m&aacute;s',
+    tags: ['econom\u00eda', 'gobierno'],
+  });
+  assert.equal(t.titulo, 'Milei anunció un plan & nuevas medidas');
+  assert.equal(t.resumen, 'El Gobierno anunció medidas “urgentes”.');
+  assert.equal(t.cuerpo, 'Milei anunció un plan & nuevas medidas El Gobierno anunció medidas “urgentes”. Otro texto & más economía gobierno');
+  for (const texto of Object.values(t)) assert.doesNotMatch(texto, /[<>]|&[a-z#0-9]+;/i, texto);
+});
+
+test('textosDeNota: una bajada que era solo una imagen se salta; sin ningún dato no queda "undefined"', () => {
+  const imagen = '<p><img src="https://x.test/foto.jpg?auth=abc" alt="" width="4000"/></p>';
+  assert.equal(textosDeNota({ title: 'T', rawSummary: imagen, contentSnippet: 'El snippet con la noticia.' }).resumen, 'El snippet con la noticia.');
+  assert.equal(textosDeNota({ title: 'T', rawSummary: imagen }).resumen, '');
+
+  assert.deepEqual(textosDeNota({}), { titulo: '', resumen: '', cuerpo: '' });
+  assert.deepEqual(textosDeNota(), { titulo: '', resumen: '', cuerpo: '' });
+});
+
+test('textosDeNota: la dirección de una imagen no cuenta como que la nota menciona el tema', () => {
+  const nota = { title: 'Sube el dólar', rawSummary: '<img src="https://cdn.test/milei-discurso.jpg" alt="foto"/><p>El blue cerró a $1.400.</p>' };
+  const { cuerpo } = textosDeNota(nota);
+  assert.equal(mencionaTema('milei', cuerpo), false);
+  // con el HTML crudo (como se leía antes) la dirección de la imagen sí "mencionaba" al presidente
+  assert.equal(mencionaTema('milei', `${nota.title} ${nota.rawSummary}`), true);
+});
+
+test('textosDeNota: el resumen que ve el juez tiene un tope y se corta en el límite de una palabra', () => {
+  const largo = Array.from({ length: 200 }, (_, i) => `palabra${i}`).join(' ');
+  const { resumen } = textosDeNota({ title: 'T', rawSummary: `<p>${largo}</p>` });
+  assert.ok(resumen.length <= RESUMEN_MAX_CHARS && resumen.length > RESUMEN_MAX_CHARS * 0.8, `largo ${resumen.length}`);
+  assert.ok(largo.startsWith(resumen) && /palabra\d+$/.test(resumen), 'termina en una palabra entera');
+});
+
+// Una nota como la devuelve el motor, con la bajada del feed tal cual (HTML y entidades).
+const notaDeFeed = (extra = {}) => ({
+  _id: 'n1', title: 'Sube el d&oacute;lar', url: 'https://x.test/n1', sourceName: 'Medio', category: 'Economía', topic: 'Dólar',
+  publishedAt: new Date(Date.now() - 3 * 36e5), score: 0.91, finalScore: 0.7, importanceScore: 70, geoScope: 'Argentina', tags: ['dólar'],
+  rawSummary: '<img src="https://cdn.test/milei-discurso.jpg" alt=""/><p>El blue cerr&oacute; a $1.400.</p>',
+  ...extra,
+});
+
+test('corrida: el registro guarda título y resumen en texto plano y mide "menciona" sobre ese texto', () => {
+  const t = { tema: 'milei', tipo: 'libre', nivel: 'libre' };
+  const { articulo } = armarRegistro(t, { article: notaDeFeed(), matchZone: 'VERDE' }, null, 120, []);
+
+  assert.equal(articulo.titulo, 'Sube el dólar');
+  assert.equal(articulo.resumen, 'El blue cerró a $1.400.');
+  assert.equal(articulo.menciona, false, 'la dirección de la imagen no es una mención');
+  assert.equal(articulo.mencionaEnTitulo, false);
+
+  const dolar = armarRegistro({ tema: 'dólar', tipo: 'libre', nivel: 'libre' }, { article: notaDeFeed(), matchZone: 'VERDE' }, null, 1, []).articulo;
+  assert.deepEqual([dolar.menciona, dolar.mencionaEnTitulo], [true, true], 'el título limpio ("dólar") sí menciona el tema');
+});
+
+test('corrida: si la bajada era solo una imagen, el resumen sale del snippet', () => {
+  const nota = notaDeFeed({ rawSummary: '<p><img src="https://x.test/1.jpg" alt=""/></p>', contentSnippet: 'El snippet con la noticia.' });
+  const { articulo } = armarRegistro({ tema: 'dólar', tipo: 'libre', nivel: 'libre' }, { article: nota }, null, 1, []);
+  assert.equal(articulo.resumen, 'El snippet con la noticia.');
+});
+
+test('corrida: al juez le llegan el título y el resumen en texto plano (y "(sin resumen)" si no hay)', async () => {
+  const pedidos = [];
+  const cfg = {
+    openaiReview: { chat: { completions: { create: async (args) => { pedidos.push(args); return { choices: [{ message: { content: 'Sí.' } }] }; } } } },
+  };
+  const t = { tema: 'dólar', tipo: 'libre', nivel: 'libre' };
+
+  const reg = armarRegistro(t, { article: notaDeFeed() }, null, 1, []);
+  assert.equal(await juzgar(cfg, reg), 'SI');
+  const mensaje = pedidos[0].messages[1].content;
+  assert.equal(mensaje, 'TEMA: dólar\nTÍTULO: Sube el dólar\nRESUMEN: El blue cerró a $1.400.');
+  assert.doesNotMatch(mensaje, /[<>]|&[a-z#0-9]+;/i);
+
+  const sinBajada = armarRegistro(t, { article: notaDeFeed({ rawSummary: '<img src="https://x.test/1.jpg"/>' }) }, null, 1, []);
+  await juzgar(cfg, sinBajada);
+  assert.match(pedidos[1].messages[1].content, /RESUMEN: \(sin resumen\)$/);
+});
+
+test('corrida: lo que contesta el juez se reduce a SI, PARCIAL, NO o nada', async () => {
+  const con = (content) => ({ openaiReview: { chat: { completions: { create: async () => ({ choices: [{ message: { content } }] }) } } } });
+  const reg = armarRegistro({ tema: 'dólar', tipo: 'libre', nivel: 'libre' }, { article: notaDeFeed() }, null, 1, []);
+  assert.equal(await juzgar(con('SI'), reg), 'SI');
+  assert.equal(await juzgar(con('Parcial.'), reg), 'PARCIAL');
+  assert.equal(await juzgar(con('no'), reg), 'NO');
+  assert.equal(await juzgar(con('quizás'), reg), null);
+  assert.equal(await juzgar(con(undefined), reg), null);
 });
 
 test('relevanciaDe: libres usan al juez; sin juez, el título; oficiales, categoría y subtema', () => {

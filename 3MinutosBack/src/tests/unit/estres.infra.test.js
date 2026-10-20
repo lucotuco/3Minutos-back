@@ -155,6 +155,42 @@ test('instrumentarOpenAI: cuenta llamadas, textos únicos y latencias, sin alter
   assert.equal(c.openai.embeddings.ms.length, 3);
 });
 
+test('clasificarChat: reparte las llamadas de chat en expansión, juez de tema, juez de misma historia y otras', () => {
+  const con = (sistema) => ({ messages: [{ role: 'system', content: sistema }, { role: 'user', content: 'x' }] });
+  assert.equal(inst.clasificarChat(con('Sos un experto en expansión de consultas para un motor de búsqueda vectorial periodístico (2026).')), 'expansion');
+  assert.equal(inst.clasificarChat(con('Sos un experto en expansion de consultas')), 'expansion', 'sin tilde también');
+  assert.equal(inst.clasificarChat(con('Sos un evaluador estricto de relevancia periodística.\nTe doy un TEMA…')), 'juezTema');
+  assert.equal(inst.clasificarChat(con('Sos el editor de un resumen diario de noticias argentinas. Te doy dos notas y tenés que decidir si cuentan EL MISMO HECHO.')), 'juezHistoria');
+  for (const rara of [con('Otra cosa'), { messages: [] }, { messages: [{ role: 'user', content: 'expansión de consultas' }] }, { model: 'm' }, null, undefined, {}]) {
+    assert.equal(inst.clasificarChat(rara), 'otras', JSON.stringify(rara));
+  }
+});
+
+test('instrumentarOpenAI: separa en `tipos` las expansiones de las preguntas de los jueces, y el snapshot/diferencia lo conserva', async () => {
+  const cfg = cfgFalso();
+  const c = inst.crearContadores();
+  inst.instrumentarOpenAI(cfg, c, inst.crearPresupuesto(100));
+  const con = (sistema) => ({ messages: [{ role: 'system', content: sistema }] });
+  const llamar = (sistema) => cfg.openaiReview.chat.completions.create(con(sistema));
+
+  const antes = inst.snapshot(c);
+  await llamar('Sos un experto en expansión de consultas');
+  await Promise.all([
+    llamar('Sos un evaluador estricto de relevancia periodística.'),
+    llamar('Sos un evaluador estricto de relevancia periodística.'),
+    llamar('Sos el editor … EL MISMO HECHO.'),
+    llamar('algo distinto'),
+  ]);
+  await cfg.openaiEmbeddings.embeddings.create({ input: 'a' });
+
+  assert.deepEqual(c.openai.chat.tipos, { expansion: 1, juezTema: 2, juezHistoria: 1, otras: 1 });
+  assert.equal(c.openai.chat.llamadas, 5);
+  assert.deepEqual(c.openai.embeddings.tipos, { expansion: 0, juezTema: 0, juezHistoria: 0, otras: 0 }, 'en embeddings no se clasifica');
+  const d = inst.diferencia(antes, inst.snapshot(c));
+  assert.deepEqual(d.openai.chat.tipos, { expansion: 1, juezTema: 2, juezHistoria: 1, otras: 1 });
+  assert.doesNotThrow(() => JSON.stringify(inst.snapshot(c)));
+});
+
 test('instrumentarOpenAI: clasifica los errores, los vuelve a lanzar y respeta el presupuesto', async () => {
   const e429 = Object.assign(new Error('rate limit'), { status: 429 });
   const cfg = cfgFalso({ emb: async () => { throw e429; } });

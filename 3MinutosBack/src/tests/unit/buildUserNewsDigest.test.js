@@ -78,18 +78,27 @@ function pick(topic, extra = {}) {
 test('le pasa al motor los temas, el historial (URLs, títulos y embeddings de lo ya visto) y el tamaño de ventana', async () => {
   const vistos = [{ title: 'ya vista', vector: [1, 0] }];
   await buildUserNewsDigest({
-    topics: ['Fútbol', 'river plate'], alreadyShownUrls: ['https://m.test/vista'], alreadyShownTitles: ['Vista'], seenEmbeddings: vistos, perTopicLimit: 7,
+    topics: ['Fútbol', 'river plate'], alreadyShownUrls: ['https://m.test/vista'], seenEmbeddings: vistos, perTopicLimit: 7,
   });
   assert.equal(llamadasMotor.length, 1);
   assert.deepEqual(llamadasMotor[0].topics, ['Fútbol', 'river plate']);
   assert.deepEqual(llamadasMotor[0].opts, {
-    perTopicLimit: 7, alreadyShownUrls: ['https://m.test/vista'], alreadyShownTitles: ['Vista'], seenEmbeddings: vistos,
+    perTopicLimit: 7, alreadyShownUrls: ['https://m.test/vista'], seenEmbeddings: vistos, judgeWaitMs: null,
   });
 });
 
-test('por defecto: ventana de 10 y sin historial', async () => {
+test('por defecto: ventana de 10, sin historial y el presupuesto de espera de los jueces de un digest en vivo (null)', async () => {
   await buildUserNewsDigest({ topics: ['Fútbol'] });
-  assert.deepEqual(llamadasMotor[0].opts, { perTopicLimit: 10, alreadyShownUrls: [], alreadyShownTitles: [], seenEmbeddings: [] });
+  assert.deepEqual(llamadasMotor[0].opts, {
+    perTopicLimit: 10, alreadyShownUrls: [], seenEmbeddings: [], judgeWaitMs: null,
+  });
+});
+
+test('le pasa al motor el presupuesto de espera a los jueces que se le dio', async () => {
+  await buildUserNewsDigest({ topics: ['Fútbol'], judgeWaitMs: 4000 });
+  assert.equal(llamadasMotor[0].opts.judgeWaitMs, 4000);
+  await buildUserNewsDigest({ topics: ['Fútbol'], judgeWaitMs: 0 });
+  assert.equal(llamadasMotor[1].opts.judgeWaitMs, 0, 'cero (solo caché) no se confunde con "sin dato"');
 });
 
 test('sin temas devuelve un digest vacío y no llama al motor', async () => {
@@ -167,6 +176,52 @@ test('si la curación con IA falla, el ítem sale igual con textos de respaldo y
     assert.equal(items[0].tier, 'buena');
     assert.equal(items[0].ageHoursAtPick, 3);
     assert.ok(items[0].title && items[0].summary);
+  } finally {
+    curacion = async (id) => ({ neutralTitle: `Titulo ${id}`, neutralLead: `Bajada ${id}`, neutralSummary: `Resumen ${id}`, cached: false, neutralityScore: 80, politicalBiasRisk: 'low' });
+  }
+});
+
+test('textos de respaldo: una bajada que era solo una imagen se saltea (snippet, y si no hay, el título)', async () => {
+  const imagen = '<p><img src="https://x.test/1.jpg" alt="" width="10"/></p>';
+  const sinCuracion = { neutralTitle: '', neutralLead: '', neutralSummary: '', cached: false, neutralityScore: 80, politicalBiasRisk: 'low' };
+  const original = curacion;
+  try {
+    // 1) la curación devuelve vacío: arma el digest con lo que dice la nota
+    curacion = async () => sinCuracion;
+    picks = [pick('Fútbol', { article: { title: 'Boca ganó 2 a 1', rawSummary: imagen, contentSnippet: 'El snippet con la noticia.' } })];
+    let { items } = await buildUserNewsDigest({ topics: ['Fútbol'] });
+    assert.equal(items[0].lead, 'El snippet con la noticia.');
+    assert.equal(items[0].summary, 'El snippet con la noticia.');
+
+    picks = [pick('Fútbol', { article: { title: 'Boca ganó 2 a 1', rawSummary: imagen } })];
+    ({ items } = await buildUserNewsDigest({ topics: ['Fútbol'] }));
+    assert.equal(items[0].lead, 'Boca ganó 2 a 1', 'sin otro texto, la bajada es el título');
+
+    // 2) la curación revienta: armado de respaldo completo
+    curacion = async () => { throw new Error('OpenAI 429'); };
+    picks = [pick('Fútbol', { article: { title: '<img src="https://x.test/2.jpg" alt=""/>', rawSummary: imagen, contentSnippet: 'El snippet con la noticia.' } })];
+    ({ items } = await buildUserNewsDigest({ topics: ['Fútbol'] }));
+    assert.equal(items[0].title, 'Noticia relevante del día', 'un título que era solo una etiqueta no queda vacío');
+    assert.equal(items[0].lead, 'El snippet con la noticia.');
+  } finally {
+    curacion = original;
+  }
+});
+
+test('si la curación con IA falla, los textos de respaldo salen en texto plano (sin etiquetas ni entidades)', async () => {
+  picks = [pick('Fútbol', {
+    article: {
+      title: '<b>Boca</b> gan&oacute; 2 a 1 en La Bombonera',
+      rawSummary: '<p><img src="https://x.test/1.jpg" alt="" width="10"/></p><p>El equipo se impuso &#8220;con autoridad&#8221; &amp; sigue arriba.</p>',
+    },
+  })];
+  curacion = async () => { throw new Error('OpenAI 429'); };
+  try {
+    const { items } = await buildUserNewsDigest({ topics: ['Fútbol'] });
+    assert.equal(items[0].curationFallback, true);
+    assert.equal(items[0].title, 'Boca ganó 2 a 1 en La Bombonera');
+    assert.equal(items[0].lead, 'El equipo se impuso “con autoridad” & sigue arriba.');
+    assert.equal(items[0].summary, 'El equipo se impuso “con autoridad” & sigue arriba.');
   } finally {
     curacion = async (id) => ({ neutralTitle: `Titulo ${id}`, neutralLead: `Bajada ${id}`, neutralSummary: `Resumen ${id}`, cached: false, neutralityScore: 80, politicalBiasRisk: 'low' });
   }

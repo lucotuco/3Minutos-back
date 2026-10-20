@@ -10,8 +10,8 @@ const assert = require('node:assert/strict');
 
 const {
   IMPORTANCE_GOOD_MIN, IMPORTANCE_ACCEPTABLE_MIN, SAME_STORY_COSINE, TIER,
-  cosine, ageHoursOf, tierOf, ageBandOf, isOpinionArticle, isForeignInLocalCategory,
-  findSameStory, mostSimilarSeen, checkEligibility, compareCandidates, rankEligible,
+  cosine, ageHoursOf, tierOf, ageBandOf, isOpinionArticle, isAdvertisingArticle, isForeignInLocalCategory,
+  OPINION_URL_SEGMENTS, ADVERTISING_URL_SEGMENTS, findSameStory, mostSimilarSeen, checkEligibility, compareCandidates, hintLevel, rankEligible,
 } = require('../../utils/eligibility');
 
 const NOW = Date.parse('2026-10-15T12:00:00.000Z');
@@ -155,15 +155,143 @@ test('Política y Economía tampoco: la ingesta ya manda a Internacional lo que 
 
 // ---------------------------------------------------------------- opinión y previas
 
-test('opinión: por URL, sección, categoría, tags o título', () => {
-  assert.equal(isOpinionArticle(nota({ url: 'https://medio.test/opinion/columna-1' })), true);
-  assert.equal(isOpinionArticle(nota({ url: 'https://medio.test/opiniones/x' })), true);
+test('opinión: se reconoce por el segmento de la URL (las secciones reales de los medios)', () => {
+  const urls = [
+    'https://medio.test/opinion/columna-1',
+    'https://medio.test/opiniones/x',
+    'https://www.perfil.com/noticias/columnistas/es-la-democracia-estupido.phtml',     // se coló en Política (Perfil)
+    'https://www.cronista.com/columnistas/inflacion-y-dolar/',
+    'https://www.ambito.com/ambito-debate/el-modelo-de-pais-n5900000',
+    'https://www.clarin.com/cartas-al-pais/cartas-de-lectores_0_abc.html',
+    'https://www.lanacion.com.ar/editoriales/titulo-nid15102026/',
+    'https://www.clarin.com/OPINION/Titulo_0_abc.html',                                 // mayúsculas
+    'https://www.lanacion.com.ar/opini%C3%B3n/titulo-nid1/',                            // acento codificado
+  ];
+  for (const url of urls) assert.equal(isOpinionArticle(nota({ url })), true, url);
+  assert.deepEqual(checkEligibility(nota({ url: 'https://medio.test/columnistas/x/nota' }), ctx()).reasons, ['opinion']);
+});
+
+test('opinión: el segmento tiene que ser la palabra entera, y no cuenta la última parte (el título de la nota)', () => {
+  const urls = [
+    'https://www.clarin.com/politica/columnistas-de-la-semana_0_abc.html',   // el título contiene la palabra
+    'https://medio.test/politica/editorial-planeta-lanzo-su-catalogo',
+    'https://medio.test/politica/editorial-de-la-semana/nota-1',             // carpeta que contiene la palabra, no es la palabra
+    'https://medio.test/sociedad/analisis-de-sangre',
+    'https://www.perfil.com/noticias/empresas-y-protagonistas/aysa.phtml',   // sección mixta: no se bloquea por URL
+    'https://medio.test/politica/nota?ref=/opinion/',                        // la palabra en el query no es una sección
+    'https://medio.test/politica/nota#opinion',
+    'https://medio.test/opinion',                                            // una sola parte: es la portada de la sección
+    'https://medio.test/sociedad/editorial',                                 // la última parte es el título de la nota, aunque sea la palabra
+  ];
+  const esperado = [false, false, false, false, false, false, false, true, false];
+  urls.forEach((url, i) => assert.equal(isOpinionArticle(nota({ url })), esperado[i], url));
+});
+
+test('opinión: también funciona con rutas relativas, URLs raras y acentos mal codificados', () => {
+  assert.equal(isOpinionArticle(nota({ url: '/opinion/algo/nota' })), true);
+  assert.equal(isOpinionArticle(nota({ url: 'medio.test/columnistas/fulano/nota' })), true);
+  assert.equal(isOpinionArticle(nota({ url: 'https://medio.test/opini%ZZn/nota' })), false, 'un % mal formado no rompe nada');
+  assert.equal(isOpinionArticle(nota({ url: 'https://medio.test/opini%C3%B3n/nota' })), true);
+  assert.equal(isOpinionArticle(nota({ url: 'no es una url' })), false);
+  assert.equal(isOpinionArticle(nota({ url: undefined })), false);
+});
+
+test('opinión: etiquetas, sección y subtema solo cuentan si SON la palabra', () => {
   assert.equal(isOpinionArticle(nota({ section: 'Opinión' })), true);
-  assert.equal(isOpinionArticle(nota({ category: 'Opinion' })), true);
+  assert.equal(isOpinionArticle(nota({ topic: 'Columna de opinión' })), true);
   assert.equal(isOpinionArticle(nota({ tags: ['política', 'Columnista'] })), true);
-  assert.equal(isOpinionArticle(nota({ title: 'Análisis: qué viene después del dólar' })), true);
-  assert.equal(isOpinionArticle(nota()), false);
+  assert.equal(isOpinionArticle(nota({ tags: ['editorial'] })), true);
   assert.deepEqual(checkEligibility(nota({ section: 'opinion' }), ctx()).reasons, ['opinion']);
+  // Contienen la palabra pero hablan de otra cosa.
+  assert.equal(isOpinionArticle(nota({ tags: ['opinión pública', 'editorial planeta', 'columnas de humo'] })), false);
+  assert.equal(isOpinionArticle(nota({ topic: 'Opinión pública' })), false);
+  assert.equal(isOpinionArticle(nota({ section: 'Análisis de datos' })), false);
+});
+
+test('opinión: la categoría no se mira (es una lista fija: nunca es "Opinión")', () => {
+  assert.equal(isOpinionArticle(nota({ category: 'Opinion' })), false);
+});
+
+test('opinión: una marca de género al principio del título alcanza', () => {
+  for (const title of [
+    'Análisis: qué viene después del dólar',
+    'Opinión: por qué sube la inflación',
+    'OPINIÓN | El país que viene',
+    'Columna - Lo que dejó la marcha',
+    'Editorial: la deuda y el futuro',
+    'Análisis – el mapa del Congreso',
+  ]) {
+    assert.equal(isOpinionArticle(nota({ title })), true, title);
+  }
+});
+
+test('opinión: una nota que solo CONTIENE la palabra no es opinión (falsos positivos del criterio anterior)', () => {
+  for (const title of [
+    'Análisis de sangre: qué mide cada valor',
+    'La opinión pública y la inflación',
+    'Editorial Planeta lanzó su catálogo de otoño',
+    'Columnas de humo sobre la Casa Rosada',
+    'Según un análisis del INDEC, la inflación bajó',
+    'El editorial de The Economist sobre Milei',
+    'Opinión pública: la imagen del Gobierno cae',
+    'Nuevo análisis: Boca y River',
+  ]) {
+    assert.equal(isOpinionArticle(nota({ title })), false, title);
+  }
+  assert.equal(isOpinionArticle(nota()), false);
+  assert.equal(isOpinionArticle({}), false);
+  assert.equal(isOpinionArticle(nota({ url: '' })), false);
+});
+
+test('publicidad: el contenido patrocinado de Infobae (/inhouse/) se descarta con su propio motivo', () => {
+  const url = 'https://www.infobae.com/inhouse/2026/10/13/la-experiencia-que-transforma-a-las-empresas/';
+  assert.equal(isAdvertisingArticle(nota({ url })), true);
+  assert.equal(isOpinionArticle(nota({ url })), false);
+  assert.deepEqual(checkEligibility(nota({ url }), ctx()).reasons, ['publicidad']);
+  assert.equal(isAdvertisingArticle(nota({ url: 'https://www.infobae.com/politica/2026/10/13/nota/' })), false);
+  assert.equal(isAdvertisingArticle(nota({ url: 'https://medio.test/politica/inhouse-lo-que-sea' })), false);
+  assert.equal(isAdvertisingArticle({}), false);
+});
+
+test('tipo de nota: opinión, servicio, previa/agenda y publicidad (según la IA) no son elegibles, con su motivo', () => {
+  assert.deepEqual(checkEligibility(nota({ contentType: 'opinion' }), ctx()).reasons, ['opinion']);
+  assert.deepEqual(checkEligibility(nota({ contentType: 'servicio' }), ctx()).reasons, ['servicio']);
+  assert.deepEqual(checkEligibility(nota({ contentType: 'previa_agenda' }), ctx()).reasons, ['previa_o_agenda']);
+  assert.deepEqual(checkEligibility(nota({ contentType: 'publicidad' }), ctx()).reasons, ['publicidad']);
+});
+
+test('tipo de nota: noticia, análisis, entrevista, color y las notas sin tipo (anteriores al campo) sí pasan', () => {
+  for (const contentType of ['noticia', 'analisis', 'entrevista', 'color', '', undefined, null]) {
+    assert.equal(checkEligibility(nota({ contentType }), ctx()).ok, true, String(contentType));
+  }
+  assert.equal(checkEligibility(nota({ contentType: 'constructor' }), ctx()).ok, true, 'un valor raro no rompe ni excluye');
+});
+
+test('tipo de nota: si la URL, el título y el tipo dan el mismo motivo, aparece una sola vez', () => {
+  const columna = nota({ url: 'https://medio.test/opinion/x/nota', contentType: 'opinion' });
+  assert.deepEqual(checkEligibility(columna, ctx()).reasons, ['opinion']);
+  const previa = nota({ title: 'EN VIVO | Boca - River', contentType: 'previa_agenda' });
+  assert.deepEqual(checkEligibility(previa, ctx()).reasons, ['previa_o_agenda']);
+  const patrocinada = nota({ url: 'https://www.infobae.com/inhouse/2026/10/13/x/', contentType: 'publicidad' });
+  assert.deepEqual(checkEligibility(patrocinada, ctx()).reasons, ['publicidad']);
+});
+
+test('tipo de nota: rankEligible las deja en las rechazadas con su motivo y no cambia el orden de las demás', () => {
+  const noticia = nota({ importanceScore: 60, contentType: 'noticia' });
+  const analisis = nota({ importanceScore: 70, contentType: 'analisis' });
+  const opinion = nota({ importanceScore: 99, contentType: 'opinion' });
+  const servicio = nota({ importanceScore: 95, contentType: 'servicio' });
+  const { eligible, rejected } = rankEligible([opinion, noticia, servicio, analisis], ctx());
+  assert.deepEqual(eligible.map((e) => e.article), [analisis, noticia], 'el tipo no ordena: manda la importancia');
+  assert.deepEqual(rejected.map((r) => [r.article, r.reasons]), [[opinion, ['opinion']], [servicio, ['servicio']]]);
+});
+
+test('las listas de segmentos son las acordadas', () => {
+  assert.deepEqual([...OPINION_URL_SEGMENTS].sort(), [
+    'ambito-debate', 'cartas-al-pais', 'columna', 'columnas', 'columnista', 'columnistas',
+    'editorial', 'editoriales', 'opinion', 'opiniones',
+  ]);
+  assert.deepEqual([...ADVERTISING_URL_SEGMENTS], ['inhouse']);
 });
 
 test('previas, agenda y "en vivo" se descartan', () => {
@@ -243,10 +371,29 @@ test('orden 1: una buena de 20 h le gana a una aceptable de 1 h', () => {
   assert.equal(ordenar([aceptable, buena])[0], buena);
 });
 
-test('orden 2: VERDE antes que AMARILLA aunque la AMARILLA sea más nueva e importante', () => {
+test('orden 2: la zona de similitud (VERDE / AMARILLA) NO ordena: manda la calidad', () => {
   const verde = cand({ zone: 'VERDE', ageHours: 20, importance: 50 });
   const amarilla = cand({ zone: 'AMARILLA', ageHours: 1, importance: 95 });
-  assert.equal(ordenar([amarilla, verde])[0], verde);
+  assert.equal(ordenar([verde, amarilla])[0], amarilla, 'la AMARILLA fresca e importante va primero');
+  assert.equal(ordenar([amarilla, verde])[0], amarilla);
+});
+
+test('orden 2 bis: la pista de subtema desempata antes que la edad y la importancia, pero después del nivel', () => {
+  const futbol = cand({ hint: 2, ageHours: 20, importance: 50 });
+  const deportes = cand({ hint: 1, ageHours: 2, importance: 80 });
+  const otra = cand({ hint: 0, ageHours: 1, importance: 99 });
+  assert.deepEqual(ordenar([otra, deportes, futbol]), [futbol, deportes, otra], '2, 1 y 0 en ese orden');
+
+  const aceptableConPista = cand({ tier: TIER.ACCEPTABLE, hint: 2, ageHours: 1, importance: 49 });
+  const buenaSinPista = cand({ tier: TIER.GOOD, hint: 0, ageHours: 23, importance: 50 });
+  assert.equal(ordenar([aceptableConPista, buenaSinPista])[0], buenaSinPista, 'el nivel manda sobre la pista');
+});
+
+test('orden 2 ter: sin pista (temas oficiales) el orden es el de siempre', () => {
+  const a = cand({ ageHours: 4, importance: 70 });
+  const b = cand({ ageHours: 2, importance: 60 });
+  assert.equal(ordenar([b, a])[0], a);
+  assert.equal(ordenar([a, { ...b, hint: undefined }])[0], a);
 });
 
 test('orden 3: la banda de hasta 10 h va antes que la de 10-24 h, aunque la segunda sea más importante', () => {
@@ -298,12 +445,42 @@ test('rankEligible con goodOnly (rescate) deja afuera las aceptables', () => {
   assert.deepEqual(rejected[0].reasons, ['no_es_buena']);
 });
 
-test('rankEligible con zoneOf: la zona desempata antes que la edad', () => {
+test('rankEligible con zoneOf: la zona queda anotada en cada entrada pero no cambia el orden', () => {
   const amarillaFresca = nota({ _id: 'y', publishedAt: hace(1), importanceScore: 90 });
   const verdeVieja = nota({ _id: 'g', publishedAt: hace(20), importanceScore: 50 });
   const zonas = new Map([[amarillaFresca, 'AMARILLA'], [verdeVieja, 'VERDE']]);
-  const { eligible } = rankEligible([amarillaFresca, verdeVieja], ctx(), { zoneOf: (a) => zonas.get(a) });
-  assert.deepEqual(eligible.map((e) => e.article._id), ['g', 'y']);
+  const { eligible } = rankEligible([verdeVieja, amarillaFresca], ctx(), { zoneOf: (a) => zonas.get(a) });
+  assert.deepEqual(eligible.map((e) => e.article._id), ['y', 'g']);
+  assert.deepEqual(eligible.map((e) => e.zone), ['AMARILLA', 'VERDE']);
+});
+
+test('rankEligible con hintOf: la pista ordena y queda anotada; sin hintOf la pista es 0', () => {
+  const futbol = nota({ _id: 'f', category: 'Deportes', topic: 'Fútbol', publishedAt: hace(20), importanceScore: 50 });
+  const salud = nota({ _id: 's', category: 'Sociedad', topic: 'Salud', publishedAt: hace(1), importanceScore: 90 });
+  const pista = { cat: 'Deportes', sub: 'Fútbol' };
+  const { eligible } = rankEligible([salud, futbol], ctx(), { hintOf: (a) => hintLevel(a, pista) });
+  assert.deepEqual(eligible.map((e) => e.article._id), ['f', 's']);
+  assert.deepEqual(eligible.map((e) => e.hint), [2, 0]);
+  assert.deepEqual(rankEligible([salud], ctx()).eligible.map((e) => e.hint), [0]);
+});
+
+test('hintLevel: 2 = subtema (y categoría), 1 = solo categoría, 0 = nada o sin pista; sin tildes ni mayúsculas', () => {
+  const futbol = { category: 'Deportes', topic: 'Fútbol' };
+  const tenis = { category: 'Deportes', topic: 'Tenis' };
+  const salud = { category: 'Sociedad', topic: 'Salud' };
+  const pista = { cat: 'Deportes', sub: 'Fútbol' };
+  assert.equal(hintLevel(futbol, pista), 2);
+  assert.equal(hintLevel(tenis, pista), 1);
+  assert.equal(hintLevel(salud, pista), 0);
+  assert.equal(hintLevel({ category: 'DEPORTES', topic: 'futbol' }, pista), 2);
+
+  assert.equal(hintLevel(tenis, { cat: 'Deportes', sub: '' }), 1, 'solo categoría');
+  assert.equal(hintLevel(salud, { cat: 'Deportes', sub: '' }), 0);
+  assert.equal(hintLevel(futbol, { cat: '', sub: 'Fútbol' }), 2, 'solo subtema');
+  assert.equal(hintLevel({ category: 'Sociedad', topic: 'Fútbol' }, { cat: 'Deportes', sub: 'Fútbol' }), 0, 'mismo subtema en otra categoría no cuenta');
+
+  for (const sinPista of [null, undefined, {}, { cat: '', sub: '' }]) assert.equal(hintLevel(futbol, sinPista), 0);
+  assert.equal(hintLevel(null, pista), 0);
 });
 
 test('rankEligible: edad negativa (fecha apenas en el futuro) se trata como 0 h', () => {

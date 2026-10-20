@@ -112,7 +112,7 @@ test('constantes: timeout de 8 s y tope de 1000 notas por lectura', () => {
 // ================================================================ campos
 test('LIGHT_FIELDS trae todo lo que mira la elegibilidad (si falta alguno, esa regla se apaga sin avisar) y no trae el vector', () => {
   const campos = new Set(store.LIGHT_FIELDS.split(/\s+/));
-  for (const f of ['_id', 'url', 'title', 'publishedAt', 'importanceScore', 'category', 'topic', 'geoScope', 'section', 'tags', 'sourceName']) {
+  for (const f of ['_id', 'url', 'title', 'publishedAt', 'importanceScore', 'category', 'topic', 'geoScope', 'contentType', 'section', 'tags', 'sourceName']) {
     assert.ok(campos.has(f), `falta ${f} en LIGHT_FIELDS`);
   }
   assert.ok(!campos.has('embedding'), 'la lectura liviana no trae el embedding');
@@ -133,14 +133,18 @@ test('con los campos livianos alcanza para decidir la elegibilidad: la regla de 
   assert.equal(checkEligibility(comoLaTrae({}), { now: ahora }).ok, true);
   assert.deepEqual(checkEligibility(comoLaTrae({ geoScope: 'Brasil' }), { now: ahora }).reasons, ['otro_pais']);
   assert.deepEqual(checkEligibility(comoLaTrae({ title: 'EN VIVO | minuto a minuto' }), { now: ahora }).reasons, ['previa_o_agenda']);
-  assert.deepEqual(checkEligibility(comoLaTrae({ url: 'https://m.test/opinion/x' }), { now: ahora }).reasons, ['opinion']);
+  assert.deepEqual(checkEligibility(comoLaTrae({ url: 'https://m.test/opinion/x/nota' }), { now: ahora }).reasons, ['opinion']);
+  // El tipo que puso la IA también viaja en la lectura liviana (si faltara, esta regla se apagaría sin avisar).
+  assert.deepEqual(checkEligibility(comoLaTrae({ contentType: 'servicio' }), { now: ahora }).reasons, ['servicio']);
+  assert.deepEqual(checkEligibility(comoLaTrae({ contentType: 'publicidad' }), { now: ahora }).reasons, ['publicidad']);
+  assert.equal(checkEligibility(comoLaTrae({ contentType: 'analisis' }), { now: ahora }).ok, true);
 });
 
 test('FULL_FIELDS trae lo que necesita el digest (los mismos campos que la búsqueda híbrida) y el embedding', () => {
   const campos = new Set(store.FULL_FIELDS.split(/\s+/));
   // Misma lista que proyecta searchArticlesBySimilarityAtlas.js (+ embedding para comparar historias).
   for (const f of ['_id', 'title', 'url', 'sourceName', 'section', 'region', 'tags', 'importanceScore', 'importanceLevel',
-    'publishedAt', 'topic', 'category', 'geoScope', 'imageUrl', 'neutralTitle', 'neutralLead', 'neutralSummary', 'rawSummary',
+    'publishedAt', 'topic', 'category', 'geoScope', 'contentType', 'imageUrl', 'neutralTitle', 'neutralLead', 'neutralSummary', 'rawSummary',
     'contentSnippet', 'neutralityScore', 'politicalBiasRisk', 'curationStatus', 'embedding']) {
     assert.ok(campos.has(f), `falta ${f} en FULL_FIELDS`);
   }

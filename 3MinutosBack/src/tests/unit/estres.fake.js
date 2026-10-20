@@ -39,7 +39,12 @@ const { crearContadores, snapshot } = require('../estres/instrumentos');
 const OFICIALES = new Map(temasOficiales().map((t) => [norm(t.tema), t]));
 const slug = (s) => norm(s).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'x';
 const HORA = 3600e3;
-const espera = (ms) => new Promise((r) => setTimeout(r, ms));
+// Cede el control a las demás llamadas que están arrancando. Es un setImmediate y no un setTimeout a propósito: los
+// temporizadores tienen resolución de 1 ms, y si una tanda de llamadas "simultáneas" cruza el borde de un milisegundo
+// (o la máquina está cargada) unas despiertan antes que otras y NO se solapan; el test que cuenta cuántas hay a la vez
+// fallaba de vez en cuando. Los immediates de una vuelta del event loop corren todos antes de los de la siguiente, así
+// que el solapamiento no depende del reloj.
+const ceder = () => new Promise((r) => setImmediate(r));
 
 /** Nivel diminuto pero con la misma forma que los reales. */
 function nivelChico(sobre = {}) {
@@ -100,7 +105,7 @@ function crearFalso({ nivel = nivelChico(), fallas = {}, usuarios = 6, articulos
   async function resolver(topics, opts = {}) {
     enCurso++;
     try {
-      await espera(fallas.esperaMs ?? 1); // cede el control: las llamadas "paralelas" de verdad se solapan
+      await ceder(); // las llamadas "paralelas" de verdad se solapan
       const concurrentes = enCurso;
       const ms = 5 + (fallas.msPorConcurrente ? fallas.msPorConcurrente(concurrentes) : 0);
       if ((fallas.lanzarPara || []).some((x) => (topics || []).includes(x))) {
@@ -178,7 +183,7 @@ function crearFalso({ nivel = nivelChico(), fallas = {}, usuarios = 6, articulos
     const trabajo = (async () => {
       lecturasUsuario++;
       llamadas.digestEjecutados++;
-      await espera(3);
+      await ceder();
       const u = usuariosFalsos.find((x) => x.id === clave);
       if (!u) return { ok: false, items: [], resultado: null, ms: 8, error: 'User not found or inactive', timeout: false, logs: null };
       const s = await resolver(u.topics);

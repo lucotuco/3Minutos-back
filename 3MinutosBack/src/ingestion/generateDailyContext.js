@@ -12,10 +12,10 @@ async function generateDailyContext() {
     }
 
     // 1. EL OJEADOR PREMIUM: Buscamos noticias de alto impacto de las últimas 12 horas
-    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
+    const tenHoursAgo = new Date(Date.now() - 10 * 60 * 60 * 1000);
     
     const recentArticles = await Article.find({ 
-        publishedAt: { $gte: twelveHoursAgo },
+        publishedAt: { $gte: tenHoursAgo },
         importanceScore: { $gte: 75 } // Solo lo realmente relevante
       })
       .sort({ importanceScore: -1 }) 

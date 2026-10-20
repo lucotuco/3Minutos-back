@@ -11,18 +11,17 @@
 const MAX_ARTICLE_AGE_HOURS = 24;
 
 // Antigüedad IDEAL (horas): hasta aca la nota es "fresca" y va antes que una de entre 10 y 24 h.
-const IDEAL_ARTICLE_AGE_HOURS = 10;
+const IDEAL_ARTICLE_AGE_HOURS = 8;
 
 // Curva de frescura (0-100): premia fuerte lo de hoy sin matar lo de anoche.
 const FRESHNESS_CURVE = [
   [2, 100],   // recien salido del horno
-  [6, 90],    // muy fresco
-  [12, 80],   // anoche / ayer a la tarde
-  [24, 65],   // hace un dia
-  [36, 50],   // dia y medio
-  [48, 35],   // dos dias
-  [72, 20],   // tres dias
-  [168, 10],  // una semana
+  [6, 90], 
+  [8,80]   // muy fresco
+  [10, 70],
+  [12, 60],
+  [18, 70],
+  [24, 30],   // hace un dia
 ];
 
 const PREVIEW_OR_AGENDA_KEYWORDS = [

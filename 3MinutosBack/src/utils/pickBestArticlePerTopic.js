@@ -189,7 +189,7 @@ async function pickFreeTopic(trimmedTopic, prepared, {
       out.matchReason = `${aceptado.zone} score=${aceptado.score.toFixed(3)} (candidato #${aceptado.rank})${juez}`;
       console.log(
         `[MATCH ${aceptado.zone}] "${out.article.title}" | Score: ${aceptado.score.toFixed(3)} | ` +
-        `${entry.tier} ${out.ageHours} h imp=${entry.importance} | candidato #${aceptado.rank}${juez}`
+        `${entry.tier} ${out.ageHours} h imp=${entry.importance} puntaje=${entry.score.toFixed(1)} | candidato #${aceptado.rank}${juez}`
       );
       return out;
     }

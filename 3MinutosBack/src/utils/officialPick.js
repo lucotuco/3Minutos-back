@@ -9,7 +9,7 @@
  *
  * Flujo:
  *   1. notas del tema exacto de las últimas 24 h con importancia >= 40
- *   2. se descartan las no elegibles (eligibility.js) y se ordenan (nivel, banda de edad, importancia, edad, _id)
+ *   2. se descartan las no elegibles (eligibility.js) y se ordenan (nivel, puntaje de importancia y frescura, edad, _id)
  *   3. se trae el documento completo de los primeros finalistas y se descarta la "misma historia" (coseno >= 0,88,
  *      o entre 0,80 y 0,88 si el juez de sameEventJudge.js dice que cuenta el mismo hecho)
  *   4. si no queda ninguna y el tópico es un SUBTEMA: rescate = misma categoría, importancia >= 50,
@@ -214,7 +214,7 @@ async function pickOfficialArticle(official, { now = Date.now(), usedUrls = new 
     out.tier = entry.tier;
     out.ageHours = redondear(entry.ageHours);
     out.matchReason =
-      `ETIQUETA ${entry.tier} ${out.ageHours}h imp=${entry.importance} ` +
+      `ETIQUETA ${entry.tier} ${out.ageHours}h imp=${entry.importance} puntaje=${entry.score.toFixed(1)} ` +
       `(candidato #${found.examined} de ${ranked.eligible.length} elegibles)`;
     return out;
   }

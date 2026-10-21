@@ -53,7 +53,7 @@ Cada tema termina en **una** de estas categorías (de mejor a peor):
   Los de importancia y país solo se miden si la corrida guardó esos datos (las corridas viejas no los tienen).
 - **Veredicto:** criterio orientativo (`MEJORA`, `REVISAR`, `EMPEORA`, `SIN CAMBIOS`). Los números van al lado.
 - **Frescura:** se compara solo en los temas donde **las dos** versiones entregaron una noticia en tema. El reporte muestra
-  cuántas quedan dentro de las 10 h ideales, cuántas pasan de 24 h y cuál es la más vieja de todas.
+  cuántas quedan dentro de las 6 y de las 12 h, cuántas pasan de 24 h y cuál es la más vieja de todas.
 - **Sustancia:** qué porcentaje de las noticias en tema son «buenas» (importancia de 50 o más) y cuántas quedaron por debajo del piso de 40.
 - **Vigencia (veredicto):** falla si la versión nueva entrega algo de más de 24 h; es una mejora si la anterior se pasaba y la nueva no.
 

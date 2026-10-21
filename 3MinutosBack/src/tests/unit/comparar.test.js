@@ -200,7 +200,7 @@ test('resumir: cuenta, porcentajes, edades y zonas', () => {
   assert.equal(r.zonas.ninguna, 1);
 });
 
-test('resumir: cuenta la zona ETIQUETA, las edades (ideal y tope) y la sustancia de lo entregado', () => {
+test('resumir: cuenta la zona ETIQUETA, las edades (hasta 6, 12 y 24 h) y la sustancia de lo entregado', () => {
   const r = resumir([
     reg('Fútbol', { tipo: 'oficial', nivel: 'subtema', zona: 'ETIQUETA', scoreBusqueda: null }, { edadHoras: 3, importancia: 80 }),
     reg('Economía', { tipo: 'oficial', nivel: 'categoria', zona: 'ETIQUETA', scoreBusqueda: null }, { edadHoras: 10, importancia: 45 }),
@@ -210,7 +210,8 @@ test('resumir: cuenta la zona ETIQUETA, las edades (ideal y tope) y la sustancia
   ]);
   assert.equal(r.zonas.ETIQUETA, 2);
   assert.equal(r.edad.n, 4, 'el rescate no cuenta como "en tema"');
-  assert.equal(r.edad.pctHasta10, 50, '3 y 10 h de [3, 10, 20, 26]');
+  assert.equal(r.edad.pctHasta6, 25, '3 h de [3, 10, 20, 26]');
+  assert.equal(r.edad.pctHasta12, 50, '3 y 10 h de [3, 10, 20, 26]');
   assert.equal(r.edad.pctHasta24, 75);
   assert.equal(r.edad.pctMasDe24, 25);
   assert.equal(r.edad.maxTodas, 26);
@@ -429,12 +430,12 @@ test('reporte: HTML, CSV y consola se generan y escapan el HTML de los títulos'
   assert.match(txt, /VEREDICTO SUGERIDO/);
 });
 
-test('reporte: muestra la zona ETIQUETA, la edad ideal, la vigencia y la sustancia; el CSV trae importancia y nivel', () => {
+test('reporte: muestra la zona ETIQUETA, las edades por tramo, la vigencia y la sustancia; el CSV trae importancia y nivel', () => {
   const antes = reg('Fútbol', { tipo: 'oficial', nivel: 'subtema' }, { edadHoras: 40, importancia: 60 });
   const despues = reg('Fútbol', { tipo: 'oficial', nivel: 'subtema', zona: 'ETIQUETA', scoreBusqueda: null, nivelNota: 'buena' }, { edadHoras: 4, importancia: 72 });
   const e = escenario([antes], [despues]);
   const html = htmlReporte(e);
-  for (const frag of ['Zona ETIQUETA', 'Hasta 10 h, lo ideal', 'Más de 24 h', 'Buenas, de importancia 50 o más', 'imp. 72 (buena)', 'Vigencia: ninguna noticia de más de 24 h']) {
+  for (const frag of ['Zona ETIQUETA', 'Hasta 6 h (%)', 'Hasta 12 h (%)', 'Más de 24 h', 'Buenas, de importancia 50 o más', 'imp. 72 (buena)', 'Vigencia: ninguna noticia de más de 24 h']) {
     assert.ok(html.includes(frag), `falta "${frag}" en el HTML`);
   }
   assert.doesNotMatch(html, /undefined|NaN|\[object/);
@@ -444,7 +445,8 @@ test('reporte: muestra la zona ETIQUETA, la edad ideal, la vigencia y la sustanc
   assert.ok(csv.includes('"60";"72";"buena"'));
 
   const txt = textoConsola(e);
-  assert.match(txt, /Hasta 10 h \(lo ideal\)/);
+  assert.match(txt, /Hasta 6 h/);
+  assert.match(txt, /Hasta 12 h/);
   assert.match(txt, /Buenas \(importancia 50\+\)/);
   assert.match(txt, /Vigencia: ninguna noticia de más de 24 h/);
 });

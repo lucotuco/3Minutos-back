@@ -21,7 +21,6 @@ const { toPlainText, firstReadableText } = require('../../utils/plainText');
 // El código anterior permitía hasta 48 h: se usa solo como referencia al informar.
 const MAX_EDAD_HORAS = 24;
 const MAX_EDAD_HORAS_ANTES = 48;
-const EDAD_IDEAL_HORAS = 8;
 // En Sociedad solo valen notas de Argentina o de alcance Global.
 const ALCANCES_SOCIEDAD = new Set(['argentina', 'global']);
 
@@ -187,7 +186,6 @@ function resumir(resultados) {
       p90: redondear(percentil(edadesTema, 90)),
       max: redondear(edadesTema.length ? Math.max(...edadesTema) : null),
       pctHasta6: redondear(bajo(edadesTema, 6)),
-      pctHasta10: redondear(bajo(edadesTema, EDAD_IDEAL_HORAS)),
       pctHasta12: redondear(bajo(edadesTema, 12)),
       pctHasta24: redondear(bajo(edadesTema, 24)),
       pctMasDe24: redondear(porcentaje(edadesTema.filter((e) => e > MAX_EDAD_HORAS).length, edadesTema.length)),
@@ -480,7 +478,6 @@ function veredicto(resA, resB, filasLibres, filasOficiales) {
 module.exports = {
   MAX_EDAD_HORAS,
   MAX_EDAD_HORAS_ANTES,
-  EDAD_IDEAL_HORAS,
   RANGO,
   ETIQUETAS,
   palabrasTema,

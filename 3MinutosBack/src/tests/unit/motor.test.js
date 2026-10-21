@@ -10,6 +10,10 @@
 // Los módulos de búsqueda cargan config/openai, que exige las claves al importarse.
 process.env.OPENAI_API_KEY_EMBEDDINGS ||= 'test';
 process.env.OPENAI_API_KEY_REVIEW ||= 'test';
+// El orden depende del peso de la frescura y de su meseta: se fijan para que los tests no cambien si quien los
+// corre tiene FRESHNESS_WEIGHT o FRESHNESS_PLATEAU_HOURS puestas en su terminal. Debe ir antes de cargar los módulos.
+process.env.FRESHNESS_WEIGHT = '0.3';
+process.env.FRESHNESS_PLATEAU_HOURS = '4';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -134,7 +138,7 @@ test('oficial (subtema): elige por etiqueta, sin búsqueda por significado ni ex
 
   assert.equal(r.resultados.length, 1);
   const x = r.resultados[0];
-  assert.equal(x.article.url, a.url, 'misma banda (<= 10 h): gana la más importante');
+  assert.equal(x.article.url, a.url, 'gana el mayor puntaje: importancia 60 a 5 h contra 55 a 3 h');
   assert.equal(x.topic, 'Fútbol');
   assert.equal(x.matchZone, 'ETIQUETA');
   assert.equal(x.tier, 'buena');
@@ -143,7 +147,7 @@ test('oficial (subtema): elige por etiqueta, sin búsqueda por significado ni ex
   assert.equal(x.fallbackCategory, null);
   assert.equal(x.matchScore, null);
   assert.equal(x.corralCategory, 'Deportes');
-  assert.match(x.matchReason, /^ETIQUETA buena 5h imp=60/);
+  assert.match(x.matchReason, /^ETIQUETA buena 5h imp=60 puntaje=70\.5 /);
   assert.equal(r.busqueda.llamadas.length, 0, 'no se busca por significado');
   assert.equal(r.expand.llamadas.length, 0, 'no se expande con IA');
   assert.equal(x.article.embedding, undefined, 'el embedding no viaja en el resultado');
@@ -158,12 +162,26 @@ test('oficial: no importan las mayúsculas ni las tildes; queryExpanded es lo qu
   assert.equal(r.resultados[0].article.url, a.url);
 });
 
-test('oficial: una nota de la banda ideal (<= 10 h) le gana a una más importante de 10-24 h', async () => {
-  const ideal = nota({ publishedAt: hace(9), importanceScore: 50 });
-  const valida = nota({ publishedAt: hace(15), importanceScore: 95 });
-  const r = await correr(['Fútbol'], { docs: [valida, ideal] });
-  assert.equal(r.resultados[0].article.url, ideal.url);
+test('oficial: mucha más importancia compensa la edad: 15 h e importancia 95 le gana a 9 h e importancia 50', async () => {
+  const fresca = nota({ publishedAt: hace(9), importanceScore: 50 });
+  const importante = nota({ publishedAt: hace(15), importanceScore: 95 });
+  const r = await correr(['Fútbol'], { docs: [fresca, importante] });
+  assert.equal(r.resultados[0].article.url, importante.url);
   assert.equal(r.resultados[0].tier, 'buena');
+});
+
+test('oficial: la frescura compensa poca importancia: 2 h e importancia 62 le gana a 14 h e importancia 80', async () => {
+  const fresca = nota({ publishedAt: hace(2), importanceScore: 62 });
+  const importante = nota({ publishedAt: hace(14), importanceScore: 80 });
+  const r = await correr(['Fútbol'], { docs: [importante, fresca] });
+  assert.equal(r.resultados[0].article.url, fresca.url);
+});
+
+test('oficial: dentro de la meseta (hasta 4 h) no gana la de 30 minutos solo por ser más nueva: manda la importancia', async () => {
+  const recienSalida = nota({ publishedAt: hace(0.5), importanceScore: 75 });
+  const deEstaManana = nota({ publishedAt: hace(3.8), importanceScore: 80 });
+  const r = await correr(['Fútbol'], { docs: [recienSalida, deEstaManana] });
+  assert.equal(r.resultados[0].article.url, deEstaManana.url);
 });
 
 test('oficial: una buena de 20 h le gana a una aceptable (40-49) de 1 h', async () => {
@@ -269,12 +287,13 @@ test('oficial: si la nota se borró entre la lectura liviana y la completa, se p
   assert.equal(r.resultados[0].article.url, b.url);
 });
 
-test('oficial: si la 1.ª nota de la banda ideal es repetida, entra la 2.ª de la misma banda antes que una de 10-24 h', async () => {
+test('oficial: si la 1.ª del orden es repetida, entra la 2.ª del orden (no otra)', async () => {
+  // puntaje con peso 0,3 y meseta de 4 h: repetida (2 h, 80) = 86,0; segunda (15 h, 95) = 80,0; tercera (8 h, 60) = 66,0
   const repetida = nota({ publishedAt: hace(2), importanceScore: 80, embedding: conCoseno(0.95) });
-  const ideal2 = nota({ publishedAt: hace(8), importanceScore: 60, embedding: conCoseno(0.1) });
-  const valida = nota({ publishedAt: hace(15), importanceScore: 95, embedding: conCoseno(0.2) });
-  const r = await correr(['Fútbol'], { docs: [valida, repetida, ideal2], vistos: [{ title: 'v', vector: [1, 0] }] });
-  assert.equal(r.resultados[0].article.url, ideal2.url);
+  const segunda = nota({ publishedAt: hace(15), importanceScore: 95, embedding: conCoseno(0.2) });
+  const tercera = nota({ publishedAt: hace(8), importanceScore: 60, embedding: conCoseno(0.1) });
+  const r = await correr(['Fútbol'], { docs: [tercera, repetida, segunda], vistos: [{ title: 'v', vector: [1, 0] }] });
+  assert.equal(r.resultados[0].article.url, segunda.url);
 });
 
 test('oficial: rescate = misma categoría, otro subtema, importancia >= 50, marcada como sugerida', async () => {
@@ -491,7 +510,7 @@ test('libre: la zona (VERDE/AMARILLA) solo informa, no ordena: una AMARILLA fres
   assert.match(x.matchReason, /^AMARILLA score=0\.860 \(candidato #2\)/);
 });
 
-test('libre: a igual banda de edad e importancia gana la más nueva, sea VERDE o AMARILLA (la zona no desempata)', async () => {
+test('libre: a igual importancia gana la más nueva, sea VERDE o AMARILLA (la zona no desempata)', async () => {
   const base = { category: 'Deportes', topic: 'Fútbol', tags: [], rawSummary: '', contentSnippet: '', importanceScore: 70 };
   const verde = nota({ ...base, title: 'River cerró el fichaje', score: 0.97, publishedAt: hace(6) });
   const amarillaMasNueva = nota({ ...base, title: 'River presentó al refuerzo', score: 0.85, publishedAt: hace(2) });
@@ -501,10 +520,10 @@ test('libre: a igual banda de edad e importancia gana la más nueva, sea VERDE o
   assert.equal(r.resultados[0].matchZone, 'AMARILLA');
 });
 
-test('libre: sin VERDE, entre las AMARILLAS válidas manda la banda de edad y después la importancia', async () => {
+test('libre: sin VERDE, entre las AMARILLAS válidas manda el puntaje de importancia y frescura', async () => {
   const c = candidatosRiver();
   const r = await correr(['river plate'], { busqueda: busquedaFalsa([c.amarilla3, c.amarilla2, c.amarillaFresca, c.roja]) });
-  assert.equal(r.resultados[0].article.url, c.amarillaFresca.url, '1 h e importancia 90 (banda ideal)');
+  assert.equal(r.resultados[0].article.url, c.amarillaFresca.url, '1 h e importancia 90');
   assert.equal(r.resultados[0].matchZone, 'AMARILLA');
 });
 

@@ -5,12 +5,18 @@
  * Correr:  npm run test:unit
  */
 
+// El orden depende del peso de la frescura (FRESHNESS_WEIGHT) y de su meseta (FRESHNESS_PLATEAU_HOURS): se fijan
+// para que los tests no cambien si quien los corre tiene esas variables puestas en su terminal.
+// Debe ir antes de cargar el módulo.
+process.env.FRESHNESS_WEIGHT = '0.3';
+process.env.FRESHNESS_PLATEAU_HOURS = '4';
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
   IMPORTANCE_GOOD_MIN, IMPORTANCE_ACCEPTABLE_MIN, SAME_STORY_COSINE, TIER,
-  cosine, ageHoursOf, tierOf, ageBandOf, isOpinionArticle, isAdvertisingArticle, isForeignInLocalCategory,
+  cosine, ageHoursOf, tierOf, deliveryScore, isOpinionArticle, isAdvertisingArticle, isForeignInLocalCategory,
   OPINION_URL_SEGMENTS, ADVERTISING_URL_SEGMENTS, findSameStory, mostSimilarSeen, checkEligibility, compareCandidates, hintLevel, rankEligible,
 } = require('../../utils/eligibility');
 
@@ -49,13 +55,37 @@ test('tierOf: 50 o más es buena, 40-49 aceptable, menos de 40 queda afuera', ()
   assert.equal(tierOf(0), null);
 });
 
-test('ageBandOf: hasta 10 h es ideal, hasta 24 h válida, más es null', () => {
-  assert.equal(ageBandOf(0), 'ideal');
-  assert.equal(ageBandOf(10), 'ideal');
-  assert.equal(ageBandOf(10.01), 'valida');
-  assert.equal(ageBandOf(24), 'valida');
-  assert.equal(ageBandOf(24.01), null);
-  assert.equal(ageBandOf(null), null);
+test('deliveryScore: (1 - peso) * importancia + peso * frescura (100 hasta la meseta de 4 h, 0 a las 24 h)', () => {
+  const casi = (real, esperado, msg = '') => assert.ok(Math.abs(real - esperado) < 1e-9, `${msg} ${real} no es ${esperado}`);
+  casi(deliveryScore(60, 14, 0.3), 0.7 * 60 + 0.3 * 50);              // 14 h: a mitad de camino entre 4 y 24
+  casi(deliveryScore(80, 0, 0.3), 0.7 * 80 + 0.3 * 100);
+  casi(deliveryScore(80, 4, 0.3), 0.7 * 80 + 0.3 * 100, 'en el borde de la meseta');
+  casi(deliveryScore(80, 24, 0.3), 0.7 * 80, 'a las 24 h la frescura aporta 0');
+  casi(deliveryScore(80, 40, 0.3), 0.7 * 80);
+  casi(deliveryScore(70, 20, 0), 70);   // peso 0: solo importancia
+  casi(deliveryScore(70, 9, 1), 75);    // peso 1: solo frescura (9 h = 75 con meseta de 4 h)
+  casi(deliveryScore(60, 12), deliveryScore(60, 12, 0.3), 'sin peso explícito usa FRESHNESS_WEIGHT');
+});
+
+test('deliveryScore: sube con la importancia y baja con la edad pasada la meseta, sin escalones', () => {
+  assert.ok(deliveryScore(61, 5) > deliveryScore(60, 5));
+  let anterior = Infinity;
+  for (let h = 4; h <= 24; h += 0.5) {
+    const s = deliveryScore(60, h);
+    if (h > 4) assert.ok(s < anterior, `no bajó a las ${h} h`);
+    anterior = s;
+  }
+  // el salto entre 9,9 h y 10,1 h es el de cualquier otro par de horas cercanas (no hay un corte en las 10 h)
+  const salto = deliveryScore(60, 9.9) - deliveryScore(60, 10.1);
+  assert.ok(Math.abs(salto - (deliveryScore(60, 14.9) - deliveryScore(60, 15.1))) < 1e-9);
+  assert.ok(salto < 1, `el salto de 0,2 h debería ser chico, fue ${salto}`);
+});
+
+test('deliveryScore: dentro de la meseta (hasta 4 h) la edad no cambia el puntaje', () => {
+  for (const h of [0, 0.5, 2, 3.99, 4]) {
+    assert.equal(deliveryScore(70, h), deliveryScore(70, 0), `a ${h} h`);
+  }
+  assert.ok(deliveryScore(70, 4.5) < deliveryScore(70, 4), 'pasada la meseta empieza a bajar');
 });
 
 test('ageHoursOf acepta Date, ISO y número; null si no hay fecha válida', () => {
@@ -69,11 +99,10 @@ test('ageHoursOf acepta Date, ISO y número; null si no hay fecha válida', () =
 
 // ---------------------------------------------------------------- vigente (24 h)
 
-test('una nota de 3 h es elegible, buena y de banda ideal', () => {
+test('una nota de 3 h es elegible y buena', () => {
   const ev = checkEligibility(nota(), ctx());
   assert.equal(ev.ok, true);
   assert.equal(ev.tier, TIER.GOOD);
-  assert.equal(ev.band, 'ideal');
   assert.equal(ev.ageHours, 3);
   assert.deepEqual(ev.reasons, []);
 });
@@ -89,11 +118,11 @@ test('una nota de 30 h (que antes valía hasta 48 h) hoy se descarta', () => {
   assert.deepEqual(checkEligibility(nota({ publishedAt: hace(30) }), ctx()).reasons, ['vencida']);
 });
 
-test('de 10 a 24 h sigue siendo buena, pero en banda "valida"', () => {
+test('de 10 a 24 h sigue siendo elegible y buena (la edad solo pesa en el orden, no en el nivel)', () => {
   const ev = checkEligibility(nota({ publishedAt: hace(18) }), ctx());
   assert.equal(ev.ok, true);
   assert.equal(ev.tier, TIER.GOOD);
-  assert.equal(ev.band, 'valida');
+  assert.equal(ev.ageHours, 18);
 });
 
 test('sin fecha no se puede probar que sea reciente: se descarta', () => {
@@ -103,7 +132,6 @@ test('sin fecha no se puede probar que sea reciente: se descarta', () => {
 
 test('fecha en el futuro: hasta 3 h se tolera (reloj/zona del medio); más, no es creíble', () => {
   assert.equal(checkEligibility(nota({ publishedAt: hace(-1) }), ctx()).ok, true);
-  assert.equal(checkEligibility(nota({ publishedAt: hace(-1) }), ctx()).band, 'ideal');
   assert.deepEqual(checkEligibility(nota({ publishedAt: hace(-5) }), ctx()).reasons, ['fecha_futura']);
   assert.deepEqual(checkEligibility(nota({ publishedAt: hace(-48) }), ctx()).reasons, ['fecha_futura']);
 });
@@ -396,22 +424,69 @@ test('orden 2 ter: sin pista (temas oficiales) el orden es el de siempre', () =>
   assert.equal(ordenar([a, { ...b, hint: undefined }])[0], a);
 });
 
-test('orden 3: la banda de hasta 10 h va antes que la de 10-24 h, aunque la segunda sea más importante', () => {
-  const ideal = cand({ ageHours: 9.9, importance: 50 });
-  const valida = cand({ ageHours: 10.1, importance: 95 });
-  assert.equal(ordenar([valida, ideal])[0], ideal);
+test('orden 3: el nivel manda sobre el puntaje: una buena de 23 h le gana a una aceptable recién publicada', () => {
+  const aceptableFresca = cand({ tier: TIER.ACCEPTABLE, ageHours: 0, importance: 49 });
+  const buenaVieja = cand({ tier: TIER.GOOD, ageHours: 23, importance: 50 });
+  assert.ok(deliveryScore(49, 0) > deliveryScore(50, 23), 'por puntaje sola ganaría la aceptable');
+  assert.equal(ordenar([aceptableFresca, buenaVieja])[0], buenaVieja);
 });
 
-test('orden 4: dentro de la misma banda, la más importante primero', () => {
-  const alta = cand({ ageHours: 8, importance: 80 });
-  const baja = cand({ ageHours: 2, importance: 60 });
+test('orden 4: no hay escalón en ninguna hora: 9,9 h y 10,1 h se tratan igual que cualquier otro par cercano', () => {
+  // Antes, pasar de 10 h mandaba la nota detrás de todas las más nuevas aunque fuera mucho más importante.
+  const casiDiez = cand({ ageHours: 9.9, importance: 50 });
+  const pasadaDeDiez = cand({ ageHours: 10.1, importance: 95 });
+  assert.equal(ordenar([casiDiez, pasadaDeDiez])[0], pasadaDeDiez, 'la importancia que sobra compensa 0,2 h de edad');
+
+  const nueva = cand({ ageHours: 9.9, importance: 60 });
+  const vieja = cand({ ageHours: 10.1, importance: 60 });
+  assert.equal(ordenar([vieja, nueva])[0], nueva, 'a igual importancia gana la más nueva, pero por un pelo');
+  assert.ok(deliveryScore(60, 9.9) - deliveryScore(60, 10.1) < 1);
+});
+
+test('orden 5: la frescura compensa poca diferencia de importancia, no una grande (peso 0,3: de 2 h a 12 h ≈ 17 puntos)', () => {
+  const fresca = cand({ ageHours: 2, importance: 60 });
+  const masImportanteVieja = cand({ ageHours: 12, importance: 80 });
+  const apenasMasImportante = cand({ ageHours: 12, importance: 75 });
+  assert.equal(ordenar([masImportanteVieja, fresca])[0], masImportanteVieja, '20 puntos de más compensan 10 h');
+  assert.equal(ordenar([apenasMasImportante, fresca])[0], fresca, '15 puntos de más no alcanzan');
+});
+
+test('orden 5 bis: con la misma edad, la más importante; con la misma importancia, la más nueva', () => {
+  const alta = cand({ ageHours: 6, importance: 80 });
+  const baja = cand({ ageHours: 6, importance: 60 });
   assert.equal(ordenar([baja, alta])[0], alta);
-});
 
-test('orden 5: con igual importancia, la más nueva primero', () => {
   const nueva = cand({ ageHours: 2, importance: 70 });
   const vieja = cand({ ageHours: 6, importance: 70 });
   assert.equal(ordenar([vieja, nueva])[0], nueva);
+});
+
+test('orden 5 ter: con el mismo puntaje se prefiere la más nueva', () => {
+  const nueva = cand({ ageHours: 3, importance: 70, score: 70 });
+  const vieja = cand({ ageHours: 6, importance: 70, score: 70 });
+  assert.equal(ordenar([vieja, nueva])[0], nueva);
+});
+
+test('orden 5 meseta: entre notas de menos de 4 h manda la importancia, y a igual importancia la más nueva', () => {
+  // Con 0,3 y sin meseta, 5 puntos de importancia no alcanzaban contra 3,5 h de diferencia: ganaba la de 30 minutos.
+  const recienSalida = cand({ ageHours: 0.5, importance: 75 });
+  const deEstaManana = cand({ ageHours: 3.8, importance: 80 });
+  assert.equal(ordenar([recienSalida, deEstaManana])[0], deEstaManana, 'la importancia decide dentro de la meseta');
+
+  const nueva = cand({ ageHours: 1, importance: 70 });
+  const vieja = cand({ ageHours: 3, importance: 70 });
+  assert.equal(deliveryScore(70, 1), deliveryScore(70, 3), 'mismo puntaje');
+  assert.equal(ordenar([vieja, nueva])[0], nueva, 'y a igual puntaje gana la más nueva');
+});
+
+test('orden 5 quater: el peso de la frescura cambia quién gana (0 = solo importancia, 1 = solo frescura)', () => {
+  const entrada = (importance, ageHours, peso) => cand({ importance, ageHours, score: deliveryScore(importance, ageHours, peso) });
+  for (const [peso, ganadora] of [[0, 'importante'], [0.3, 'importante'], [0.6, 'fresca'], [1, 'fresca']]) {
+    const importante = entrada(85, 14, peso);
+    const fresca = entrada(60, 1, peso);
+    const primera = ordenar([fresca, importante])[0];
+    assert.equal(primera, ganadora === 'importante' ? importante : fresca, `peso ${peso}`);
+  }
 });
 
 test('orden 6: el empate total se resuelve por _id, sin depender del orden de entrada', () => {
@@ -435,6 +510,16 @@ test('rankEligible: separa elegibles ordenadas y descartadas con su motivo', () 
   assert.deepEqual(eligible.map((e) => e.article._id), ['i', 'b', 'a']);
   assert.deepEqual(rejected.map((r) => [r.article._id, r.reasons[0]]).sort(), [['f', 'importancia_baja'], ['v', 'vencida']]);
   assert.deepEqual(eligible.map((e) => e.tier), [TIER.GOOD, TIER.GOOD, TIER.ACCEPTABLE]);
+  // cada entrada trae su puntaje (el de deliveryScore) y ya no hay "banda"
+  assert.ok(eligible.every((e) => Math.abs(e.score - deliveryScore(e.importance, e.ageHours)) < 1e-9));
+  assert.ok(eligible.every((e) => !('band' in e)));
+});
+
+test('rankEligible: la más fresca no gana sola: una de 20 h muy importante le gana a una de 2 h apenas buena', () => {
+  const fresca = nota({ _id: 'fresca', publishedAt: hace(2), importanceScore: 52 });
+  const importante = nota({ _id: 'importante', publishedAt: hace(20), importanceScore: 90 });
+  const { eligible } = rankEligible([fresca, importante], ctx());
+  assert.deepEqual(eligible.map((e) => e.article._id), ['importante', 'fresca']);
 });
 
 test('rankEligible con goodOnly (rescate) deja afuera las aceptables', () => {

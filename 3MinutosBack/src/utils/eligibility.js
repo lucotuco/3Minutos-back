@@ -18,14 +18,14 @@
  *                     (coseno >= 0,88; entre 0,80 y 0,88 decide el juez de sameEventJudge.js)
  *
  * Entre las elegibles el orden es: nivel (buena antes que aceptable) -> [pista de subtema, solo temas libres] ->
- * banda de edad (hasta 10 h primero) -> importancia -> más nueva -> _id (desempate estable).
+ * puntaje (importancia y frescura ponderadas, ver deliveryScore) -> más nueva -> _id (desempate estable).
  *
  * La zona de similitud de la búsqueda (VERDE / AMARILLA) NO ordena: sale del puesto que ocupó la nota en dos listas
  * (puntaje por posición, no por parecido real), así que dos notas de calidad muy distinta quedaban separadas por un
  * escalón arbitrario. La relevancia la deciden el ancla léxica, el corral y el juez de tema; el orden, la calidad.
  */
 
-const { MAX_ARTICLE_AGE_HOURS, IDEAL_ARTICLE_AGE_HOURS, isPreviewOrAgenda } = require('./freshness');
+const { MAX_ARTICLE_AGE_HOURS, FRESHNESS_WEIGHT, freshnessOfAge, isPreviewOrAgenda } = require('./freshness');
 const { exclusionReasonOf } = require('./contentTypes');
 
 // ---------------------------------------------------------------- umbrales
@@ -116,10 +116,17 @@ function tierOf(importance) {
   return null;
 }
 
-/** 'ideal' (hasta 10 h) | 'valida' (10-24 h) | null (sin fecha o vencida). */
-function ageBandOf(ageHours) {
-  if (ageHours === null || ageHours > MAX_ARTICLE_AGE_HOURS) return null;
-  return ageHours <= IDEAL_ARTICLE_AGE_HOURS ? 'ideal' : 'valida';
+/**
+ * Puntaje de entrega 0-100: (1 - peso) * importancia + peso * frescura, con la frescura de freshnessOfAge: 100 hasta
+ * la meseta (4 h por defecto, ahí da igual cuántos minutos tenga la nota) y después lineal hasta 0 (24 h).
+ * Reemplaza al corte "hasta N h primero": no hay escalón, cada punto de importancia y cada hora pasada la meseta
+ * cuentan, y para dar más valor a la frescura se sube FRESHNESS_WEIGHT.
+ * @param {number} importance  importanceScore de la nota (0-100)
+ * @param {number} ageHours    edad en horas (negativa = recién publicada)
+ * @param {number} [weight]    peso de la frescura, 0-1 (por defecto FRESHNESS_WEIGHT)
+ */
+function deliveryScore(importance, ageHours, weight = FRESHNESS_WEIGHT) {
+  return (1 - weight) * importance + weight * freshnessOfAge(ageHours);
 }
 
 // ---------------------------------------------------------------- opinión y publicidad
@@ -214,7 +221,7 @@ function seenInJudgeBand(embedding, seen = [], {
  * @param {object} [ctx]
  * @param {number} [ctx.now]          epoch ms (por defecto, ahora)
  * @param {Set<string>} [ctx.usedUrls] URLs ya vistas o ya elegidas
- * @returns {{ok:boolean, tier:string|null, ageHours:number|null, band:string|null, importance:number, reasons:string[]}}
+ * @returns {{ok:boolean, tier:string|null, ageHours:number|null, importance:number, reasons:string[]}}
  */
 function checkEligibility(article, { now = Date.now(), usedUrls = new Set() } = {}) {
   const reasons = [];
@@ -243,7 +250,6 @@ function checkEligibility(article, { now = Date.now(), usedUrls = new Set() } = 
     ok: reasons.length === 0,
     tier,
     ageHours,
-    band: ageBandOf(ageHours === null ? null : Math.max(0, ageHours)),
     importance,
     reasons,
   };
@@ -251,14 +257,14 @@ function checkEligibility(article, { now = Date.now(), usedUrls = new Set() } = 
 
 // ---------------------------------------------------------------- orden
 /**
- * Comparador de candidatos ya elegibles. Cada entrada: { article, tier, hint?, ageHours, importance }.
+ * Comparador de candidatos ya elegibles. Cada entrada: { article, tier, hint?, score?, ageHours, importance }.
  *   1. nivel      buena antes que aceptable
  *   2. pista      (solo temas libres) 2 = la nota tiene el subtema que se esperaba del tema, 1 = solo la categoría, 0 = ninguna;
  *                 la mayor primero. Sin pista (temas oficiales) no desempata.
- *   3. banda      hasta 10 h antes que 10-24 h
- *   4. importancia la mayor primero
- *   5. edad       la más nueva primero
- *   6. _id        desempate estable (mismo resultado con los mismos datos)
+ *   3. puntaje    deliveryScore (importancia y frescura ponderadas): el mayor primero. Si la entrada no trae `score`
+ *                 se calcula con su importancia y su edad.
+ *   4. edad       la más nueva primero (desempata puntajes iguales)
+ *   5. _id        desempate estable (mismo resultado con los mismos datos)
  */
 function compareCandidates(a, b) {
   const byTier = (TIER_RANK[a.tier] ?? 9) - (TIER_RANK[b.tier] ?? 9);
@@ -267,11 +273,9 @@ function compareCandidates(a, b) {
   const byHint = (b.hint || 0) - (a.hint || 0);
   if (byHint) return byHint;
 
-  const bandA = a.ageHours <= IDEAL_ARTICLE_AGE_HOURS ? 0 : 1;
-  const bandB = b.ageHours <= IDEAL_ARTICLE_AGE_HOURS ? 0 : 1;
-  if (bandA !== bandB) return bandA - bandB;
-
-  if (a.importance !== b.importance) return b.importance - a.importance;
+  const scoreA = a.score ?? deliveryScore(a.importance, a.ageHours);
+  const scoreB = b.score ?? deliveryScore(b.importance, b.ageHours);
+  if (scoreA !== scoreB) return scoreB - scoreA;
   if (a.ageHours !== b.ageHours) return a.ageHours - b.ageHours;
 
   const idA = String(a.article?._id ?? a.article?.url ?? '');
@@ -315,14 +319,15 @@ function rankEligible(articles, ctx = {}, { zoneOf = null, hintOf = null, goodOn
       rejected.push({ article, reasons: ['no_es_buena'] });
       continue;
     }
+    const ageHours = Math.max(0, ev.ageHours);
     eligible.push({
       article,
       tier: ev.tier,
       zone: zoneOf ? zoneOf(article) : null,
       hint: hintOf ? hintOf(article) : 0,
-      ageHours: Math.max(0, ev.ageHours),
-      band: ev.band,
+      ageHours,
       importance: ev.importance,
+      score: deliveryScore(ev.importance, ageHours),
     });
   }
   eligible.sort(compareCandidates);
@@ -347,7 +352,7 @@ module.exports = {
   ageHoursOf,
   importanceOf,
   tierOf,
-  ageBandOf,
+  deliveryScore,
   isOpinionArticle,
   isAdvertisingArticle,
   isForeignInLocalCategory,

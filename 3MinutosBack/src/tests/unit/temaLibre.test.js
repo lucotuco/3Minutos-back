@@ -200,7 +200,7 @@ test('el nivel de la nota va antes que la pista: una "buena" de otro subtema le 
   assert.equal(r.resultados[0].tier, 'buena');
 });
 
-test('la pista va antes que la banda de edad: dentro del mismo nivel, lo del subtema (aunque tenga 20 h) pasa antes que lo de 1 h de otro', async () => {
+test('la pista va antes que el puntaje de importancia y frescura: dentro del mismo nivel, lo del subtema (aunque tenga 20 h) pasa antes que lo de 1 h de otro', async () => {
   const futbolViejo = nota({ title: 'Boca cerró el torneo con una victoria', topic: 'Fútbol', importanceScore: 60, publishedAt: hace(20) });
   const tenisNuevo = nota({ title: 'Boca Raton: final del torneo', topic: 'Tenis', importanceScore: 60, publishedAt: hace(1) });
   const expand = expansionFalsa(() => ({ q: 'boca', cat: 'Deportes', sub: 'Fútbol' }));

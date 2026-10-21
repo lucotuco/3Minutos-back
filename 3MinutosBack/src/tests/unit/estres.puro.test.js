@@ -305,19 +305,31 @@ const ids = (vs) => vs.map((v) => v.id);
 const verificar = (r, esperado = { tipo: 'libre' }, extra = {}) =>
   I.verificarResultado({ topic: 'river plate', r, esperado, ahora: AHORA, ...extra });
 
+// Un tema oficial se lee por etiqueta: zona ETIQUETA, sin score de búsqueda, con nivel y edad.
+const notaOficial = (o = {}) => nota({ score: undefined, finalScore: undefined, importanceScore: 70, geoScope: 'Argentina', ...o });
+const resultadoOficial = (o = {}, a = notaOficial()) => resultado({
+  topic: 'Fútbol', queryExpanded: 'Fútbol', matchZone: 'ETIQUETA', matchScore: null, tier: 'buena', ageHours: 5,
+  matchReason: 'ETIQUETA buena 5h imp=70 (candidato #1 de 3 elegibles)', ...o,
+}, a);
+const OFICIAL = { tipo: 'oficial', nivel: 'subtema', categoria: 'Deportes' };
+const verificarOficial = (r, esperado = OFICIAL, extra = {}) =>
+  I.verificarResultado({ topic: 'Fútbol', r, esperado, ahora: AHORA, ...extra });
+
 test('invariantes: un resultado sano no tiene violaciones', () => {
   assert.deepEqual(verificar(resultado()), []);
-  assert.deepEqual(verificar(resultado(), { tipo: 'oficial', categoria: 'Deportes' }), []);
+  assert.deepEqual(verificarOficial(resultadoOficial()), [], 'un tema oficial sano: zona ETIQUETA, sin score');
   const vacio = resultado({ article: null, matchZone: null, matchScore: null, matchReason: 'sin_candidatos', candidatesEvaluated: 0 });
   assert.deepEqual(verificar(vacio), [], 'sin nota y sin zona es un resultado válido');
 });
 
-test('I1: edad máxima (48 h, con un minuto de tolerancia), fecha faltante y fecha futura', () => {
+test('I1: edad máxima (24 h, con un minuto de tolerancia), fecha faltante y fecha futura', () => {
+  const MAX = 24; // MAX_ARTICLE_AGE_HOURS
   const viejo = verificar(resultado({}, nota({ publishedAt: new Date(AHORA - 60 * HORA) })));
   assert.ok(ids(viejo).includes('I1-EDAD'));
   assert.equal(viejo.find((v) => v.id === 'I1-EDAD').severidad, 'ALTA');
-  assert.deepEqual(ids(verificar(resultado({}, nota({ publishedAt: new Date(AHORA - 48 * HORA) })))), [], '48 h justas: ok');
-  assert.ok(ids(verificar(resultado({}, nota({ publishedAt: new Date(AHORA - 48.5 * HORA) })))).includes('I1-EDAD'));
+  assert.deepEqual(ids(verificar(resultado({}, nota({ publishedAt: new Date(AHORA - MAX * HORA) })))), [], '24 h justas: ok');
+  assert.ok(ids(verificar(resultado({}, nota({ publishedAt: new Date(AHORA - 24.5 * HORA) })))).includes('I1-EDAD'));
+  assert.ok(ids(verificar(resultado({}, nota({ publishedAt: new Date(AHORA - 36 * HORA) })))).includes('I1-EDAD'), 'una de 36 h (válida con el tope viejo de 48 h) ya no vale');
 
   const sinFecha = verificar(resultado({}, nota({ publishedAt: undefined })));
   assert.equal(sinFecha.find((v) => v.id === 'I1-EDAD').severidad, 'MEDIA');
@@ -338,6 +350,109 @@ test('I2: coherencia entre zona, score y rescate', () => {
   assert.ok(ids(verificar(resultado({ usedFallback: true, matchZone: 'VERDE', matchReason: 'sin_candidatos' }))).includes('I2-ZONA'));
   assert.ok(ids(verificar(resultado({ article: null, matchZone: 'VERDE' }))).includes('I2-ZONA'));
   assert.ok(ids(verificar(resultado({ article: null, matchZone: null, usedFallback: true }))).includes('I2-ZONA'));
+});
+
+test('I2 (temas oficiales): la zona es ETIQUETA y no hay score; ETIQUETA no existe en los temas libres', () => {
+  assert.deepEqual(verificarOficial(resultadoOficial()), []);
+  const conVerde = verificarOficial(resultadoOficial({ matchZone: 'VERDE', matchScore: 0.97 }));
+  assert.ok(ids(conVerde).includes('I2-ZONA'), 'un oficial ya no pasa por la búsqueda por significado');
+  assert.equal(conVerde.find((v) => v.id === 'I2-ZONA').severidad, 'ALTA');
+
+  const conScore = verificarOficial(resultadoOficial({ matchScore: 0.9 }));
+  assert.equal(conScore.find((v) => v.id === 'I2-ZONA').severidad, 'MEDIA');
+
+  const libreConEtiqueta = verificar(resultado({ matchZone: 'ETIQUETA', matchScore: null }), { tipo: 'libre' });
+  assert.ok(ids(libreConEtiqueta).includes('I2-ZONA'));
+});
+
+test('I10 (temas oficiales y rescates): sus notas no traen score; las que eligió la búsqueda de un tema libre sí', () => {
+  assert.deepEqual(verificarOficial(resultadoOficial()), []);
+  const libreSinScore = resultado({}, nota({ score: undefined, finalScore: undefined }));
+  const v = verificar(libreSinScore, { tipo: 'libre' });
+  assert.equal(ids(v).filter((x) => x === 'I10-SCORE').length, 2);
+
+  // El rescate de un tema libre se lee por etiqueta (sin búsqueda): su nota viene sin score y eso es lo normal.
+  const rescateLibre = resultado(
+    { usedFallback: true, matchZone: 'RESCATE', matchScore: null, matchReason: 'sin_candidatos', tier: 'sugerida', fallbackCategory: 'Deportes' },
+    nota({ score: undefined, finalScore: undefined, importanceScore: 70, geoScope: 'Argentina' }),
+  );
+  assert.deepEqual(verificar(rescateLibre, { tipo: 'libre' }), []);
+  // Pero una nota que eligió la búsqueda (en cualquier zona) y no trae score sigue siendo una violación.
+  for (const [zona, matchScore] of [['VERDE', 0.97], ['AMARILLA', 0.91]]) {
+    const sinScore = verificar({ ...rescateLibre, usedFallback: false, matchZone: zona, matchScore }, { tipo: 'libre' });
+    assert.equal(ids(sinScore).filter((x) => x === 'I10-SCORE').length, 2, zona);
+  }
+});
+
+test('I14: importancia mínima 40 (50 en el rescate); si la nota no la trae no se mide', () => {
+  assert.deepEqual(ids(verificarOficial(resultadoOficial({ tier: 'aceptable' }, notaOficial({ importanceScore: 40 })))), []);
+  const baja = verificarOficial(resultadoOficial({ tier: 'aceptable' }, notaOficial({ importanceScore: 39 })));
+  assert.ok(ids(baja).includes('I14-IMPORTANCIA'));
+  assert.equal(baja.find((v) => v.id === 'I14-IMPORTANCIA').severidad, 'ALTA');
+
+  const rescate = (imp) => resultadoOficial(
+    { usedFallback: true, matchZone: 'RESCATE', tier: 'sugerida', matchReason: 'sin_candidatos', fallbackCategory: 'Deportes' },
+    notaOficial({ importanceScore: imp })
+  );
+  assert.ok(ids(verificarOficial(rescate(49))).includes('I14-IMPORTANCIA'), 'el rescate exige nota buena (>= 50)');
+  assert.deepEqual(ids(verificarOficial(rescate(50))), []);
+
+  assert.deepEqual(ids(verificarOficial(resultadoOficial({}, notaOficial({ importanceScore: undefined })))), [], 'un item de digest no trae importanceScore');
+});
+
+test('I15: nunca una previa, agenda o "en vivo"', () => {
+  for (const titulo of ['EN VIVO | Boca - River', 'Previa del clásico: cómo llegan', 'River - Boca: a qué hora juegan y dónde ver', 'Las formaciones confirmadas']) {
+    const v = verificar(resultado({}, nota({ title: titulo })), { tipo: 'libre' });
+    assert.ok(ids(v).includes('I15-PREVIA'), titulo);
+    assert.equal(v.find((x) => x.id === 'I15-PREVIA').severidad, 'ALTA');
+  }
+  assert.ok(!ids(verificar(resultado(), { tipo: 'libre' })).includes('I15-PREVIA'));
+  assert.ok(!ids(verificar(resultado({}, nota({ title: 'Autorización previa: el cambio que piden las prepagas' })), { tipo: 'libre' })).includes('I15-PREVIA'));
+});
+
+test('I16: en Sociedad solo Argentina o Global', () => {
+  const sociedad = (geoScope) => verificarOficial(
+    resultadoOficial({ topic: 'Salud' }, notaOficial({ category: 'Sociedad', topic: 'Salud', geoScope })),
+    { tipo: 'oficial', nivel: 'subtema', categoria: 'Sociedad' }
+  );
+  assert.deepEqual(ids(sociedad('Argentina')), []);
+  assert.deepEqual(ids(sociedad('Global')), []);
+  assert.deepEqual(ids(sociedad('argentina')), [], 'sin importar mayúsculas');
+  assert.deepEqual(ids(sociedad(undefined)), [], 'sin dato no se mide (la ingesta deja Global por defecto)');
+  const mexico = sociedad('México');
+  assert.ok(ids(mexico).includes('I16-PAIS'));
+  assert.equal(mexico.find((v) => v.id === 'I16-PAIS').severidad, 'ALTA');
+  // otras categorías no tienen esta regla
+  assert.deepEqual(ids(verificarOficial(resultadoOficial({}, notaOficial({ geoScope: 'México' })))), []);
+});
+
+test('I17: el nivel es coherente con la importancia y con el rescate', () => {
+  const conTier = (tier, imp, extra = {}) => verificarOficial(resultadoOficial({ tier, ...extra }, notaOficial({ importanceScore: imp })));
+  assert.deepEqual(ids(conTier('buena', 50)), []);
+  assert.deepEqual(ids(conTier('aceptable', 45)), []);
+  assert.ok(ids(conTier('buena', 49)).includes('I17-NIVEL'));
+  assert.ok(ids(conTier('aceptable', 50)).includes('I17-NIVEL'));
+  assert.ok(ids(conTier('aceptable', 39)).includes('I17-NIVEL'));
+  assert.ok(ids(conTier('sugerida', 70)).includes('I17-NIVEL'), 'una nota del tema no puede ser "sugerida"');
+  assert.ok(ids(conTier('inventado', 70)).includes('I17-NIVEL'));
+  const rescateMal = conTier('buena', 70, { usedFallback: true, matchZone: 'RESCATE', matchReason: 'sin_candidatos', fallbackCategory: 'Deportes' });
+  assert.ok(ids(rescateMal).includes('I17-NIVEL'), 'el rescate es "sugerida"');
+  assert.deepEqual(ids(verificarOficial(resultadoOficial({ tier: undefined }))), [], 'resultados sin nivel (versiones anteriores) no se miden');
+});
+
+test('I18 e I19: una categoría no tiene rescate; un subtema trae notas con su etiqueta', () => {
+  const rescate = resultadoOficial({ topic: 'Deportes', usedFallback: true, matchZone: 'RESCATE', tier: 'sugerida', matchReason: 'sin_candidatos', fallbackCategory: 'Deportes' });
+  const categoria = { tipo: 'oficial', nivel: 'categoria', categoria: 'Deportes' };
+  assert.ok(ids(verificarOficial(rescate, categoria)).includes('I18-RESCATE-DE-CATEGORIA'));
+  assert.ok(!ids(verificarOficial(rescate, OFICIAL)).includes('I18-RESCATE-DE-CATEGORIA'), 'un subtema sí puede tener rescate');
+
+  const otraEtiqueta = resultadoOficial({}, notaOficial({ topic: 'Tenis' }));
+  const v = verificarOficial(otraEtiqueta);
+  assert.ok(ids(v).includes('I19-ETIQUETA'));
+  assert.equal(v.find((x) => x.id === 'I19-ETIQUETA').severidad, 'ALTA');
+  assert.deepEqual(ids(verificarOficial(resultadoOficial({}, notaOficial({ topic: 'fútbol' })))), [], 'sin importar mayúsculas');
+  assert.deepEqual(ids(verificarOficial(resultadoOficial({}, notaOficial({ topic: undefined })))), [], 'un item de digest no trae la etiqueta');
+  assert.deepEqual(ids(verificarOficial(resultadoOficial({ topic: 'Deportes' }, notaOficial({ topic: 'Tenis' })), { tipo: 'oficial', nivel: 'categoria', categoria: 'Deportes' })), [], 'una categoría acepta cualquier subtema');
 });
 
 test('I13: un rescate tiene que decir por qué', () => {
@@ -377,12 +492,67 @@ test('I5, I6, I6b e I10: trazabilidad, forma de la nota, opinión y scores', () 
   assert.ok(ids(verificar(resultado({}, nota({ _id: undefined })))).includes('I6-FORMA'));
 
   assert.ok(ids(verificar(resultado({}, nota({ url: 'https://x.test/opinion/columna-1' })))).includes('I6b-OPINION'));
-  assert.ok(ids(verificar(resultado({}, nota({ title: 'Columna de Fulano: river' })))).includes('I6b-OPINION'));
+  assert.ok(ids(verificar(resultado({}, nota({ url: 'https://www.perfil.com/noticias/columnistas/es-la-democracia.phtml' })))).includes('I6b-OPINION'));
+  assert.ok(ids(verificar(resultado({}, nota({ title: 'Columna: Fulano sobre river' })))).includes('I6b-OPINION'));
   assert.ok(ids(verificar(resultado({}, nota({ tags: ['editorial'] })))).includes('I6b-OPINION'));
   assert.equal(I.esOpinion(nota()), false);
+  // Palabra entera: estos títulos y rutas CONTIENEN la palabra pero no son opinión.
+  for (const t of ['Análisis de sangre: qué mide', 'La opinión pública y la inflación', 'Editorial Planeta lanzó su catálogo']) {
+    assert.equal(I.esOpinion(nota({ title: t })), false, t);
+  }
+  assert.equal(I.esOpinion(nota({ url: 'https://x.test/politica/editorial-planeta-lanzo-catalogo' })), false);
+  assert.equal(I.esOpinion(nota({ url: 'https://x.test/politica/nota?ref=/opinion/' })), false);
+
+  // I6c: contenido patrocinado. I6d: tipo de nota que la IA marcó como no entregable.
+  assert.ok(ids(verificar(resultado({}, nota({ url: 'https://www.infobae.com/inhouse/2026/10/13/nota/' })))).includes('I6c-PUBLICIDAD'));
+  assert.equal(I.esPublicidad(nota()), false);
+  for (const contentType of ['opinion', 'servicio', 'previa_agenda', 'publicidad']) {
+    const v = verificar(resultado({}, nota({ contentType })));
+    assert.ok(ids(v).includes('I6d-TIPO-EXCLUIDO'), contentType);
+    assert.equal(v.find((x) => x.id === 'I6d-TIPO-EXCLUIDO').severidad, 'ALTA');
+  }
+  for (const contentType of ['noticia', 'analisis', 'entrevista', 'color', '', undefined]) {
+    assert.ok(!ids(verificar(resultado({}, nota({ contentType })))).includes('I6d-TIPO-EXCLUIDO'), String(contentType));
+  }
 
   assert.ok(ids(verificar(resultado({}, nota({ score: 1.5 })))).includes('I10-SCORE'));
   assert.ok(ids(verificar(resultado({}, nota({ finalScore: 'alto' })))).includes('I10-SCORE'));
+});
+
+test('el espejo independiente de opinión y publicidad coincide con la regla del motor en una misma batería', () => {
+  const { isOpinionArticle, isAdvertisingArticle } = require('../../utils/eligibility');
+  const casos = [
+    { url: 'https://www.perfil.com/noticias/columnistas/es-la-democracia-estupido.phtml' },
+    { url: 'https://www.cronista.com/columnistas/inflacion/' },
+    { url: 'https://www.ambito.com/ambito-debate/el-modelo-n5900000' },
+    { url: 'https://www.clarin.com/cartas-al-pais/cartas_0_abc.html' },
+    { url: 'https://www.clarin.com/opinion/titulo_0_abc.html' },
+    { url: 'https://www.lanacion.com.ar/editoriales/titulo-nid1/' },
+    { url: 'https://www.lanacion.com.ar/opini%C3%B3n/titulo-nid1/' },
+    { url: 'https://www.infobae.com/inhouse/2026/10/13/nota/' },
+    { url: 'https://www.perfil.com/noticias/empresas-y-protagonistas/aysa.phtml' },
+    { url: 'https://medio.test/politica/editorial-planeta-lanzo-catalogo' },
+    { url: 'https://medio.test/politica/nota?ref=/opinion/' },
+    { url: 'https://medio.test/sociedad/editorial' },
+    { url: '/opinion/algo/nota' },
+    { url: 'no es una url' },
+    { url: 'https://medio.test/x/nota', section: 'Opinión' },
+    { url: 'https://medio.test/x/nota', topic: 'Columna de opinión' },
+    { url: 'https://medio.test/x/nota', tags: ['política', 'Columnista'] },
+    { url: 'https://medio.test/x/nota', tags: ['opinión pública'] },
+    { url: 'https://medio.test/x/nota', title: 'Análisis: qué viene después del dólar' },
+    { url: 'https://medio.test/x/nota', title: 'OPINIÓN | El país que viene' },
+    { url: 'https://medio.test/x/nota', title: 'Análisis de sangre: qué mide cada valor' },
+    { url: 'https://medio.test/x/nota', title: 'La opinión pública y la inflación' },
+    { url: 'https://medio.test/x/nota', title: 'Nuevo análisis: Boca y River' },
+    { url: 'https://medio.test/x/nota', title: 'Columnas de humo' },
+    { url: 'https://medio.test/x/nota', category: 'Opinion' },
+    { url: 'https://medio.test/x/nota' },
+  ];
+  for (const c of casos) {
+    assert.equal(I.esOpinion(c), isOpinionArticle(c), `opinión: ${JSON.stringify(c)}`);
+    assert.equal(I.esPublicidad(c), isAdvertisingArticle(c), `publicidad: ${JSON.stringify(c)}`);
+  }
 });
 
 test('I7: repetir una nota del historial es CRÍTICO', () => {

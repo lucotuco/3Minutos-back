@@ -8,6 +8,9 @@
 
 const { MAX_ARTICLE_AGE_HOURS } = require('../../utils/freshness');
 const { VERDE_MIN, AMARILLA_MIN } = require('../../utils/topicMatching');
+const {
+  SAME_STORY_COSINE, HISTORY_MAX_NOTES, HISTORY_WINDOW_HOURS, IMPORTANCE_GOOD_MIN, IMPORTANCE_ACCEPTABLE_MIN,
+} = require('../../utils/eligibility');
 
 const NIVELES = {
   suave: {
@@ -56,7 +59,7 @@ const UMBRALES = {
   degradacionP95: 4,        // p95 del escalón / p95 del escalón 1
   rescateMaxLibres: 0.35,   // % tolerable de tópicos libres resueltos por rescate
   memoriaMBporMin: 20,      // crecimiento de heap sostenido en el soak
-  casiDuplicadoCos: 0.85,   // mismo umbral que el filtro semántico de producción
+  casiDuplicadoCos: SAME_STORY_COSINE, // el mismo umbral con que el motor descarta "la misma historia"
   casiDuplicadoTitulos: 0.6,
 };
 
@@ -64,7 +67,10 @@ const CONTRATO = {
   maxEdadHoras: MAX_ARTICLE_AGE_HOURS,
   verdeMin: VERDE_MIN,
   amarillaMin: AMARILLA_MIN,
-  ventanaHistorial: 30,     // getAlreadyShownHistoryForUser: .limit(30)
+  ventanaHistorial: HISTORY_MAX_NOTES,     // getAlreadyShownHistoryForUser: hasta 150 notas...
+  ventanaHistorialHoras: HISTORY_WINDOW_HOURS, // ...de las últimas 48 h
+  importanciaBuena: IMPORTANCE_GOOD_MIN,       // >= 50: nota "buena" (y mínimo del rescate)
+  importanciaMinima: IMPORTANCE_ACCEPTABLE_MIN, // >= 40: nada por debajo se entrega
   topicosPorUsuario: 3,     // UserPreference.topics: exactamente 3
   perTopicLimit: 10,        // igual que buildUserNewsDigest
 };

@@ -164,7 +164,7 @@ test('B: repetir una nota dentro de la ventana es CRÍTICO (I7) y se cuenta por 
   assert.equal(r.porTema[0].repetidas, 1);
 });
 
-test('B: una nota que vuelve después de salir de la ventana de 30', () => {
+test('B: una nota que vuelve después de salir del tope del historial', () => {
   const reaparecida = { url: 'https://x.test/n1', titulo: 'Nota n1', rondaPrevia: 1, ronda: 12 };
   const r = analizarSesiones({ sesiones: [sesionB(1, 1, [art('n1')]), sesionB(1, 12, [art('n9')], { reaparecidas: [reaparecida] })] });
   const h = hallazgo(r, 'B-REAPARICION');
@@ -502,6 +502,24 @@ test('D ráfaga: cuántas expansiones paga un tópico nuevo pedido a la vez', ()
   assert.deepEqual(D.analizarStampede(null), []);
 });
 
+test('D ráfaga: las preguntas de los jueces con IA no cuentan como expansiones', () => {
+  // 1 expansión compartida + 3 preguntas del juez de tema: 4 llamadas de chat, pero una sola expansión.
+  const bien = D.analizarStampede({ concurrentes: 5, tema: 'x', ms: 10, llamadasChat: 4, llamadasExpansion: 1, llamadasJuez: 3, llamadasEmbedding: 1, errores: 0 });
+  assert.equal(bien[0].id, 'D-EXPANSION-OK');
+  assert.match(bien[0].titulo, /hicieron 1 expansión$/);
+  assert.match(bien[0].evidencia[0], /preguntas a jueces: 3/);
+  const mal = D.analizarStampede({ concurrentes: 5, tema: 'x', ms: 10, llamadasChat: 8, llamadasExpansion: 5, llamadasJuez: 3, llamadasEmbedding: 5, errores: 0 });
+  assert.equal(mal[0].id, 'D-STAMPEDE-EXPANSION');
+  assert.match(mal[0].titulo, /hicieron 5 expansiones/);
+  const sinDato = D.analizarStampede({ concurrentes: 5, tema: 'x', ms: 10, llamadasChat: 3, llamadasEmbedding: 1, errores: 0 });
+  assert.equal(sinDato[0].id, 'D-STAMPEDE-EXPANSION', 'sin el desglose (datos viejos) vale el total de llamadas de chat');
+});
+
+test('D llamada gigante: informa las expansiones por separado de las preguntas a los jueces', () => {
+  const r = D.analizarMega({ topics: 10, ms: 1000, error: null, timeout: false, resultados: 10, rescates: 0, erroresBusqueda: 0, llamadasChat: 40, llamadasExpansion: 10, llamadasJuez: 30, violaciones: [] });
+  assert.match(hallazgo(r, 'D-MEGA-SECUENCIAL').evidencia[0], /expansiones en OpenAI: 10 · preguntas a jueces: 30/);
+});
+
 test('D llamada gigante: falla, búsquedas tragadas, violaciones y tiempo por tópico', () => {
   const ok = D.analizarMega({ topics: 100, ms: 5000, error: null, timeout: false, resultados: 100, rescates: 4, erroresBusqueda: 0, llamadasChat: 90, violaciones: [] });
   assert.deepEqual(ids(ok), ['D-MEGA-SECUENCIAL']);
@@ -557,31 +575,74 @@ test('G: escrituras en Mongo (crítico), embeddings repetidos y corrida parcial'
 const FUENTES_CON_PROBLEMAS = {
   busqueda: 'const projectFields = { title: 1, url: 1 };',
   historial: 'UserShownArticle.find().limit(30).lean(); return { urls, seenEmbeddings };',
-  digest: 'const t = [...new Set(history.titles)];',
+  digest: 'const t = [...new Set(history.urls)];',
   openai: 'const cliente = new OpenAI({ apiKey });',
   server: 'await mongoose.connect(uri, { serverSelectionTimeoutMS: 10000 });',
-  pick: 'const queryExpansionCache = new Map();\nconst TOPIC_TO_CATEGORY = Object.fromEntries(pares);\nconst c = TOPIC_TO_CATEGORY[topic];\nconst q = `${cat} Argentina actualidad nacional`;',
+  pick: 'const queryExpansionCache = new Map();\nconst TOPIC_TO_CATEGORY = Object.fromEntries(pares);\nconst c = TOPIC_TO_CATEGORY[topic];',
   cron: 'for (const user of usersInWindow) { await buildDigestForUser(user._id); }',
+  ingesta: 'const TOPIC_TO_CATEGORY = Object.fromEntries(pares);\nif (TOPIC_TO_CATEGORY[topic]) category = TOPIC_TO_CATEGORY[topic];',
+  rutas: "router.get('/digest', async () => { const run = await UserDeliveryRun.findOne({ userId }); return res.json(run.digest); });",
 };
 const FUENTES_ARREGLADAS = {
   busqueda: 'const projectFields = { title: 1, url: 1, embedding: 1 };',
-  historial: 'find().limit(200); return { urls, titles, seenEmbeddings };',
-  digest: 'const t = [...new Set(history.titles)];',
+  historial: 'find().limit(200); return { urls, seenEmbeddings };',
+  digest: 'const t = [...new Set(history.urls)];',
   openai: 'new OpenAI({ apiKey, timeout: 20000, maxRetries: 1 })',
   server: 'await mongoose.connect(uri, { serverSelectionTimeoutMS: 10000, maxPoolSize: 20, socketTimeoutMS: 30000 });',
   pick: 'const queryExpansionCache = new Map(); queryExpansionCache.delete(k);\nconst c = Object.hasOwn(TOPIC_TO_CATEGORY, topic) ? TOPIC_TO_CATEGORY[topic] : null;\nconst TOPIC_TO_CATEGORY = Object.fromEntries(pares);',
   cron: 'await Promise.all(usersInWindow.map((u) => buildDigestForUser(u._id)));',
+  ingesta: 'const TOPIC_TO_CATEGORY = Object.fromEntries(pares);\nif (Object.hasOwn(TOPIC_TO_CATEGORY, topic)) category = TOPIC_TO_CATEGORY[topic];',
+  rutas: "router.get('/digest', async () => { const run = await UserDeliveryRun.findOne({ userId }); const { digest } = await ensureFreshDigest(run, deps); return res.json(digest); });",
 };
 
-test('estático: detecta los 9 problemas de diseño en un código que los tiene', () => {
+test('estático: detecta los 8 problemas de diseño en un código que los tiene', () => {
   const r = auditarFuentes(FUENTES_CON_PROBLEMAS);
   assert.deepEqual(r.map((h) => h.id).sort(), [
-    'S-CACHE-EXPANSION-SIN-LIMITE', 'S-CRON-SECUENCIAL', 'S-LOOKUP-EN-OBJETO-COMUN', 'S-MONGO-SIN-POOL-NI-SOCKET-TIMEOUT',
-    'S-OPENAI-SIN-TIMEOUT', 'S-RESCATE-CONSULTA-FIJA', 'S-SIN-EMBEDDING-EN-CANDIDATOS', 'S-TITULOS-DEL-HISTORIAL-NUNCA-LLEGAN',
+    'S-CACHE-EXPANSION-SIN-LIMITE', 'S-CRON-SECUENCIAL', 'S-DIGEST-GUARDADO-SIN-REVISAR-EDAD', 'S-LOOKUP-EN-OBJETO-COMUN',
+    'S-MONGO-SIN-POOL-NI-SOCKET-TIMEOUT', 'S-OPENAI-SIN-TIMEOUT', 'S-SIN-EMBEDDING-EN-CANDIDATOS',
     'S-VENTANA-HISTORIAL-30',
   ]);
   assert.ok(r.every((h) => h.escenario === 'S'));
   assert.equal(r.find((h) => h.id === 'S-SIN-EMBEDDING-EN-CANDIDATOS').severidad, 'ALTA');
+  assert.equal(r.find((h) => h.id === 'S-DIGEST-GUARDADO-SIN-REVISAR-EDAD').severidad, 'ALTA');
+});
+
+test('estático: el digest guardado se marca solo si las rutas no revisan la edad de sus notas', () => {
+  const idsDe = (f) => auditarFuentes(f).map((h) => h.id);
+  assert.ok(idsDe({ rutas: FUENTES_CON_PROBLEMAS.rutas }).includes('S-DIGEST-GUARDADO-SIN-REVISAR-EDAD'));
+  assert.ok(!idsDe({ rutas: FUENTES_ARREGLADAS.rutas }).includes('S-DIGEST-GUARDADO-SIN-REVISAR-EDAD'));
+  assert.deepEqual(idsDe({ rutas: 'router.get("/ping", () => "ok");' }), [], 'unas rutas sin digests guardados no tienen nada que revisar');
+});
+
+test('estático: el lookup en objeto común se marca en el motor y en la ingesta, cada uno por separado', () => {
+  const lookup = (f) => hallazgo(auditarFuentes(f), 'S-LOOKUP-EN-OBJETO-COMUN');
+  const soloIngesta = lookup({ ingesta: FUENTES_CON_PROBLEMAS.ingesta, pick: FUENTES_ARREGLADAS.pick });
+  assert.deepEqual(soloIngesta.evidencia, ['ingestion/reviewArticlesWithAIBatch.js']);
+  const soloMotor = lookup({ pick: FUENTES_CON_PROBLEMAS.pick, ingesta: FUENTES_ARREGLADAS.ingesta });
+  assert.deepEqual(soloMotor.evidencia, ['utils/pickBestArticlePerTopic.js']);
+  assert.equal(lookup({ pick: FUENTES_ARREGLADAS.pick, ingesta: FUENTES_ARREGLADAS.ingesta }), undefined);
+});
+
+test('estático: el filtro de "misma historia" no se marca como roto si el motor lee los embeddings de los finalistas', () => {
+  const sinProyectar = { busqueda: 'const projectFields = { title: 1, url: 1 };' };
+  assert.ok(ids(auditarFuentes(sinProyectar)).includes('S-SIN-EMBEDDING-EN-CANDIDATOS'));
+  for (const lector of ['const vectors = await store.loadEmbeddings(ids);', 'function embeddingLoader(store) {}']) {
+    assert.ok(!ids(auditarFuentes({ ...sinProyectar, pick: lector })).includes('S-SIN-EMBEDDING-EN-CANDIDATOS'), lector);
+  }
+});
+
+test('estático: con timeout y reintentos acotados en el camino del digest, el cliente de OpenAI sin opciones ya no se marca', () => {
+  const cliente = { openai: 'const cliente = new OpenAI({ apiKey });' };
+  assert.ok(ids(auditarFuentes(cliente)).includes('S-OPENAI-SIN-TIMEOUT'));
+  const acotada = 'create(body, { timeout: 8000, maxRetries: 1 })';
+  const camino = { busqueda: acotada, expansion: acotada, jueces: acotada };
+  assert.ok(!ids(auditarFuentes({ ...cliente, ...camino })).includes('S-OPENAI-SIN-TIMEOUT'));
+  for (const sinAcotar of ['busqueda', 'expansion', 'jueces']) {
+    const incompleto = { ...cliente, ...camino, [sinAcotar]: 'sin opciones' };
+    assert.ok(ids(auditarFuentes(incompleto)).includes('S-OPENAI-SIN-TIMEOUT'), `si ${sinAcotar} queda sin acotar, sigue marcado`);
+  }
+  const faltaUno = { ...cliente, busqueda: acotada, expansion: acotada };
+  assert.ok(ids(auditarFuentes(faltaUno)).includes('S-OPENAI-SIN-TIMEOUT'), 'un archivo que no se pudo leer no cuenta como acotado');
 });
 
 test('estático: cuando el código ya está arreglado, los hallazgos desaparecen (sin falsos positivos)', () => {
@@ -590,7 +651,7 @@ test('estático: cuando el código ya está arreglado, los hallazgos desaparecen
 
 test('estático: sin archivos (vacíos o ausentes) no inventa hallazgos', () => {
   assert.deepEqual(auditarFuentes({}), []);
-  assert.deepEqual(auditarFuentes({ busqueda: '', historial: '', digest: '', openai: '', server: '', pick: '', cron: '' }), []);
+  assert.deepEqual(auditarFuentes({ busqueda: '', historial: '', digest: '', openai: '', server: '', pick: '', expansion: '', jueces: '', cron: '', ingesta: '', rutas: '' }), []);
 });
 
 test('estático: leerFuentes encuentra todos los archivos auditados (si se renombra uno, la auditoría quedaría ciega)', () => {

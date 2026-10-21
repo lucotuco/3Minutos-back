@@ -75,6 +75,22 @@ CLOUDINARY_URL=your_cloudinary_url
 NEWSAPI_KEY=your_newsapi_key
 ```
 
+Optional switches for the article-picking engine (all default to *on*; no code change needed to turn them off):
+```env
+SAME_STORY_JUDGE=off          # AI check for "same story" pairs in the gray cosine zone (0.80-0.88)
+TOPIC_JUDGE=off               # AI check that a free-topic article is really about the topic
+JUDGE_WAIT_MS=1500            # max total wait for the judges in a digest someone is looking at (0 = cache only)
+JUDGE_WAIT_MS_BACKGROUND=4000 # same, for digests built by the background job
+TOPIC_EXPANSION_STORE=off     # keep free-topic expansions only in memory (default: also saved in Mongo, collection topic_expansions)
+```
+To force every free topic to be expanded again, empty the `topic_expansions` collection.
+
+Among the eligible articles of a topic, the one delivered is the best by `score = (1 - w) * importance + w * freshness`. Freshness is 100 up to a plateau (default 4 h: for a reader there is no difference between a 30-minute-old and a 3-hour-old article), then falls linearly to 0 at 24 h. `w` is the weight of freshness (0 = importance only, 1 = freshness only; default `0.3`). Values out of range (`w` outside 0-1, plateau outside 0-24) are ignored. The server must be restarted to change them:
+```env
+FRESHNESS_WEIGHT=0.3          # 0-1
+FRESHNESS_PLATEAU_HOURS=4     # 0 = no plateau (linear from the first minute)
+```
+
 ### 4. Running the Server
 Start the backend server:
 ```bash

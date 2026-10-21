@@ -31,7 +31,7 @@ async function correr(ctx) {
     filas.push(filaDeUnTopico({
       salida,
       topic: tema.tema,
-      esperado: { tipo: tema.tipo, categoria: tema.categoria },
+      esperado: { tipo: tema.tipo, nivel: tema.nivel, categoria: tema.categoria },
       extra: { tema: tema.tema, tipo: tema.tipo, nivel: tema.nivel, categoria: tema.categoria, rep },
     }));
     tick();

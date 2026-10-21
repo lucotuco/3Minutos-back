@@ -16,10 +16,14 @@ const ARCHIVOS = {
   openai: 'config/openai.js',
   server: 'server.js',
   pick: 'utils/pickBestArticlePerTopic.js',
+  expansion: 'utils/topicExpansion.js',
+  jueces: 'utils/llmJudge.js',
   historial: 'utils/getAlreadyShownUrlsForUser.js',
   digest: 'utils/buildDigestForUser.js',
   busqueda: 'embeddings/searchArticlesBySimilarityAtlas.js',
   cron: 'utils/prepareUpcomingDeliveryRuns.js',
+  ingesta: 'ingestion/reviewArticlesWithAIBatch.js',
+  rutas: 'routes/userRoutes.js',
 };
 
 function leerFuentes(srcRoot) {
@@ -35,18 +39,13 @@ function auditarFuentes(f) {
   const push = (cond, h) => { if (cond) out.push(hallazgo({ escenario: 'S', ...h })); };
   const tiene = (src, re) => Boolean(src) && re.test(src);
 
-  push(f.busqueda && !tiene(f.busqueda, /embedding\s*:\s*1/), {
+  // Si la búsqueda no proyecta el embedding pero el motor los lee aparte (solo de los finalistas), el filtro sí funciona.
+  push(f.busqueda && !tiene(f.busqueda, /embedding\s*:\s*1/) && !tiene(f.pick, /loadEmbeddings|embeddingLoader/), {
     id: 'S-SIN-EMBEDDING-EN-CANDIDATOS', severidad: 'ALTA',
     titulo: 'La búsqueda híbrida no trae el campo embedding de los candidatos',
-    detalle: 'isUsableDigestArticle compara contra los vectores de lo ya visto solo si article.embedding existe; sin proyectarlo, ese filtro semántico nunca bloquea nada.',
-    evidencia: ['embeddings/searchArticlesBySimilarityAtlas.js → projectFields sin "embedding: 1"'],
-    sugerencia: 'Proyectar embedding solo para el top-N final, o comparar contra los vectores del historial en otra etapa.',
-  });
-
-  push(f.historial && f.digest && tiene(f.digest, /history\.titles/) && !tiene(f.historial, /\btitles\b/), {
-    id: 'S-TITULOS-DEL-HISTORIAL-NUNCA-LLEGAN', severidad: 'BAJA',
-    titulo: 'buildDigestForUser lee history.titles, pero getAlreadyShownHistoryForUser no lo devuelve',
-    detalle: 'alreadyShownTitles llega siempre vacío (y pickBestArticlePerTopic igual no lo usa para filtrar).',
+    detalle: 'El filtro de "misma historia" compara contra los vectores de lo ya visto solo si la nota candidata trae su embedding; sin proyectarlo (ni leerlo aparte para los finalistas), ese filtro semántico nunca bloquea nada.',
+    evidencia: ['embeddings/searchArticlesBySimilarityAtlas.js → projectFields sin "embedding: 1"', 'utils/pickBestArticlePerTopic.js → no lee los embeddings de los finalistas'],
+    sugerencia: 'Proyectar embedding solo para el top-N final, o leer los vectores de los finalistas en otra etapa.',
   });
 
   push(f.historial && tiene(f.historial, /\.limit\(\s*30\s*\)/), {
@@ -55,7 +54,10 @@ function auditarFuentes(f) {
     detalle: 'Con 3 tópicos por digest son ~10 digests; un usuario que refresca seguido puede volver a ver notas (las notas viven 48 h). El escenario B lo mide.',
   });
 
-  push(f.openai && !tiene(f.openai, /timeout|maxRetries/), {
+  // Con timeout y reintentos por pedido en las llamadas del camino del digest (la expansión del tópico, el embedding de
+  // la consulta y las preguntas de los dos jueces con IA), alcanza.
+  const caminoDelDigestAcotado = tiene(f.busqueda, /maxRetries/) && tiene(f.expansion, /maxRetries/) && tiene(f.jueces, /maxRetries/);
+  push(f.openai && !tiene(f.openai, /timeout|maxRetries/) && !caminoDelDigestAcotado, {
     id: 'S-OPENAI-SIN-TIMEOUT', severidad: 'MEDIA',
     titulo: 'Los clientes de OpenAI se crean sin timeout ni maxRetries',
     detalle: 'El SDK usa sus valores por defecto (timeout de 10 minutos y 2 reintentos): una llamada colgada puede frenar la generación de un digest muchos minutos.',
@@ -74,16 +76,23 @@ function auditarFuentes(f) {
     detalle: 'Cada tópico distinto queda guardado hasta reiniciar el proceso. Con tópicos libres escritos a mano la cantidad es acotada en la práctica; el soak (F) mide la pendiente.',
   });
 
-  push(f.pick && tiene(f.pick, /actualidad nacional/), {
-    id: 'S-RESCATE-CONSULTA-FIJA', severidad: 'MEDIA',
-    titulo: 'El rescate usa una consulta fija por categoría ("<categoría> Argentina actualidad nacional")',
-    detalle: 'Todos los usuarios cuyo tópico falla dentro de una categoría reciben la misma nota de relleno (la primera usable), y la consulta mete "nacional" aunque el tópico no lo sea. Los escenarios A y B miden cuántos tópicos terminan en la misma nota.',
-  });
-
-  push(f.pick && tiene(f.pick, /TOPIC_TO_CATEGORY\s*=\s*Object\.fromEntries/) && tiene(f.pick, /TOPIC_TO_CATEGORY\[topic\]/) && !tiene(f.pick, /hasOwn/), {
+  // Lo mismo vale para el motor (pickBestArticlePerTopic) y para la ingesta (la IA casi nunca devuelve "constructor", pero puede).
+  const lookupSinHasOwn = (src) => tiene(src, /TOPIC_TO_CATEGORY\s*=\s*Object\.fromEntries/) && tiene(src, /TOPIC_TO_CATEGORY\[topic\]/) && !tiene(src, /hasOwn/);
+  push(lookupSinHasOwn(f.pick) || lookupSinHasOwn(f.ingesta), {
     id: 'S-LOOKUP-EN-OBJETO-COMUN', severidad: 'BAJA',
     titulo: 'TOPIC_TO_CATEGORY[topic] busca en un objeto común',
     detalle: 'Un tópico como "constructor" o "toString" devuelve una función heredada (truthy) y se usa como categoría. El escenario E lo prueba con entradas de prototipo.',
+    evidencia: [lookupSinHasOwn(f.pick) && 'utils/pickBestArticlePerTopic.js', lookupSinHasOwn(f.ingesta) && 'ingestion/reviewArticlesWithAIBatch.js'].filter(Boolean),
+  });
+
+  // Lo que el usuario ve al abrir la app: si el digest guardado se devuelve sin revisar la edad de sus notas, una nota
+  // elegida a la mañana se sigue mostrando a la noche (y la app no muestra la edad, así que parece nueva).
+  push(f.rutas && tiene(f.rutas, /UserDeliveryRun/) && !tiene(f.rutas, /ensureFreshDigest/), {
+    id: 'S-DIGEST-GUARDADO-SIN-REVISAR-EDAD', severidad: 'ALTA',
+    titulo: 'La app muestra el digest guardado sin volver a revisar la edad de sus notas',
+    detalle: 'Un digest armado a la mañana se sirve igual a la noche: una nota puede tener más de 24 h y, como la app no muestra cuántas horas tiene, parece nueva.',
+    evidencia: ['routes/userRoutes.js → devuelve el digest de UserDeliveryRun tal cual, sin ensureFreshDigest'],
+    sugerencia: 'Revisar la edad de cada nota al servir el digest y reemplazar las vencidas (utils/staleDigest.js).',
   });
 
   push(f.cron && tiene(f.cron, /for\s*\(\s*const\s+user\s+of\s+usersInWindow\s*\)/) && tiene(f.cron, /await\s+buildDigestForUser/), {

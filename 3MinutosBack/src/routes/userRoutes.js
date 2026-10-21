@@ -13,6 +13,7 @@ const UserShownArticle = require('../models/UserShownArticle');
 const UserDeliveryRun = require('../models/UserDeliveryRun');
 
 const { buildDigestForUser } = require('../utils/buildDigestForUser');
+const { ensureFreshDigest } = require('../utils/staleDigest');
 const { saveShownArticlesForUser } = require('../utils/saveShownArticlesForUser');
 const { getLocalDateString } = require('../utils/dateHelpers');
 const { publicUser } = require('../utils/publicUser');
@@ -141,9 +142,28 @@ async function savePreparedDigestRun(user, digest, deliveryDate) {
   ).lean();
 }
 
+// Guarda el digest ya revisado en el mismo run, sin tocar preparedAt (el enfriamiento del refresco no cambia).
+// Solo si nadie rearmó el digest mientras tanto: no se pisa uno más nuevo.
+async function persistRefreshedDigest(run, digest) {
+  await UserDeliveryRun.updateOne(
+    { _id: run._id, preparedAt: run.preparedAt || null },
+    { $set: { digest } }
+  );
+}
+
+// Antes de entregar un digest guardado se revisa la edad de sus notas AHORA: se prepara antes de que el
+// usuario lo abra y la app no muestra la edad de las notas, así que ninguna puede llegar con más de 24 h.
+// Las vencidas se reemplazan por otra del mismo tema (o se sacan). Ver utils/staleDigest.js.
+function serveFreshStoredDigest(user, run) {
+  return ensureFreshDigest(run, {
+    rebuild: (options) => buildDigestForUser(user._id, options),
+    persist: persistRefreshedDigest,
+  });
+}
+
 async function triggerBackgroundDigestRefresh(user, deliveryDate) {
   try {
-    const digest = await buildDigestForUser(user._id);
+    const digest = await buildDigestForUser(user._id, { background: true });
     await savePreparedDigestRun(user, digest, deliveryDate);
 
     console.log(
@@ -465,7 +485,8 @@ router.get(
         .lean();
 
       if (todaysPreparedRun?.digest) {
-        return res.json(todaysPreparedRun.digest);
+        const { digest } = await serveFreshStoredDigest(user, todaysPreparedRun);
+        return res.json(digest);
       }
 
       const latestPreparedRun = await UserDeliveryRun.findOne({
@@ -484,10 +505,13 @@ router.get(
         .lean();
 
       if (latestPreparedRun?.digest) {
-        if (!isRefreshOnCooldown(latestPreparedRun)) {
-        triggerBackgroundDigestRefresh(user, deliveryDate);
+        const checked = await serveFreshStoredDigest(user, latestPreparedRun);
+        // Si hubo que reponer notas el digest ya está actualizado: el refresco en segundo plano espera
+        // a la próxima apertura (así no puede traer lo que el usuario está por ver ahora).
+        if (!checked.changed && !isRefreshOnCooldown(latestPreparedRun)) {
+          triggerBackgroundDigestRefresh(user, deliveryDate);
         }
-        return res.json(latestPreparedRun.digest);
+        return res.json(checked.digest);
       }
 
       const digest = await buildDigestForUser(user._id);
@@ -595,6 +619,9 @@ router.post(
 
       const effectiveShownDate = shownDate || getLocalDateString(new Date());
 
+      // Para saber con datos reales si la app marca como vistas las notas del digest inicial (no solo las del refresco).
+      console.log(`[mark-shown] user=${String(user._id)} items=${items.length} shownDate=${effectiveShownDate}`);
+
       await saveShownArticlesForUser(user._id, items, {
         shownDate: effectiveShownDate,
       });
@@ -682,6 +709,7 @@ router.post(
         .sort({ preparedAt: -1, createdAt: -1 })
         .lean();
 
+      let activeRun = todaysPreparedRun;
       let activeDigest = todaysPreparedRun?.digest;
 
       if (activeDigest) {
@@ -695,7 +723,8 @@ router.post(
         })
           .sort({ preparedAt: -1, createdAt: -1 })
           .lean();
-        
+
+        activeRun = latestPreparedRun;
         activeDigest = latestPreparedRun?.digest;
       }
 
@@ -706,6 +735,9 @@ router.post(
           code: 'NO_DIGEST_FOUND',
         });
       }
+
+      // Ninguna nota se reproduce con más de 24 h (la app no muestra la edad): las vencidas se reemplazan o se sacan.
+      activeDigest = (await serveFreshStoredDigest(user, activeRun)).digest;
 
       // 3. Extracción Segura de Items
       console.log('🔍 [CHECKPOINT 6] Estructura de activeDigest detectada. Extrayendo artículos...');

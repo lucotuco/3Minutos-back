@@ -187,7 +187,7 @@ function analizarSoak(muestras, { memoriaMBporMin = UMBRALES.memoriaMBporMin } =
   const p95Fin = promedio(fin.map((m) => m.p95).filter(Number.isFinite));
   const tasa = (g) => porcentaje(g.reduce((a, m) => a + m.errores, 0), g.reduce((a, m) => a + m.tareas, 0));
 
-  push(heap > memoriaMBporMin, { id: 'F-MEMORIA', severidad: 'ALTA', titulo: `El heap crece ${heap.toFixed(1)} MB/min de forma sostenida`, detalle: `Umbral: ${memoriaMBporMin} MB/min.`, evidencia: [`RSS: ${rss.toFixed(1)} MB/min`], sugerencia: 'Sospechar de queryExpansionCache (Map sin límite) y de las capturas de logs.' });
+  push(heap > memoriaMBporMin, { id: 'F-MEMORIA', severidad: 'ALTA', titulo: `El heap crece ${heap.toFixed(1)} MB/min de forma sostenida`, detalle: `Umbral: ${memoriaMBporMin} MB/min.`, evidencia: [`RSS: ${rss.toFixed(1)} MB/min`], sugerencia: 'Sospechar de las cachés en memoria (expansiones: topicExpansion.js; veredictos de los jueces: llmJudge.js; vectores de las consultas: searchArticlesBySimilarityAtlas.js) y de las capturas de logs.' });
   push(heap > 5 && heap <= memoriaMBporMin, { id: 'F-MEMORIA-LEVE', severidad: 'MEDIA', titulo: `El heap crece ${heap.toFixed(1)} MB/min`, detalle: 'Puede ser caché legítima llenándose; repetir con un soak más largo.' });
   push(p95Ini && p95Fin && p95Fin >= p95Ini * 1.5 && p95Fin - p95Ini > 500, { id: 'F-DEGRADACION', severidad: 'ALTA', titulo: `La latencia p95 empeora con el tiempo (${Math.round(p95Ini)} → ${Math.round(p95Fin)} ms)` });
   push(tasa(fin) > tasa(ini) + 5, { id: 'F-ERRORES-CRECEN', severidad: 'MEDIA', titulo: `La tasa de error sube con el tiempo (${tasa(ini).toFixed(1)} % → ${tasa(fin).toFixed(1)} %)` });

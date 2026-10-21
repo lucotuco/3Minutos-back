@@ -101,6 +101,8 @@ function itemComoResultado(it) {
     matchReason: it.matchReason ?? null,
     corralCategory: it.corralCategory ?? null,
     candidatesEvaluated: it.candidatesEvaluated ?? 0,
+    // Los digests guardados por versiones anteriores no traen nivel: sin el campo, el chequeo del nivel no mide nada.
+    ...(it.tier !== undefined ? { tier: it.tier } : {}),
   };
 }
 

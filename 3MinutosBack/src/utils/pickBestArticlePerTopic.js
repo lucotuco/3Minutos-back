@@ -1,329 +1,348 @@
 const { searchArticlesBySimilarityAtlas } = require('../embeddings/searchArticlesBySimilarityAtlas');
-const { openaiReview } = require('../config/openai');
-const { cosineSimilarity } = require('../embeddings/searchArticlesBySimilarity');
 const { selectBestCandidate, inferCorralCategory } = require('./topicMatching');
-
 const { MAX_ARTICLE_AGE_HOURS } = require('./freshness');
+const { resolveOfficialTopic, ALL_CATEGORIES } = require('./officialTopics');
+const { checkEligibility, rankEligible, hintLevel, normalizeText } = require('./eligibility');
+const { pickOfficialArticle, pickRescueArticle, firstNotRepeated, withoutEmbedding } = require('./officialPick');
+const { JudgeSession, judgeWaitBudgetMs } = require('./llmJudge');
+const { createSameStoryJudge, PREFETCH_MAX_CANDIDATES } = require('./sameEventJudge');
+const { createTopicJudge, createTopicCheck } = require('./topicJudge');
+const { expandTopic, asExpansion } = require('./topicExpansion');
+const { noteForJudge } = require('./judgeNote');
+const { createGate } = require('./concurrencyGate');
+const articleStore = require('./articleStore');
 
-const CATEGORIES = {
-  'Política':       ['Gobierno Nacional', 'Justicia', 'Elecciones', 'Educación', 'Seguridad'],
-  'Economía':       ['Dólar y Mercados', 'Inflación y Consumo', 'Empresas y Negocios', 'Inversiones', 'Emprendedores'],
-  'Internacional':  ['EEUU', 'Medio Oriente', 'Europa', 'América Latina', 'Conflictos', 'Geopolítica'],
-  'Deportes':       ['Fútbol', 'F1', 'Básquet', 'Tenis', 'Rugby'],
-  'Sociedad':       ['Salud', 'Bienestar', 'Clima y Ambiente', 'Historias Humanas', 'Tendencias y Vida'],
-  'Tecnología':     ['Inteligencia Artificial', 'Ciencia y Espacio', 'Apps y Redes', 'Innovación', 'Videojuegos'],
-  'Entretenimiento/Cultura': ['Cine y Series', 'Música', 'Turismo y Viajes', 'Streaming', 'Autos', 'Viral y Trending', 'Teatro y Literatura'],
-};
+/**
+ * Elige UNA nota por tópico del usuario, en orden y sin repetir entre tópicos.
+ *
+ * Hay dos caminos según el tópico:
+ *   - OFICIAL (categoría o subtema, sin importar mayúsculas ni tildes): se lee `articles` por etiqueta,
+ *     sin búsqueda por significado ni IA (officialPick.js).
+ *   - LIBRE ("river plate", "Zverev"): búsqueda híbrida (significado + palabras) con zonas, ancla léxica
+ *     y corral de categoría (topicMatching.js); entre las notas aceptadas se elige por calidad y el juez de tema
+ *     (topicJudge.js) confirma que la nota es DE ese tema.
+ *
+ * En los dos, una nota solo puede entregarse si es elegible (eligibility.js): 24 h como máximo,
+ * importancia >= 40, no opinión, no previa, país (Sociedad), URL no vista y no ser "la misma historia"
+ * (coseno >= 0,88, o entre 0,80 y 0,88 si el juez de sameEventJudge.js dice que es el mismo hecho) que algo
+ * visto en 48 h o ya elegido en este mismo digest.
+ *
+ * Los jueces con IA esperan, como máximo, `judgeWaitMs` en total por digest (llmJudge.js); pasado ese presupuesto, o si
+ * fallan o están apagados (SAME_STORY_JUDGE=off, TOPIC_JUDGE=off), las notas se eligen como si no existieran.
+ *
+ * Dos fases, para que los tópicos libres no se esperen entre sí:
+ *   1. (en paralelo) por cada tópico libre: expandir con IA -> buscar -> dejar corriendo las preguntas del juez de tema
+ *      de sus primeras candidatas.
+ *   2. (en orden, como siempre) por cada tópico: elegir la nota con lo ya elegido para los anteriores. La elección es
+ *      idéntica a hacerlo todo en fila; la fase 1 solo adelanta el trabajo de red.
+ *
+ * Si un tópico libre no encuentra nada, el RESCATE entrega una nota "sugerida" del mismo rubro (officialPick.js,
+ * pickRescueArticle: la misma que usan los subtemas oficiales): se lee por etiqueta, solo notas "buenas", y a igual
+ * calidad pasan primero las del subtema y la categoría que la IA sugirió al expandir el tópico.
+ */
 
-const ALL_CATEGORIES = Object.keys(CATEGORIES);
-const TOPIC_TO_CATEGORY = Object.fromEntries(
-  Object.entries(CATEGORIES).flatMap(([cat, topics]) => topics.map((t) => [t, cat]))
-);
+// Cuántas veces perTopicLimit se pide a la búsqueda como ventana de candidatos (antes 2; ahora 30 con el límite por defecto).
+const SEARCH_WINDOW_FACTOR = 3;
 
-const queryExpansionCache = new Map();
+// Cuántos tópicos libres hacen su trabajo de red (expansión + búsqueda) a la vez en la fase 1. Un usuario tiene 3 tópicos
+// (userRoutes.normalizeTopics), así que nunca espera; el tope evita una ráfaga de decenas de llamadas a OpenAI y a Atlas si
+// alguien invoca el motor con una lista larga.
+const MAX_PARALLEL_FREE_TOPICS = 6;
 
-function getFreshnessCutoff() {
-  return new Date(Date.now() - MAX_ARTICLE_AGE_HOURS * 60 * 60 * 1000);
+/** La categoría oficial que sugirió la IA al expandir el tópico (con su escritura exacta), o null. */
+function hintedCategory(expansion) {
+  const key = normalizeText(expansion?.cat);
+  return key ? (ALL_CATEGORIES.find((cat) => normalizeText(cat) === key) || null) : null;
 }
 
-const OPINION_KEYWORDS = ['opinion', 'opinión', 'columna', 'columnista', 'editorial', 'analisis', 'análisis'];
-
-function normalizeText(value) {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
+/** loadDocs para firstNotRepeated en el camino libre: solo hace falta el embedding. */
+function embeddingLoader(store) {
+  return async (ids) => {
+    const vectors = await store.loadEmbeddings(ids);
+    return new Map([...vectors].map(([id, embedding]) => [id, { embedding }]));
+  };
 }
 
-async function expandTopicForEmbedding(rawTopic) {
-  const topic = String(rawTopic || '').trim();
-  
-  if (topic.split(/\s+/).length >= 5) return topic;
-  
-  const normTopic = normalizeText(topic);
-  if (queryExpansionCache.has(normTopic)) {
-    return queryExpansionCache.get(normTopic);
+const redondear = (n) => Math.round(n * 10) / 10;
+
+/**
+ * Candidatos de un tópico libre -> los que se pueden entregar, en orden de calidad. Sirve para la elección y para
+ * adelantar las preguntas al juez (con las exclusiones que haya en ese momento).
+ */
+function rankFreeCandidates(topic, expansion, candidates, ctx, { softCorral }) {
+  const selection = selectBestCandidate(topic, candidates, {
+    isUsable: (a) => checkEligibility(a, ctx).ok,
+    // Votan para el ancla y el corral las notas entregables EN GENERAL (sin mirar lo que este usuario ya vio ni lo que
+    // se eligió para otros tópicos): el significado de un tema no depende del historial de quien lo pide.
+    isRepresentative: (a) => checkEligibility(a, { now: ctx.now }).ok,
+    exhaustive: true,
+    softCorral,
+  });
+  const accepted = new Map(selection.accepted.map((x) => [x.article, x]));
+  const { eligible } = rankEligible(selection.accepted.map((x) => x.article), ctx, {
+    zoneOf: (a) => accepted.get(a).zone,
+    hintOf: (a) => hintLevel(a, expansion),
+  });
+  return { selection, accepted, eligible };
+}
+
+/**
+ * FASE 1 de un tópico libre: expansión, búsqueda y preguntas por adelantado al juez de tema. Nunca rechaza:
+ * si la expansión falla se busca el tópico tal cual, y el error de la búsqueda lo ve la fase 2 al esperarla.
+ * La expansión y la búsqueda esperan su turno en `gate` (como mucho MAX_PARALLEL_FREE_TOPICS a la vez).
+ */
+async function startFreeTopic(topic, { expand, search, perTopicLimit, since, now, usedUrls, topicJudge, gate }) {
+  const { expansion, searchPromise } = await gate(async () => {
+    let found;
+    try {
+      found = asExpansion(await expand(topic), topic);
+    } catch (error) {
+      console.warn(`Fallo la expansion de "${topic}", se busca tal cual:`, error.message);
+      found = asExpansion(null, topic);
+    }
+
+    const pending = Promise.resolve().then(() => search(topic, found.q, {
+      limit: perTopicLimit * SEARCH_WINDOW_FACTOR,
+      minDate: since,
+    }));
+    pending.catch(() => {}); // el error se ve en la fase 2, al esperar la búsqueda dentro de su try
+    await pending.catch(() => {}); // el lugar se libera cuando la búsqueda terminó, bien o mal
+    return { expansion: found, searchPromise: pending };
+  });
+
+  if (topicJudge?.enabled()) {
+    try {
+      const candidates = await searchPromise;
+      const { eligible } = rankFreeCandidates(topic, expansion, candidates, { now, usedUrls }, { softCorral: true });
+      for (const entry of eligible.slice(0, PREFETCH_MAX_CANDIDATES)) topicJudge.prefetch(topic, noteForJudge(entry.article));
+    } catch { /* sin adelanto: las preguntas salen en la fase 2 */ }
   }
-  
-  const currentYear = new Date().getFullYear();
+  return { expansion, searchPromise };
+}
 
+/**
+ * FASE 2 de un tópico libre: zonas/ancla/corral -> elegibilidad -> orden por calidad -> juez de tema -> descartar
+ * "misma historia" -> (si no queda nada) rescate dentro del rubro.
+ */
+async function pickFreeTopic(trimmedTopic, prepared, {
+  now, usedUrls, seenEmbeddings, store, judge = null, topicJudge = null,
+}) {
+  const since = new Date(now - MAX_ARTICLE_AGE_HOURS * 3600e3);
+  const ctx = { now, usedUrls };
+  const loadDocs = embeddingLoader(store);
+  const { expansion } = prepared;
+
+  const out = {
+    article: null,
+    embedding: null,
+    usedFallback: false,
+    fallbackCategory: null,
+    matchZone: null,
+    matchScore: null,
+    matchReason: null,
+    corralCategory: null,
+    candidatesEvaluated: 0,
+    tier: null,
+    ageHours: null,
+  };
+
+  // Con juez de tema el corral de categoría deja de ser un descarte: una nota de otra categoría la decide el juez.
+  const softCorral = Boolean(topicJudge?.enabled());
+
+  let semanticCandidates = [];
   try {
-    const response = await openaiReview.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: `Sos un experto en expansión de consultas para un motor de búsqueda vectorial periodístico (${currentYear}).
-          REGLA 1: Tu respuesta DEBE EMPEZAR con las palabras exactas del usuario. NUNCA las elimines ni las modifiques.
-          REGLA 2: Agregá de 2 a 4 palabras clave muy específicas que ayuden a aislar el tema. Si es un club, su estadio o apodo directo. Si es un político, su partido o cargo. Si es un país, su capital.
-          REGLA 3: PROHIBICIÓN ABSOLUTA de agregar nombres de rivales, opositores o conceptos contrarios. Si el tema es "River Plate", NO agregues "boca" ni "bosteros".
-          REGLA 4: NO uses palabras genéricas (deporte, equipo, actualidad, noticias).
-          Devolvé ÚNICAMENTE una sola línea de texto en minúsculas, sin comas ni signos de puntuación.`
-        },
-        { role: 'user', content: topic }
-      ],
-      temperature: 0,
-      max_tokens: 25,
-    });
+    semanticCandidates = await prepared.searchPromise;
 
-    const expanded = response.choices?.[0]?.message?.content?.trim() || topic;
-    console.log(`[Query Expansion IA] "${topic}" -> expandido a "${expanded}"`);
-    queryExpansionCache.set(normTopic, expanded);
-    return expanded;
+    // Zona, ancla léxica y corral se derivan de los propios candidatos (ver topicMatching.js).
+    // Se evalúan TODOS: el orden final lo decide la calidad, no la posición que dejó la búsqueda.
+    const { selection, accepted, eligible } = rankFreeCandidates(trimmedTopic, expansion, semanticCandidates, ctx, { softCorral });
+
+    out.corralCategory = selection.corral;
+    out.candidatesEvaluated = selection.candidatesEvaluated;
+
+    const pista = expansion.cat ? `${expansion.cat}${expansion.sub ? `/${expansion.sub}` : ''}` : '-';
+    console.log(
+      `[Motor Hibrido] "${trimmedTopic}" -> ${semanticCandidates.length} candidatos | ` +
+      `Corral: ${selection.corral || 'Libre'} | Anclas: [${selection.anchors.join(', ')}] (${selection.anchorMode}) | ` +
+      `Pista: ${pista} | Aceptados: ${selection.accepted.length} de ${selection.candidatesEvaluated}`
+    );
+
+    const topicCheck = softCorral
+      ? createTopicCheck({ judge: topicJudge, topic: trimmedTopic, isOutOfCorral: (a) => Boolean(accepted.get(a)?.outOfCorral) })
+      : null;
+    const found = await firstNotRepeated(eligible, { seenEmbeddings, loadDocs, needsDoc: false, judge, topicCheck });
+    if (found.offTopic.length) {
+      console.log(`[Juez tema] "${trimmedTopic}": ${found.offTopic.length} descartadas por no ser del tema (${found.offTopic.map((o) => o.verdict || o.reason).join(', ')})`);
+    }
+
+    if (found.hit) {
+      const { entry, embedding, topicVerdict } = found.hit;
+      const aceptado = accepted.get(entry.article);
+      out.article = entry.article;
+      out.embedding = embedding;
+      out.matchZone = aceptado.zone;
+      out.matchScore = aceptado.score;
+      out.tier = entry.tier;
+      out.ageHours = redondear(entry.ageHours);
+      out.candidatesEvaluated = aceptado.rank;
+      const juez = topicCheck ? ` | tema: ${topicVerdict || 'sin veredicto'}` : '';
+      out.matchReason = `${aceptado.zone} score=${aceptado.score.toFixed(3)} (candidato #${aceptado.rank})${juez}`;
+      console.log(
+        `[MATCH ${aceptado.zone}] "${out.article.title}" | Score: ${aceptado.score.toFixed(3)} | ` +
+        `${entry.tier} ${out.ageHours} h imp=${entry.importance} puntaje=${entry.score.toFixed(1)} | candidato #${aceptado.rank}${juez}`
+      );
+      return out;
+    }
+
+    out.matchReason = semanticCandidates.length === 0 ? 'sin_candidatos' : 'ningun_candidato_valido';
+    console.warn(`Ningun candidato valido para "${trimmedTopic}" (${out.matchReason}).`);
+    // El corral inferido tambien sirve para que el rescate se quede en el mismo rubro.
+    if (!out.corralCategory) out.corralCategory = inferCorralCategory(semanticCandidates.filter((a) => (a.score || 0) >= 0.80).slice(0, 10));
   } catch (error) {
-    console.warn(`Fallo expansion IA para "${topic}", usando original:`, error.message);
-    return topic;
+    console.error(`Error en busqueda semantica para "${trimmedTopic}":`, error);
+    out.matchReason = 'error_busqueda';
   }
-}
 
-function includesOpinionKeyword(value) {
-  const normalized = normalizeText(value);
-  return OPINION_KEYWORDS.some((kw) => normalized.includes(normalizeText(kw)));
-}
+  // ---------------------------------------------------------------- rescate dentro del rubro
+  console.log(`[RESCATE] No hubo resultados para "${trimmedTopic}". Buscando una nota buena del rubro...`);
+  try {
+    // Rubro del rescate: el que votaron los candidatos del propio tema; si no hubo candidatos (o la búsqueda falló), la
+    // categoría que la IA sugirió al expandir el tema; y si tampoco, Sociedad.
+    const rescueCategory = out.corralCategory || hintedCategory(expansion) || 'Sociedad';
 
-function isUsableDigestArticle(article, usedUrls, seenEmbeddings = []) {
-  if (!article?.url) return false;
-  if (usedUrls.has(article.url)) return false;
-  if (isOpinionArticle(article)) return false;
+    // Solo valen notas de nivel "buena" (importancia >= 50). Se lee por etiqueta (como un tema oficial), no con una
+    // búsqueda: así el rescate anda aunque la búsqueda o OpenAI estén caídos y no hay consulta que sesgue el resultado.
+    const rescued = await pickRescueArticle(
+      { category: rescueCategory, hintOf: (a) => hintLevel(a, expansion) },
+      { ctx, since, seenEmbeddings, store, judge },
+    );
 
-  if (article.publishedAt) {
-    const pubDate = new Date(article.publishedAt).getTime();
-    const diffHours = (Date.now() - pubDate) / (1000 * 60 * 60);
-    if (diffHours > MAX_ARTICLE_AGE_HOURS) {
-      console.log(`[CADUCIDAD ${Math.round(diffHours)} HS] BLOQUEADO POR EDAD: "${article.neutralTitle || article.title}"\n`);
-      return false;
+    if (rescued.hit) {
+      const { entry, doc, embedding } = rescued.hit;
+      out.article = withoutEmbedding(doc);
+      out.embedding = embedding;
+      out.usedFallback = true;
+      out.fallbackCategory = out.article.category || rescueCategory;
+      out.matchZone = 'RESCATE';
+      out.matchScore = null; // sin búsqueda no hay puntaje de similitud con el tema
+      out.tier = 'sugerida';
+      out.ageHours = redondear(entry.ageHours);
+      console.log(`[RESCATE EXITOSO] Entregado: "${out.article.title}"`);
     }
+  } catch (emergencyErr) {
+    console.error(`Error en rescate de emergencia hibrido para "${trimmedTopic}":`, emergencyErr);
   }
-
-  if (!Array.isArray(article.embedding) || article.embedding.length === 0) {
-    return true; 
-  }
-
-  const candidateTitle = article.neutralTitle || article.title || "";
-  let maxSim = 0;
-  let mostSimilarTitle = "";
-
-  for (const seen of seenEmbeddings) {
-    if (!Array.isArray(seen.vector) || seen.vector.length === 0) continue;
-    
-    const similarity = cosineSimilarity(article.embedding, seen.vector);
-    if (similarity > maxSim) {
-      maxSim = similarity;
-      mostSimilarTitle = seen.title;
-    }
-  }
-
-  if (maxSim >= 0.85) {
-    console.log(`[DUPLICADO SEMANTICO ${Math.round(maxSim*100)}%] BLOQUEADO:`);
-    console.log(`Intento entrar: "${candidateTitle}"`);
-    console.log(`Ya habias leido el evento: "${mostSimilarTitle}"\n`);
-    return false;
-  } else if (maxSim > 0.50) {
-    console.log(`[TEMA RELACIONADO PERO EVENTO DISTINTO ${Math.round(maxSim*100)}%] PERMITIDO:`);
-    console.log(`Entro: "${candidateTitle}"`);
-    console.log(`Mas cercano en historial: "${mostSimilarTitle}"\n`);
-  }
-
-  return true;
-}
-
-function isOpinionArticle(article = {}) {
-  const url      = normalizeText(article.url);
-  const title    = normalizeText(article.title);
-  const section  = normalizeText(article.section);
-  const category = normalizeText(article.category);
-  const tags     = Array.isArray(article.tags) ? article.tags.map(normalizeText) : [];
-
-  if (url.includes('/opiniones/') || url.includes('/opinion/')) return true;
-  if (includesOpinionKeyword(section) || includesOpinionKeyword(category)) return true;
-  if (tags.some((tag) => includesOpinionKeyword(tag))) return true;
-  if (includesOpinionKeyword(title)) return true;
-
-  return false;
+  return out;
 }
 
 async function pickBestArticlePerTopic(topics = [], options = {}) {
   if (!Array.isArray(topics) || topics.length === 0) return [];
 
-  const { perTopicLimit = 10, alreadyShownUrls = [], alreadyShownTitles = [], seenEmbeddings = [] } = options;
+  const {
+    perTopicLimit = 10,
+    alreadyShownUrls = [],
+    seenEmbeddings = [],
+    now = Date.now(),
+    judgeWaitMs = null, // cuánto espera este digest, en total, a los jueces con IA (null = el de fábrica de un digest en vivo)
+    // solo para tests: { search, expand, store, judge, topicJudge, createJudge, createTopicJudge }
+    // (judge / topicJudge: undefined = el real, null = sin ese juez)
+    deps = {},
+  } = options;
+
+  const search = deps.search || searchArticlesBySimilarityAtlas;
+  const expand = deps.expand || expandTopic;
+  const store = deps.store || articleStore;
+
+  // El presupuesto de espera a los jueces es POR DIGEST: todos los tópicos y los dos jueces descuentan del mismo.
+  const budgetMs = Number.isFinite(judgeWaitMs) && judgeWaitMs >= 0 ? judgeWaitMs : judgeWaitBudgetMs();
+  const judgeSession = new JudgeSession({ budgetMs });
+  const judge = deps.judge !== undefined ? deps.judge : (deps.createJudge || createSameStoryJudge)({ session: judgeSession });
+  const topicJudge = deps.topicJudge !== undefined
+    ? deps.topicJudge
+    : (deps.createTopicJudge || createTopicJudge)({ session: judgeSession });
 
   const usedUrls = new Set(alreadyShownUrls);
-  const usedTitles = [...alreadyShownTitles];
-  const dynamicSeenEmbeddings = [...seenEmbeddings]; 
-  const results  = [];
+  const dynamicSeenEmbeddings = [...seenEmbeddings];
+  const results = [];
 
-  const rawOfficialTopics = [
-    ...ALL_CATEGORIES,
-    ...Object.keys(TOPIC_TO_CATEGORY),
-    ...Object.values(TOPIC_TO_CATEGORY)
-  ];
-
-  const officialTopicsMap = new Map();
-  for (const t of rawOfficialTopics) {
-    officialTopicsMap.set(normalizeText(t), t);
+  // FASE 1. La expansión con IA y la búsqueda son solo para los tópicos LIBRES (los oficiales se leen por etiqueta) y
+  // no dependen de lo que se elija antes: salen todas juntas. Las exclusiones que se usan para adelantar las preguntas
+  // al juez son una COPIA de las del arranque, así la fase 1 no depende de en qué punto está la fase 2.
+  const since = new Date(now - MAX_ARTICLE_AGE_HOURS * 3600e3);
+  const startUrls = new Set(alreadyShownUrls);
+  const freeWork = new Map();
+  const gate = createGate(MAX_PARALLEL_FREE_TOPICS);
+  for (const rawTopic of topics) {
+    const trimmed = String(rawTopic || '').trim();
+    if (!trimmed || resolveOfficialTopic(trimmed) || freeWork.has(trimmed)) continue;
+    const work = startFreeTopic(trimmed, { expand, search, perTopicLimit, since, now, usedUrls: startUrls, topicJudge, gate });
+    work.catch(() => {});
+    freeWork.set(trimmed, work);
   }
 
-  const expandedQueriesMap = new Map();
-  await Promise.all(topics.map(async (rawTopic) => {
-    const trimmed = String(rawTopic || '').trim();
-    if (trimmed) {
-      const expanded = await expandTopicForEmbedding(trimmed);
-      expandedQueriesMap.set(trimmed, expanded);
-    }
-  }));
-
+  // FASE 2. En orden, con lo ya elegido para los tópicos anteriores.
   for (const rawTopic of topics) {
     const trimmedTopic = String(rawTopic || '').trim();
     if (!trimmedTopic) continue;
 
-    const normTopic = normalizeText(trimmedTopic);
-    
-    let topic = trimmedTopic;
-    if (officialTopicsMap.has(normTopic)) {
-      topic = officialTopicsMap.get(normTopic); 
-    }
-    
-    let bestUnused = null;
-    let usedFallback = false;
-    let fallbackCategory = null;
-    let matchZone = null;
-    let matchScore = null;
-    let corralCategory = null;
-    let candidatesEvaluated = 0;
-    let matchReason = null;
+    const official = resolveOfficialTopic(trimmedTopic);
+    const topic = official ? official.name : trimmedTopic;
 
-    const queryForEmbedding = expandedQueriesMap.get(trimmedTopic) || trimmedTopic;
-    const queryExpanded = queryForEmbedding;
-
-    let strictCategoryFilter = null;
-    if (ALL_CATEGORIES.includes(topic)) {
-      strictCategoryFilter = topic; 
-    } else if (TOPIC_TO_CATEGORY[topic]) {
-      strictCategoryFilter = TOPIC_TO_CATEGORY[topic]; 
-    }
-
-    try {
-      const searchOptions = { 
-        limit: perTopicLimit * 2,
-        minDate: getFreshnessCutoff() 
-      };
-
-      if (strictCategoryFilter) {
-        searchOptions.category = strictCategoryFilter;
-      }
-
-      const semanticCandidates = await searchArticlesBySimilarityAtlas(trimmedTopic, queryForEmbedding, searchOptions);
-
-      // Se evalúan los candidatos EN ORDEN hasta encontrar uno valido (no solo el primero).
-      // Ancla lexica y corral de categoria se derivan de los propios candidatos (ver topicMatching.js).
-      const selection = selectBestCandidate(trimmedTopic, semanticCandidates, {
-        isUsable: (a) => isUsableDigestArticle(a, usedUrls, dynamicSeenEmbeddings),
-        strictCategory: strictCategoryFilter,
-      });
-
-      corralCategory = selection.corral;
-      candidatesEvaluated = selection.candidatesEvaluated;
-
-      console.log(
-        `[Motor Hibrido] "${trimmedTopic}" -> ${semanticCandidates.length} candidatos | ` +
-        `Corral: ${selection.corral || 'Libre'} | Anclas: [${selection.anchors.join(', ')}] (${selection.anchorMode}) | ` +
-        `Evaluados: ${selection.candidatesEvaluated}`
-      );
-
-      if (selection.article) {
-        bestUnused = selection.article;
-        matchZone = selection.zone;
-        matchScore = selection.score;
-        usedFallback = false;
-        matchReason = `${selection.zone} score=${selection.score.toFixed(3)} (candidato #${selection.candidatesEvaluated})`;
-        console.log(`[MATCH ${selection.zone}] "${bestUnused.title}" | Score: ${selection.score.toFixed(3)} | candidato #${selection.candidatesEvaluated}`);
-      } else {
-        matchReason = semanticCandidates.length === 0 ? 'sin_candidatos' : 'ningun_candidato_valido';
-        console.warn(`Ningun candidato valido para "${trimmedTopic}" (${matchReason}).`);
-        // El corral inferido tambien sirve para que el rescate se quede en el mismo rubro.
-        if (!corralCategory) corralCategory = inferCorralCategory(semanticCandidates.filter((a) => (a.score || 0) >= 0.80).slice(0, 10));
-      }
-    } catch (error) {
-      console.error(`Error en busqueda semantica para "${trimmedTopic}":`, error);
-      bestUnused = null;
-      matchReason = 'error_busqueda';
-    }
-
-    if (!bestUnused) {
-      console.log(`[RESCATE] No hubo resultados para "${topic}". Activando rescate hibrido enfocado en categoria general...`);
+    let queryExpanded = trimmedTopic;
+    let picked;
+    if (official) {
       try {
-        // Rubro del rescate: el oficial, o el que votaron los candidatos del propio tema (sin listas manuales).
-        const emergencyCategory = fallbackCategory || strictCategoryFilter || corralCategory || 'Sociedad';
-        const emergencyQuery = `${emergencyCategory} Argentina actualidad nacional`;
-        
-        const emergencySearchOptions = { 
-          limit: perTopicLimit * 3,
-          minDate: getFreshnessCutoff(),
-          category: emergencyCategory
-        };
-
-        const emergencyCandidates = await searchArticlesBySimilarityAtlas(
-          emergencyQuery, 
-          emergencyQuery, 
-          emergencySearchOptions
+        picked = await pickOfficialArticle(official, { now, usedUrls, seenEmbeddings: dynamicSeenEmbeddings, store, judge });
+        const porJuez = picked.mismaHistoria.filter((m) => m.by === 'juez').length;
+        console.log(
+          `[Motor Oficial] "${topic}" (${official.kind}) -> ${picked.matchReason} | ` +
+          `rechazadas: ${JSON.stringify(picked.rechazadas)} | misma historia: ${picked.mismaHistoria.length}` +
+          `${porJuez ? ` (${porJuez} por el juez)` : ''}`
         );
+        if (!picked.article) console.warn(`Ningun candidato valido para "${topic}" (${picked.matchReason}).`);
+      } catch (error) {
+        console.error(`Error en busqueda semantica para "${topic}":`, error);
+        picked = {
+          article: null, embedding: null, usedFallback: false, fallbackCategory: null, matchZone: null,
+          matchScore: null, matchReason: 'error_busqueda', corralCategory: official.category,
+          candidatesEvaluated: 0, tier: null, ageHours: null,
+        };
+      }
+    } else {
+      const prepared = await freeWork.get(trimmedTopic);
+      queryExpanded = prepared.expansion.q;
+      picked = await pickFreeTopic(trimmedTopic, prepared, {
+        now, usedUrls, seenEmbeddings: dynamicSeenEmbeddings, store, judge, topicJudge,
+      });
+    }
 
-        bestUnused = emergencyCandidates.find((article) => isUsableDigestArticle(article, usedUrls, dynamicSeenEmbeddings));
-        
-        if (bestUnused) {
-          usedFallback = true;
-          fallbackCategory = bestUnused.category || emergencyCategory;
-          matchZone = 'RESCATE';
-          matchScore = bestUnused.score ?? null;
-          console.log(`[RESCATE EXITOSO] Entregado: "${bestUnused.title}"`);
-        }
-      } catch (emergencyErr) {
-        console.error(`Error en rescate de emergencia hibrido para "${topic}":`, emergencyErr);
+    const article = picked.article;
+    if (article) {
+      usedUrls.add(article.url);
+      if (Array.isArray(picked.embedding) && picked.embedding.length > 0) {
+        // id y bajada, además del título: son lo que ve el juez cuando una nota de otro tópico cuenta lo mismo.
+        dynamicSeenEmbeddings.push({ ...noteForJudge(article), vector: picked.embedding });
       }
     }
 
-    if (!bestUnused) {
-      results.push({ 
-        topic, 
-        queryExpanded,
-        article: null,
-        usedFallback: false,
-        fallbackCategory: null,
-        matchZone: null,
-        matchScore: null,
-        matchReason,
-        corralCategory,
-        candidatesEvaluated,
-      });
-      continue;
-    }
-
-    usedUrls.add(bestUnused.url);
-    usedTitles.push(bestUnused.neutralTitle || bestUnused.title || "");
-    
-    if (Array.isArray(bestUnused.embedding) && bestUnused.embedding.length > 0) {
-      dynamicSeenEmbeddings.push({
-        title: bestUnused.neutralTitle || bestUnused.title || "",
-        vector: bestUnused.embedding
-      });
-    }
-    
-    results.push({ 
-      topic, 
+    results.push({
+      topic,
       queryExpanded,
-      article: bestUnused,
-      usedFallback,
-      fallbackCategory,
-      matchZone,
-      matchScore,
-      matchReason,
-      corralCategory,
-      candidatesEvaluated,
+      article,
+      usedFallback: article ? picked.usedFallback : false,
+      fallbackCategory: article ? picked.fallbackCategory : null,
+      matchZone: article ? picked.matchZone : null,
+      matchScore: article ? picked.matchScore : null,
+      matchReason: picked.matchReason,
+      corralCategory: picked.corralCategory,
+      candidatesEvaluated: picked.candidatesEvaluated,
+      tier: article ? picked.tier : null,
+      ageHours: article ? picked.ageHours : null,
     });
   }
 
+  if (judgeSession.used) console.log(judgeSession.summary());
   return results;
 }
 
-module.exports = { pickBestArticlePerTopic };
+module.exports = { pickBestArticlePerTopic, expandTopicForEmbedding: expandTopic };

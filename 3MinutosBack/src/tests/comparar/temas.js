@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { norm } = require('./utilidades');
 
-// Espejo de CATEGORIES en src/utils/pickBestArticlePerTopic.js.
+// Espejo de CATEGORIES en src/utils/officialTopics.js (en el código anterior vivía en pickBestArticlePerTopic.js).
 // verificarOficialesContraCodigo() avisa si el código cambió y esto quedó desactualizado.
 const CATEGORIAS = {
   'Política': ['Gobierno Nacional', 'Justicia', 'Elecciones', 'Educación', 'Seguridad'],
@@ -42,11 +42,16 @@ function temasOficiales() {
   return lista;
 }
 
-/** Devuelve los nombres oficiales que NO aparecen escritos en el código de la versión probada. */
+/**
+ * Devuelve los nombres oficiales que NO aparecen escritos en el código de la versión probada.
+ * La taxonomía vive en utils/officialTopics.js; en el código anterior estaba dentro de pickBestArticlePerTopic.js:
+ * se leen los dos, así sirve para cualquiera de las dos versiones.
+ */
 function verificarOficialesContraCodigo(root) {
   const archivo = path.join(root, 'src', 'utils', 'pickBestArticlePerTopic.js');
   if (!fs.existsSync(archivo)) return { archivo, faltantes: null };
-  const fuente = fs.readFileSync(archivo, 'utf8');
+  const dedicado = path.join(root, 'src', 'utils', 'officialTopics.js');
+  const fuente = [archivo, dedicado].filter((f) => fs.existsSync(f)).map((f) => fs.readFileSync(f, 'utf8')).join('\n');
   const faltantes = temasOficiales()
     .map((t) => t.tema)
     .filter((t) => !fuente.includes(`'${t}'`) && !fuente.includes(`"${t}"`));

@@ -52,6 +52,7 @@ function celdaVersion(r, mostrarDetalleNuevo) {
   if (a.categoria) sub.push(esc(a.categoria));
   if (a.subtema && r.tipo === 'oficial') sub.push(`subtema: ${esc(a.subtema)}`);
   if (a.edadHoras != null) sub.push(`${num(a.edadHoras)} h`);
+  if (a.importancia != null) sub.push(`imp. ${num(a.importancia, 0)}${r.nivelNota ? ` (${esc(r.nivelNota)})` : ''}`);
   const rel = relevanciaDe(r);
   if (rel) sub.push(`${r.tipo === 'libre' && r.juez ? 'juez' : 'relev.'}: ${rel}`);
   if (mostrarDetalleNuevo) {
@@ -104,10 +105,19 @@ function tablaResumen(titulo, A, B, esLibre) {
   filas.push('<tr class="sep"><td colspan="4">Frescura de la noticia entregada (en tema)</td></tr>');
   fila('Edad mediana (h)', A.edad.mediana, B.edad.mediana, false, 'h');
   fila('Edad p90 (h)', A.edad.p90, B.edad.p90, false, 'h');
+  fila('Hasta 6 h (%)', A.edad.pctHasta6, B.edad.pctHasta6, true, 'h');
   fila('Hasta 12 h (%)', A.edad.pctHasta12, B.edad.pctHasta12, true, 'h');
   fila('Hasta 24 h (%)', A.edad.pctHasta24, B.edad.pctHasta24, true, 'h');
-  fila('Más de 36 h (%)', A.edad.pctMasDe36, B.edad.pctMasDe36, false, 'h');
+  fila('Más de 24 h (%)', A.edad.pctMasDe24, B.edad.pctMasDe24, false, 'h');
+  fila('La más vieja de todas (h)', A.edad.maxTodas, B.edad.maxTodas, false, 'h');
+  if (A.sustancia?.n || B.sustancia?.n) {
+    filas.push('<tr class="sep"><td colspan="4">Sustancia de la noticia entregada (en tema)</td></tr>');
+    fila('Importancia mediana', A.sustancia?.mediana ?? null, B.sustancia?.mediana ?? null, true, 'h');
+    fila('Buenas, de importancia 50 o más (%)', A.sustancia?.pctBuenas ?? null, B.sustancia?.pctBuenas ?? null, true, 'h');
+    fila('Por debajo del piso de 40 (%)', A.sustancia?.pctBajoElPiso ?? null, B.sustancia?.pctBajoElPiso ?? null, false, 'h');
+  }
   filas.push('<tr class="sep"><td colspan="4">Cómo se decidió</td></tr>');
+  fila('Zona ETIQUETA (oficiales)', A.zonas.ETIQUETA, B.zonas.ETIQUETA, true);
   fila('Zona VERDE', A.zonas.VERDE, B.zonas.VERDE, true);
   fila('Zona AMARILLA', A.zonas.AMARILLA, B.zonas.AMARILLA, true);
   fila('Zona RESCATE', A.zonas.RESCATE, B.zonas.RESCATE, false);
@@ -213,11 +223,13 @@ function csvComparacion(filas) {
     'tipo', 'tema', 'usuarios', 'estado',
     'antes_resultado', 'antes_zona', 'antes_score', 'antes_titulo', 'antes_url', 'antes_edad_h', 'antes_juez',
     'despues_resultado', 'despues_zona', 'despues_score', 'despues_candidato', 'despues_corral', 'despues_titulo', 'despues_url', 'despues_edad_h', 'despues_juez',
+    'antes_importancia', 'despues_importancia', 'despues_nivel',
   ];
   const lineas = filas.map((f) => [
     f.tipo, f.tema, f.usuarios, f.estado,
     ETIQUETAS[particion(f.antes)], f.antes.zona, f.antes.scoreBusqueda, f.antes.articulo?.titulo, f.antes.articulo?.url, f.antes.articulo?.edadHoras, f.antes.juez,
     ETIQUETAS[particion(f.despues)], f.despues.zona, f.despues.scoreBusqueda, f.despues.candidatosEvaluados, f.despues.corral, f.despues.articulo?.titulo, f.despues.articulo?.url, f.despues.articulo?.edadHoras, f.despues.juez,
+    f.antes.articulo?.importancia, f.despues.articulo?.importancia, f.despues.nivelNota,
   ].map(col).join(';'));
   return `﻿${cab.join(';')}\n${lineas.join('\n')}\n`;
 }
@@ -240,6 +252,10 @@ function textoConsola({ resA, resB, filas, cordura, veredicto }) {
     fila('Sin noticia', c(a, 'sin_noticia'), c(b, 'sin_noticia'));
     fila('Fuera de tema sin aviso', c(a, 'tema_no'), c(b, 'tema_no'));
     fila('Edad mediana (h)', f1(a.edad.mediana), f1(b.edad.mediana));
+    fila('Hasta 6 h', `${f1(a.edad.pctHasta6)} %`, `${f1(b.edad.pctHasta6)} %`);
+    fila('Hasta 12 h', `${f1(a.edad.pctHasta12)} %`, `${f1(b.edad.pctHasta12)} %`);
+    fila('La más vieja (h)', f1(a.edad.maxTodas), f1(b.edad.maxTodas));
+    if (a.sustancia?.n || b.sustancia?.n) fila('Buenas (importancia 50+)', `${f1(a.sustancia?.pctBuenas)} %`, `${f1(b.sustancia?.pctBuenas)} %`);
     fila('p95 por tema (ms)', f1(a.tiempo.p95), f1(b.tiempo.p95));
   }
 

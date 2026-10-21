@@ -4,6 +4,7 @@ const { zodTextFormat } = require('openai/helpers/zod');
 const Article = require('../models/Article');
 const { openaiReview, OPENAI_MODEL } = require('../config/openai');
 const { startTimer } = require('../utils/timing');
+const { toPlainText, firstReadableText } = require('../utils/plainText');
 
 // 🛡️ MODIFICACIÓN 1: Relajamos los límites máximos para evitar que Zod falle
 // al traducir desde el portugués y termine ejecutando el fallback crudo.
@@ -46,24 +47,8 @@ const FORBIDDEN_SOURCE_PHRASES = [
   'ambito informó',
 ];
 
-function cleanText(value) {
-  return String(value || '')
-    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 function stripForbiddenSourcePhrases(value) {
-  let text = cleanText(value);
+  let text = toPlainText(value);
 
   for (const phrase of FORBIDDEN_SOURCE_PHRASES) {
     const pattern = new RegExp(phrase, 'gi');
@@ -80,7 +65,7 @@ function stripForbiddenSourcePhrases(value) {
 }
 
 function truncateWords(text, maxWords) {
-  const words = cleanText(text).split(/\s+/).filter(Boolean);
+  const words = toPlainText(text).split(/\s+/).filter(Boolean);
 
   if (words.length <= maxWords) {
     return words.join(' ');
@@ -90,7 +75,7 @@ function truncateWords(text, maxWords) {
 }
 
 function buildFallbackTitle(article) {
-  const title = cleanText(article.title);
+  const title = toPlainText(article.title);
 
   if (!title) return 'Noticia relevante del día';
 
@@ -98,7 +83,7 @@ function buildFallbackTitle(article) {
 }
 
 function buildFallbackLead(article) {
-  const sourceText = cleanText(article.rawSummary || article.contentSnippet);
+  const sourceText = firstReadableText(article.rawSummary, article.contentSnippet);
 
   if (sourceText) {
     return truncateWords(sourceText, 16).slice(0, 120).trim();
@@ -108,7 +93,7 @@ function buildFallbackLead(article) {
 }
 
 function buildFallbackSummary(article) {
-  const sourceText = cleanText(article.rawSummary || article.contentSnippet);
+  const sourceText = firstReadableText(article.rawSummary, article.contentSnippet);
 
   if (sourceText) {
     return truncateWords(sourceText, 60).slice(0, 430).trim();

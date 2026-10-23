@@ -91,6 +91,22 @@ FRESHNESS_WEIGHT=0.3          # 0-1
 FRESHNESS_PLATEAU_HOURS=4     # 0 = no plateau (linear from the first minute)
 ```
 
+### Article votes (thumbs up / down)
+
+Each article in a digest can be voted on. The vote is stored **together with the engine's decision** (age, importance, score, zone, level, whether it was a rescue), because a bare thumbs-down only says "something was wrong", while the decision context says *which rule to change*: thumbs-down on old articles means raising `FRESHNESS_WEIGHT`, thumbs-down on rescues means a supply problem, and `aburrida` on high-importance articles means `importanceScore` is not measuring interest.
+
+The client sends only the article, the vote and (for a thumbs-down) the reason. The server fills in the context from the delivery run it already stored, so the client cannot pollute the data and does not need to know anything about the engine. One vote per user and article: voting again *changes* the vote.
+
+```text
+POST   /users/:userId/digest/vote              { articleId, vote: 1 | -1, reason? }
+DELETE /users/:userId/digest/vote/:articleId
+GET    /users/:userId/digest/votes             -> { items: [{ articleId, vote, reason }] }
+```
+
+`reason` is only accepted with `vote: -1`, and must be one of `aburrida`, `no_es_del_tema`, `ya_la_sabia`, `vieja`. A thumbs-up carries no reason on purpose: asking people who voted positively why they did lowers the number of votes.
+
+Votes live in the `article_votes` collection. A vote for an article that is no longer in any recent delivery run (the digest was refreshed, or the vote arrived days later) is still stored, with `contextSource: 'sin_contexto'`.
+
 ### 4. Running the Server
 Start the backend server:
 ```bash

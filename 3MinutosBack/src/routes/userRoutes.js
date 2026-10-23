@@ -11,6 +11,9 @@ const { uploadDigestAudio } = require('../audio/uploadDigestAudio');
 const UserPreference = require('../models/UserPreference');
 const UserShownArticle = require('../models/UserShownArticle');
 const UserDeliveryRun = require('../models/UserDeliveryRun');
+const ArticleVote = require('../models/ArticleVote');
+const { VOTE_VALUES, VOTE_DOWN, DOWN_REASONS } = require('../models/ArticleVote');
+const { findVoteContext } = require('../utils/voteContext');
 
 const { buildDigestForUser } = require('../utils/buildDigestForUser');
 const { ensureFreshDigest } = require('../utils/staleDigest');
@@ -111,6 +114,21 @@ async function findUserOr404(userId, res) {
   }
 
   return user;
+}
+
+/**
+ * El voto como lo ve la app: solo lo que necesita para pintar el pulgar. El contexto de la decisión (edad,
+ * importancia, puntaje, zona) queda guardado para el análisis pero no se le devuelve al cliente: no lo usa, y
+ * son las tripas del motor.
+ */
+function publicVote(vote) {
+  if (!vote) return null;
+
+  return {
+    articleId: String(vote.articleId),
+    vote: vote.vote,
+    reason: vote.reason ?? null,
+  };
 }
 
 async function savePreparedDigestRun(user, digest, deliveryDate) {
@@ -673,6 +691,159 @@ router.get(
     }
   }
 );
+
+/**
+ * El pulgar arriba / abajo de una nota del digest.
+ *
+ * El cliente manda lo mínimo: qué nota, qué pulgar y (solo en el pulgar abajo) el motivo. El contexto de la
+ * decisión del motor lo completa el servidor desde la corrida que ya tenía guardada (utils/voteContext.js), así
+ * el voto sirve para saber QUÉ regla cambiar y no solo que algo estuvo mal.
+ *
+ * Votar de nuevo la misma nota CAMBIA el voto (índice único por usuario y nota), no suma otro.
+ */
+router.post(
+  '/:userId/digest/vote',
+  authRequired,
+  validateUserId,
+  requireSameUserParam('userId'),
+  async (req, res) => {
+    try {
+      const user = await findUserOr404(req.params.userId, res);
+      if (!user) return;
+
+      const { articleId, vote, reason = null } = req.body || {};
+
+      if (!mongoose.Types.ObjectId.isValid(String(articleId || ''))) {
+        return res.status(400).json({
+          error: 'articleId must be a valid article id',
+          code: 'INVALID_ARTICLE_ID',
+        });
+      }
+
+      const numericVote = Number(vote);
+
+      if (!VOTE_VALUES.includes(numericVote)) {
+        return res.status(400).json({
+          error: `vote must be one of: ${VOTE_VALUES.join(', ')}`,
+          code: 'INVALID_VOTE',
+        });
+      }
+
+      // El motivo es opcional y solo tiene sentido en el pulgar abajo: el de arriba va pelado a propósito.
+      const cleanReason = reason === null || reason === undefined || reason === '' ? null : String(reason);
+
+      if (cleanReason !== null && !DOWN_REASONS.includes(cleanReason)) {
+        return res.status(400).json({
+          error: `reason must be one of: ${DOWN_REASONS.join(', ')}`,
+          code: 'INVALID_VOTE_REASON',
+        });
+      }
+
+      if (cleanReason !== null && numericVote !== VOTE_DOWN) {
+        return res.status(400).json({
+          error: 'reason is only accepted together with a negative vote',
+          code: 'REASON_NOT_ALLOWED',
+        });
+      }
+
+      const context = await findVoteContext(user._id, articleId);
+
+      const saved = await ArticleVote.findOneAndUpdate(
+        { userId: user._id, articleId },
+        {
+          $set: {
+            vote: numericVote,
+            reason: cleanReason,
+            ...context,
+          },
+          $setOnInsert: { userId: user._id, articleId },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true }
+      ).lean();
+
+      console.log(
+        `[voto] user=${String(user._id)} nota=${String(articleId)} voto=${numericVote}` +
+        `${cleanReason ? ` motivo=${cleanReason}` : ''} contexto=${context.contextSource}` +
+        `${context.zona ? ` zona=${context.zona} edad=${context.edadHoras}h imp=${context.importancia}` : ''}`
+      );
+
+      return res.json({ ok: true, vote: publicVote(saved) });
+    } catch (error) {
+      console.error('[POST /users/:userId/digest/vote]', error);
+
+      return res.status(500).json({
+        error: 'Failed to save vote',
+        code: 'SAVE_VOTE_FAILED',
+      });
+    }
+  }
+);
+
+/** Quitar el voto de una nota (el usuario toca de nuevo el pulgar que ya tenía marcado). */
+router.delete(
+  '/:userId/digest/vote/:articleId',
+  authRequired,
+  validateUserId,
+  requireSameUserParam('userId'),
+  async (req, res) => {
+    try {
+      const user = await findUserOr404(req.params.userId, res);
+      if (!user) return;
+
+      const { articleId } = req.params;
+
+      if (!mongoose.Types.ObjectId.isValid(String(articleId || ''))) {
+        return res.status(400).json({
+          error: 'articleId must be a valid article id',
+          code: 'INVALID_ARTICLE_ID',
+        });
+      }
+
+      await ArticleVote.deleteOne({ userId: user._id, articleId });
+
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('[DELETE /users/:userId/digest/vote/:articleId]', error);
+
+      return res.status(500).json({
+        error: 'Failed to delete vote',
+        code: 'DELETE_VOTE_FAILED',
+      });
+    }
+  }
+);
+
+/**
+ * Los votos que el usuario ya emitió, para que la app pinte los pulgares al abrir el digest.
+ * Sin esto los botones aparecen vacíos al reabrir y la misma nota se vota dos veces.
+ */
+router.get(
+  '/:userId/digest/votes',
+  authRequired,
+  validateUserId,
+  requireSameUserParam('userId'),
+  async (req, res) => {
+    try {
+      const user = await findUserOr404(req.params.userId, res);
+      if (!user) return;
+
+      const votes = await ArticleVote.find({ userId: user._id })
+        .sort({ updatedAt: -1 })
+        .limit(200)
+        .lean();
+
+      return res.json({ items: votes.map(publicVote) });
+    } catch (error) {
+      console.error('[GET /users/:userId/digest/votes]', error);
+
+      return res.status(500).json({
+        error: 'Failed to fetch votes',
+        code: 'FETCH_VOTES_FAILED',
+      });
+    }
+  }
+);
+
 router.post(
   '/:userId/digest/play',
   authRequired,
@@ -884,11 +1055,12 @@ router.delete(
         return userNotFoundResponse(res);
       }
 
-      // 2. Eliminamos todo su rastro de la base de datos (Historial, Runs y Logs)
+      // 2. Eliminamos todo su rastro de la base de datos (Historial, Runs, Logs y Votos)
       await Promise.all([
         UserDeliveryRun.deleteMany({ userId }),
         UserShownArticle.deleteMany({ userId }),
         DigestTestLog.deleteMany({ idUsuario: userId }),
+        ArticleVote.deleteMany({ userId }),
       ]);
 
       console.log(`🗑️ Cuenta y datos eliminados con éxito para el usuario: ${userId}`);

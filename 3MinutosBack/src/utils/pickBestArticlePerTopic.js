@@ -22,6 +22,11 @@ const articleStore = require('./articleStore');
  *     y corral de categoría (topicMatching.js); entre las notas aceptadas se elige por calidad y el juez de tema
  *     (topicJudge.js) confirma que la nota es DE ese tema.
  *
+ * Un tópico libre se rinde en tres escalones, no en uno: primero busca una nota donde el tema sea el FOCO (juez de
+ * tema: SI); si no hay ninguna, acepta una donde el tema aparezca de costado (PARCIAL), porque para quien pidió
+ * "boca juniors" una nota que lo nombra al pasar le sirve más que una nota impecable de otro tema; y solo si tampoco
+ * hay eso, entrega una nota del rubro marcada como "sugerida" (el rescate). El NO no pasa en ningún escalón.
+ *
  * En los dos, una nota solo puede entregarse si es elegible (eligibility.js): 24 h como máximo,
  * importancia >= 40, no opinión, no previa, país (Sociedad), URL no vista y no ser "la misma historia"
  * (coseno >= 0,88, o entre 0,80 y 0,88 si el juez de sameEventJudge.js dice que es el mismo hecho) que algo
@@ -167,12 +172,33 @@ async function pickFreeTopic(trimmedTopic, prepared, {
       `Pista: ${pista} | Aceptados: ${selection.accepted.length} de ${selection.candidatesEvaluated}`
     );
 
+    const corralOf = (a) => Boolean(accepted.get(a)?.outOfCorral);
     const topicCheck = softCorral
-      ? createTopicCheck({ judge: topicJudge, topic: trimmedTopic, isOutOfCorral: (a) => Boolean(accepted.get(a)?.outOfCorral) })
+      ? createTopicCheck({ judge: topicJudge, topic: trimmedTopic, isOutOfCorral: corralOf })
       : null;
-    const found = await firstNotRepeated(eligible, { seenEmbeddings, loadDocs, needsDoc: false, judge, topicCheck });
+    let found = await firstNotRepeated(eligible, { seenEmbeddings, loadDocs, needsDoc: false, judge, topicCheck });
     if (found.offTopic.length) {
       console.log(`[Juez tema] "${trimmedTopic}": ${found.offTopic.length} descartadas por no ser del tema (${found.offTopic.map((o) => o.verdict || o.reason).join(', ')})`);
+    }
+
+    // SEGUNDA PASADA. Si no quedó ninguna nota donde el tema sea el foco, antes de rendirse y entregar una nota de
+    // otro tema (el rescate) se vuelve a mirar la MISMA lista aceptando las PARCIAL: el tema aparece aunque no sea
+    // el foco. Para el lector que pidió "boca juniors", una nota donde Boca se menciona de costado es mejor que
+    // una nota impecable del Balón de Oro. El NO sigue sin pasar.
+    //
+    // No cuesta otra ronda de IA: los veredictos del juez quedaron en la caché de llmJudge al preguntarlos en la
+    // primera pasada, así que esta segunda los lee de ahí.
+    if (!found.hit && topicCheck && found.offTopic.some((o) => o.verdict === 'PARCIAL')) {
+      const conParciales = createTopicCheck({
+        judge: topicJudge, topic: trimmedTopic, isOutOfCorral: corralOf, allowPartial: true,
+      });
+      const segunda = await firstNotRepeated(eligible, {
+        seenEmbeddings, loadDocs, needsDoc: false, judge, topicCheck: conParciales,
+      });
+      if (segunda.hit) {
+        console.log(`[Juez tema] "${trimmedTopic}": sin notas del foco, se acepta una PARCIAL antes que irse a otro tema`);
+        found = segunda;
+      }
     }
 
     if (found.hit) {

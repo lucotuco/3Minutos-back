@@ -85,6 +85,10 @@ TOPIC_EXPANSION_STORE=off     # keep free-topic expansions only in memory (defau
 ```
 To force every free topic to be expanded again, empty the `topic_expansions` collection.
 
+A free topic gives up in three steps, not one. First it looks for an article where the topic is the **focus** (the topic judge answers SI). If there is none, it accepts one where the topic only appears **in passing** (PARCIAL): for someone who asked for "boca juniors", an article that mentions Boca on the side is worth more than a flawless article about something else. Only if there is none of either does it fall back to a "suggested" article from the same category (the rescue). A NO never passes at any step. The stored `matchReason` says which step won (`| tema: SI` or `| tema: PARCIAL`), so the mix is measurable.
+
+The rescue is stricter about repeats than the rest of the engine (`RESCUE_JUDGE_MIN_COSINE`, 0.70 instead of 0.80). It reads the whole category and delivers the most important and freshest article, so for two different topics in the same category it tends to land on the *same event* — two articles about the same award, one for "boca juniors" and one for "river plate", in a single digest. With different angles their cosine falls below 0.80 and they used to slip through; from 0.70 the judge decides.
+
 Among the eligible articles of a topic, the one delivered is the best by `score = (1 - w) * importance + w * freshness`. Freshness is 100 up to a plateau (default 4 h: for a reader there is no difference between a 30-minute-old and a 3-hour-old article), then falls linearly to 0 at 24 h. `w` is the weight of freshness (0 = importance only, 1 = freshness only; default `0.3`). Values out of range (`w` outside 0-1, plateau outside 0-24) are ignored. The server must be restarted to change them:
 ```env
 FRESHNESS_WEIGHT=0.3          # 0-1

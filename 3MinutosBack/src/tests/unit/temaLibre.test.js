@@ -270,13 +270,95 @@ test('juez de tema: PARCIAL y NO descartan, se entrega la primera que dice SI, y
   assert.match(x.matchReason, /^VERDE score=0\.960 \(candidato #2\) \| tema: SI$/);
 });
 
-test('juez de tema: toda nota necesita el SI, también la que está dentro del corral de categoría', async () => {
+test('juez de tema: si NINGUNA dice SI, antes de irse a otro tema se acepta la mejor PARCIAL', async () => {
+  const { a, b, c } = candidatosEnOrden();
+  const rescate = nota({ category: 'Deportes', topic: 'Tenis', title: 'Balón de Oro', importanceScore: 90, publishedAt: hace(1) });
+  const juezTema = juezTemaFalso(porId({}, 'PARCIAL'));
+  const r = await correr(['river plate'], {
+    busqueda: busquedaFalsa({ 'river plate': [a, b, c] }),
+    docs: [rescate], // hay rescate disponible: igual se prefiere la PARCIAL del tema pedido
+    juezTema,
+  });
+
+  const x = r.resultados[0];
+  assert.equal(x.article.url, a.url, 'la mejor de las PARCIAL, no la nota de otro tema');
+  assert.equal(x.usedFallback, false, 'no es un rescate: la nota nombra al tema que pidió el usuario');
+  assert.match(x.matchReason, /\| tema: PARCIAL$/, 'queda escrito que se aceptó una parcial, para poder medirlo');
+});
+
+test('juez de tema: la PARCIAL se acepta también cuando no hay rescate posible (mejor de costado que nada)', async () => {
   const { a, b, c } = candidatosEnOrden();
   const juezTema = juezTemaFalso(porId({}, 'PARCIAL'));
   const r = await correr(['river plate'], { busqueda: busquedaFalsa({ 'river plate': [a, b, c] }), juezTema });
+  assert.equal(r.resultados[0].article.url, a.url);
+
+  // La segunda pasada vuelve a recorrer las mismas candidatas, pero no pregunta por ninguna nota NUEVA: en
+  // producción esas repeticiones las contesta la caché de llmJudge (36 h), así que no se paga IA de nuevo.
+  assert.deepEqual(
+    [...new Set(ids(juezTema.registro.preguntas))],
+    [a._id, b._id, c._id],
+    'no se juzga ninguna nota que no se hubiera juzgado ya'
+  );
+});
+
+test('juez de tema: el NO no pasa NUNCA, ni en la segunda pasada', async () => {
+  const { a, b, c } = candidatosEnOrden();
+  const juezTema = juezTemaFalso(porId({}, 'NO'));
+  const r = await correr(['river plate'], { busqueda: busquedaFalsa({ 'river plate': [a, b, c] }), juezTema });
   assert.equal(r.resultados[0].matchReason, 'ningun_candidato_valido');
-  assert.equal(r.resultados[0].article, null, 'mejor un hueco que una nota que solo nombra a River de pasada');
-  assert.deepEqual(ids(juezTema.registro.preguntas), [a._id, b._id, c._id]);
+  assert.equal(r.resultados[0].article, null, 'mejor un hueco que una nota que no tiene nada que ver');
+});
+
+test('juez de tema: entre PARCIAL y NO, la segunda pasada toma la PARCIAL aunque esté más abajo', async () => {
+  const { a, b, c } = candidatosEnOrden();
+  const juezTema = juezTemaFalso(porId({ [a._id]: 'NO', [b._id]: 'NO', [c._id]: 'PARCIAL' }));
+  const r = await correr(['river plate'], { busqueda: busquedaFalsa({ 'river plate': [a, b, c] }), juezTema });
+  assert.equal(r.resultados[0].article.url, c.url);
+  assert.match(r.resultados[0].matchReason, /\| tema: PARCIAL$/);
+});
+
+test('juez de tema: con un SI disponible no se usa ninguna PARCIAL', async () => {
+  const { a, b, c } = candidatosEnOrden();
+  const juezTema = juezTemaFalso(porId({ [a._id]: 'PARCIAL', [b._id]: 'PARCIAL', [c._id]: 'SI' }));
+  const r = await correr(['river plate'], { busqueda: busquedaFalsa({ 'river plate': [a, b, c] }), juezTema });
+  assert.equal(r.resultados[0].article.url, c.url);
+  assert.match(r.resultados[0].matchReason, /\| tema: SI$/);
+});
+
+test('rescate: dos tópicos que fallan NO reciben el mismo hecho (el caso del Balón de Oro para boca y para river)', async () => {
+  // Las dos notas del rescate cuentan el mismo evento con enfoques distintos: coseno 0,75, por debajo de la banda
+  // normal del juez (0,80), que es por donde se escapaban.
+  const balonA = nota({ topic: 'Tenis', title: 'Kane ganó el Balón de Oro 2026', importanceScore: 90, publishedAt: hace(1), embedding: conCoseno(1) });
+  const balonB = nota({ topic: 'Tenis', title: 'España, campeona del mundo pero sin Balón de Oro', importanceScore: 85, publishedAt: hace(2), embedding: conCoseno(0.75) });
+  const distinta = nota({ topic: 'Tenis', title: 'Del Potro al Salón de la Fama', importanceScore: 70, publishedAt: hace(3), embedding: [0, 1] });
+
+  // El juez de misma historia dice que las dos del Balón de Oro son el mismo hecho.
+  const titulosDelBalon = new Set([balonA.title, balonB.title]);
+  const juez = {
+    session: null,
+    enabled: () => true,
+    prefetch() {},
+    async isSameEvent(cand, visto) {
+      return { same: titulosDelBalon.has(cand.title) && titulosDelBalon.has(visto.title) };
+    },
+  };
+
+  const r = await correr(['boca juniors', 'river plate'], {
+    busqueda: busquedaFalsa({}),                 // ningún candidato propio: los dos van al rescate
+    docs: [balonA, balonB, distinta],
+    expand: expansionFalsa((t) => ({ q: t, cat: 'Deportes', sub: '' })),
+    juezTema: juezTemaFalso(() => 'NO'),
+    juez,
+  });
+
+  const [boca, river] = r.resultados;
+  assert.equal(boca.usedFallback, true);
+  assert.equal(river.usedFallback, true);
+  assert.equal(boca.article.url, balonA.url, 'al primero le toca la más importante');
+  assert.equal(
+    river.article.url, distinta.url,
+    'al segundo NO le toca la otra nota del mismo evento, aunque sea más importante que la distinta'
+  );
 });
 
 test('juez de tema: si ninguna dice SI hay rescate en el rubro, y las notas del rescate NO pasan por el juez de tema', async () => {

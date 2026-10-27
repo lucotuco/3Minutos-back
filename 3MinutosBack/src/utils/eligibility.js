@@ -37,6 +37,15 @@ const SAME_STORY_COSINE = 0.88;        // coseno entre embeddings de notas: >= e
 // por debajo de 0,80 son hechos distintos. El borde de 0,80 es una estimación: se afina con tests/medirCosenos.js,
 // que muestra el coseno real de las notas repetidas de un reporte.
 const SAME_STORY_JUDGE_MIN_COSINE = 0.80;
+
+// En el RESCATE la banda del juez empieza más abajo. Una nota sugerida ya es un premio consuelo: si además cuenta
+// algo que el lector ya vio en este mismo digest (o en un refresco anterior), no aporta nada. Y es justo donde pasa:
+// el rescate lee toda la categoría y entrega lo más importante y fresco, que para dos tópicos distintos del mismo
+// rubro suele ser el MISMO hecho (dos notas del Balón de Oro, una para "boca juniors" y otra para "river plate").
+// Dos notas del mismo evento con enfoques distintos se quedan por debajo de 0,80 de coseno y se escapaban; desde
+// 0,70 las mira el juez, que es el que sabe decidir si es el mismo hecho.
+const RESCUE_JUDGE_MIN_COSINE = 0.70;
+
 const JUDGE_MAX_PAIRS_PER_CANDIDATE = 2; // contra cuántas notas vistas se compara una candidata como máximo
 const MAX_FUTURE_SKEW_HOURS = 3;       // una fecha más de 3 h en el futuro no es creíble
 
@@ -339,6 +348,7 @@ module.exports = {
   IMPORTANCE_ACCEPTABLE_MIN,
   SAME_STORY_COSINE,
   SAME_STORY_JUDGE_MIN_COSINE,
+  RESCUE_JUDGE_MIN_COSINE,
   JUDGE_MAX_PAIRS_PER_CANDIDATE,
   MAX_FUTURE_SKEW_HOURS,
   HISTORY_WINDOW_HOURS,

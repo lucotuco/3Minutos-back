@@ -14,7 +14,9 @@
  *      o entre 0,80 y 0,88 si el juez de sameEventJudge.js dice que cuenta el mismo hecho)
  *   4. si no queda ninguna y el tópico es un SUBTEMA: rescate = misma categoría, importancia >= 50,
  *      marcada como "sugerida" (usedFallback). Las categorías no tienen rescate: cualquier nota de la categoría ya vale.
- *      El rescate (pickRescueArticle) es el mismo para los temas libres (pickBestArticlePerTopic.js).
+ *      El rescate (pickRescueArticle) es el mismo para los temas libres (pickBestArticlePerTopic.js), que antes de
+ *      llegar acá prueban algo más: aceptar una nota donde el tema aparece de costado (ver pickFreeTopic).
+ *      El rescate es MÁS estricto con las repetidas que el resto del motor: ver RESCUE_JUDGE_MIN_COSINE.
  *   5. si tampoco hay: sin nota (mejor un hueco que una mala).
  *
  * El acceso a Mongo llega por `store` (articleStore.js), así esto se prueba con datos falsos.
@@ -22,7 +24,7 @@
 
 const { MAX_ARTICLE_AGE_HOURS } = require('./freshness');
 const {
-  IMPORTANCE_GOOD_MIN, IMPORTANCE_ACCEPTABLE_MIN, rankEligible, findSameStory,
+  IMPORTANCE_GOOD_MIN, IMPORTANCE_ACCEPTABLE_MIN, rankEligible, findSameStory, RESCUE_JUDGE_MIN_COSINE,
 } = require('./eligibility');
 const { noteForJudge } = require('./judgeNote');
 const { prefetchSameStory, resolveSameStory, PREFETCH_MAX_CANDIDATES } = require('./sameEventJudge');
@@ -50,7 +52,9 @@ const embeddingOf = (doc) => (Array.isArray(doc?.embedding) && doc.embedding.len
  * @returns {Promise<{hit:{entry:object, doc:object|null, embedding:number[]|null, topicVerdict:string|null}|null,
  *                    examined:number, skipped:object[], offTopic:object[]}>}
  */
-async function firstNotRepeated(ranked, { seenEmbeddings = [], loadDocs, needsDoc = false, judge = null, topicCheck = null }) {
+async function firstNotRepeated(ranked, {
+  seenEmbeddings = [], loadDocs, needsDoc = false, judge = null, topicCheck = null, sameStoryBandMin = undefined,
+}) {
   const skipped = [];
   const offTopic = [];
   let examined = 0;
@@ -84,7 +88,7 @@ async function firstNotRepeated(ranked, { seenEmbeddings = [], loadDocs, needsDo
         const embedding = embeddingOf(doc);
         // (prefetchSameStory sin juez solo mira el coseno: una repetida no gasta preguntas ni siquiera al juez de tema)
         const kind = seenEmbeddings.length
-          ? prefetchSameStory({ embedding, candidate: candidateOf(entry, doc), seen: seenEmbeddings, judge })
+          ? prefetchSameStory({ embedding, candidate: candidateOf(entry, doc), seen: seenEmbeddings, judge, bandMin: sameStoryBandMin })
           : 'limpia';
         if (kind === 'coseno') continue;
         if (topicCheck) topicCheck.prefetch(entry, doc);
@@ -119,7 +123,10 @@ async function firstNotRepeated(ranked, { seenEmbeddings = [], loadDocs, needsDo
 
       // 3) la misma historia, en la banda donde el coseno no alcanza y decide el juez
       const same = embedding
-        ? await resolveSameStory({ embedding, candidate: judge ? candidateOf(entry, doc) : null, seen: seenEmbeddings, judge })
+        ? await resolveSameStory({
+            embedding, candidate: judge ? candidateOf(entry, doc) : null, seen: seenEmbeddings, judge,
+            bandMin: sameStoryBandMin,
+          })
         : null;
       if (same) {
         skipped.push({ title: entry.article.title, similarity: same.similarity, con: same.title, by: same.by });
@@ -156,10 +163,20 @@ function withoutEmbedding(doc) {
  * @returns {Promise<{hit:object|null, examined:number, skipped:object[], listed:number}>}
  *   hit = { entry, doc (completo, con embedding), embedding, topicVerdict } como firstNotRepeated; listed = notas leídas
  */
+/**
+ * La nota "sugerida" cuando el tema no dio nada: la mejor del rubro, excluyendo el subtema que ya falló.
+ *
+ * Es más estricta que el resto con las repetidas (`RESCUE_JUDGE_MIN_COSINE`). El rescate lee TODA la categoría y
+ * entrega lo más importante y fresco, así que para dos tópicos distintos del mismo rubro suele caer en el mismo
+ * hecho: dos notas del Balón de Oro, una para "boca juniors" y otra para "river plate", en el mismo digest. Con
+ * enfoques distintos el coseno queda por debajo de 0,80 y se escapaban; desde 0,70 las revisa el juez.
+ */
 async function pickRescueArticle({ category, excludeTopic = null, hintOf = null }, { ctx, since, seenEmbeddings = [], store, judge = null }) {
   const near = await store.listCandidates({ category, excludeTopic, minImportance: IMPORTANCE_GOOD_MIN, since });
   const ranked = rankEligible(near, ctx, { goodOnly: true, hintOf });
-  const found = await firstNotRepeated(ranked.eligible, { seenEmbeddings, loadDocs: store.loadFull, needsDoc: true, judge });
+  const found = await firstNotRepeated(ranked.eligible, {
+    seenEmbeddings, loadDocs: store.loadFull, needsDoc: true, judge, sameStoryBandMin: RESCUE_JUDGE_MIN_COSINE,
+  });
   return { ...found, listed: near.length };
 }
 

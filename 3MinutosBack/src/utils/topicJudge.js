@@ -11,7 +11,11 @@
  *   PARCIAL  el tema aparece pero no es el foco
  *   NO       no tiene relación
  *
- * SOLO el SI pasa. Criterio: el mismo que usa el comparador (tests/comparar/corrida.js, PROMPT_JUEZ) para medir si el
+ * El SI pasa siempre. El PARCIAL pasa solo en la segunda pasada, cuando la alternativa es entregar una nota de
+ * OTRO tema (el rescate): una nota donde el club que pediste aparece de costado le sirve más al lector que una
+ * nota impecable de un tema que no pidió. El NO no pasa nunca.
+ *
+ * Criterio: el mismo que usa el comparador (tests/comparar/corrida.js, PROMPT_JUEZ) para medir si el
  * motor eligió bien, más una regla de calificadores (país, ciudad, deporte): "tenis argentino" exige que la nota sea
  * de tenis Y argentina.
  *
@@ -90,13 +94,18 @@ function createTopicJudge({ session = new JudgeSession(), llm = topicLlm } = {})
  *   prefetch(entry, doc)   arranca la pregunta de esa candidata
  *   check(entry, doc)      -> { ok, verdict, reason }
  *
- * Solo el SI pasa; PARCIAL y NO descartan (el tema aparece pero no es el foco, o no tiene relación). Sin veredicto
- * (tardó más que el presupuesto, falló, está apagado) se sigue como antes de que existiera el juez: la nota que está
- * dentro del corral de categoría pasa, la que está afuera no (`isOutOfCorral`).
+ * Con `allowPartial` en false (la pasada normal) solo el SI pasa. Con `allowPartial` en true también pasa el
+ * PARCIAL: es la segunda pasada, la que corre ANTES de rendirse y entregar una nota de otro tema (ver
+ * pickBestArticlePerTopic.pickFreeTopic). El NO no pasa nunca, en ninguna de las dos: "el tema aparece de costado"
+ * es una nota del tema, "no tiene relación" no.
+ *
+ * Sin veredicto (tardó más que el presupuesto, falló, está apagado) se sigue como antes de que existiera el juez:
+ * la nota que está dentro del corral de categoría pasa, la que está afuera no (`isOutOfCorral`).
  */
-function createTopicCheck({ judge, topic, isOutOfCorral = () => false }) {
+function createTopicCheck({ judge, topic, isOutOfCorral = () => false, allowPartial = false }) {
   const noteOf = (entry, doc) => noteForJudge({ ...entry.article, ...(doc || {}) });
   return {
+    allowPartial,
     prefetch(entry, doc) {
       try { judge.prefetch(topic, noteOf(entry, doc)); } catch { /* un juez que falla nunca frena la elección */ }
     },
@@ -109,6 +118,7 @@ function createTopicCheck({ judge, topic, isOutOfCorral = () => false }) {
       }
       const verdict = result?.verdict ?? null;
       if (verdict === 'SI') return { ok: true, verdict, reason: null };
+      if (verdict === 'PARCIAL' && allowPartial) return { ok: true, verdict, reason: null };
       if (verdict === 'PARCIAL' || verdict === 'NO') return { ok: false, verdict, reason: `tema_${verdict.toLowerCase()}` };
       return isOutOfCorral(entry.article)
         ? { ok: false, verdict: null, reason: 'fuera_del_corral_sin_juez' }

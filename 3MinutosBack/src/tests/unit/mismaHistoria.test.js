@@ -17,7 +17,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  SAME_STORY_COSINE, SAME_STORY_JUDGE_MIN_COSINE, JUDGE_MAX_PAIRS_PER_CANDIDATE, seenInJudgeBand,
+  SAME_STORY_COSINE, SAME_STORY_JUDGE_MIN_COSINE, RESCUE_JUDGE_MIN_COSINE, JUDGE_MAX_PAIRS_PER_CANDIDATE,
+  seenInJudgeBand,
 } = require('../../utils/eligibility');
 const {
   PREFETCH_MAX_CANDIDATES, SYSTEM_PROMPT, noteForJudge, canJudge, pairKey, createSameEventLlm,
@@ -251,6 +252,34 @@ test('prefetchSameStory: dice si la candidata es repetida por coseno, depende de
   assert.equal(quien(0.85, { judge: juezFalso(() => true, { activo: false }) }), 'limpia');
   assert.equal(prefetchSameStory({ embedding: null, candidate: candidata(), seen: [vista()], judge: juez }), 'limpia', 'sin embedding no se puede comparar y pasa');
   assert.equal(prefetchSameStory({ embedding: [], candidate: candidata(), seen: [vista()], judge: juez }), 'limpia');
+});
+
+// ---------------------------------------------------------------- la banda más ancha del rescate
+test('banda del rescate: desde 0,70 el juez decide, para que no salga el mismo hecho en dos tópicos', () => {
+  assert.equal(RESCUE_JUDGE_MIN_COSINE, 0.70);
+  assert.ok(RESCUE_JUDGE_MIN_COSINE < SAME_STORY_JUDGE_MIN_COSINE, 'el rescate pregunta más seguido que el resto');
+
+  const normal = (c) => seenInJudgeBand([1, 0], [{ id: 'x', title: 'x', vector: conCoseno(c) }]).length;
+  const rescate = (c) => seenInJudgeBand([1, 0], [{ id: 'x', title: 'x', vector: conCoseno(c) }], { min: RESCUE_JUDGE_MIN_COSINE }).length;
+
+  // Dos notas del mismo evento con enfoques distintos ("España sin Balón de Oro" / "Kane ganó el Balón de Oro").
+  assert.equal(normal(0.75), 0, 'hoy se escapaba: por debajo de 0,80 no se preguntaba');
+  assert.equal(rescate(0.75), 1, 'en el rescate la mira el juez');
+  assert.equal(rescate(0.699), 0, 'por debajo de 0,70 sí son hechos distintos');
+  assert.equal(rescate(0.88), 0, 'desde 0,88 ya es repetida sin preguntar, igual que siempre');
+});
+
+test('prefetchSameStory y resolveSameStory: bandMin baja el piso solo cuando se lo pasan', async () => {
+  const juez = juezFalso(() => true);
+  const seen = [vista({ vector: conCoseno(1) })];
+  const candidataCon = (c) => ({ embedding: conCoseno(c), candidate: candidata(), seen, judge: juez });
+
+  assert.equal(prefetchSameStory(candidataCon(0.75)), 'limpia', 'sin bandMin, 0,75 pasa de largo');
+  assert.equal(prefetchSameStory({ ...candidataCon(0.75), bandMin: RESCUE_JUDGE_MIN_COSINE }), 'banda');
+
+  assert.equal(await resolveSameStory(candidataCon(0.75)), null, 'sin bandMin no se pregunta y la nota pasa');
+  const conBanda = await resolveSameStory({ ...candidataCon(0.75), bandMin: RESCUE_JUDGE_MIN_COSINE });
+  assert.equal(conBanda?.by, 'juez', 'con la banda del rescate el juez la marca como repetida');
 });
 
 test('prefetchSameStory: con dos vistas en la banda lanza las dos preguntas, no más', () => {

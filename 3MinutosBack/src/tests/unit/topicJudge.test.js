@@ -246,7 +246,7 @@ function juezFalso(decide) {
 
 const entrada = (extra = {}) => ({ article: { _id: 'a1', title: 'River ganó', rawSummary: '', category: 'Deportes', ...extra }, tier: 'buena' });
 
-test('createTopicCheck: solo el SI pasa; PARCIAL y NO descartan y dicen por qué', async () => {
+test('createTopicCheck: en la pasada normal solo el SI pasa; PARCIAL y NO descartan y dicen por qué', async () => {
   const resultados = {};
   for (const veredicto of ['SI', 'PARCIAL', 'NO']) {
     const check = createTopicCheck({ judge: juezFalso(() => veredicto), topic: 'river plate' });
@@ -255,6 +255,29 @@ test('createTopicCheck: solo el SI pasa; PARCIAL y NO descartan y dicen por qué
   assert.deepEqual(resultados.SI, { ok: true, verdict: 'SI', reason: null });
   assert.deepEqual(resultados.PARCIAL, { ok: false, verdict: 'PARCIAL', reason: 'tema_parcial' });
   assert.deepEqual(resultados.NO, { ok: false, verdict: 'NO', reason: 'tema_no' });
+});
+
+test('createTopicCheck: con allowPartial pasa el PARCIAL, y el NO sigue sin pasar', async () => {
+  const resultados = {};
+  for (const veredicto of ['SI', 'PARCIAL', 'NO']) {
+    const check = createTopicCheck({ judge: juezFalso(() => veredicto), topic: 'river plate', allowPartial: true });
+    resultados[veredicto] = await check.check(entrada(), null);
+  }
+  assert.deepEqual(resultados.SI, { ok: true, verdict: 'SI', reason: null });
+  assert.deepEqual(resultados.PARCIAL, { ok: true, verdict: 'PARCIAL', reason: null }, 'de costado es del tema');
+  assert.deepEqual(resultados.NO, { ok: false, verdict: 'NO', reason: 'tema_no' }, 'sin relación nunca pasa');
+});
+
+test('createTopicCheck: sin veredicto el corral decide, con o sin allowPartial', async () => {
+  for (const allowPartial of [false, true]) {
+    const dentro = createTopicCheck({ judge: juezFalso(() => null), topic: 'river plate', allowPartial });
+    assert.deepEqual(await dentro.check(entrada(), null), { ok: true, verdict: null, reason: null });
+
+    const afuera = createTopicCheck({
+      judge: juezFalso(() => null), topic: 'river plate', allowPartial, isOutOfCorral: () => true,
+    });
+    assert.deepEqual(await afuera.check(entrada(), null), { ok: false, verdict: null, reason: 'fuera_del_corral_sin_juez' });
+  }
 });
 
 test('createTopicCheck: sin veredicto se sigue como antes del juez: pasa la que está dentro del corral y no la de afuera', async () => {

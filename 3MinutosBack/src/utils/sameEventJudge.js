@@ -102,11 +102,11 @@ function createSameStoryJudge({ session = new JudgeSession(), llm = sameEventLlm
  * Mira de una vez cómo está una candidata frente a lo visto, y arranca las preguntas al juez si cae en la banda.
  * @returns {'coseno'|'banda'|'limpia'}  coseno = ya es repetida sin juez; banda = depende del juez; limpia = pasa
  */
-function prefetchSameStory({ embedding, candidate, seen = [], judge = null }) {
+function prefetchSameStory({ embedding, candidate, seen = [], judge = null, bandMin = undefined }) {
   if (!Array.isArray(embedding) || embedding.length === 0) return 'limpia';
   if (findSameStory(embedding, seen)) return 'coseno';
   if (!judge || !judge.enabled()) return 'limpia';
-  const band = seenInJudgeBand(embedding, seen);
+  const band = seenInJudgeBand(embedding, seen, bandMin === undefined ? {} : { min: bandMin });
   for (const near of band) {
     try { judge.prefetch(candidate, near.entry); } catch { /* un juez que falla nunca frena la elección */ }
   }
@@ -115,14 +115,20 @@ function prefetchSameStory({ embedding, candidate, seen = [], judge = null }) {
 
 /**
  * ¿La candidata es "la misma historia" que algo visto?
+ *
+ * `bandMin` baja el piso de la banda del juez para esta comparación (lo usa el rescate: ver
+ * RESCUE_JUDGE_MIN_COSINE en eligibility.js). Sin él, la banda es la de siempre.
+ *
  * @returns {Promise<null | {similarity:number, title:string|null, by:'coseno'|'juez'}>} null = no es repetida
  */
-async function resolveSameStory({ embedding, candidate, seen = [], judge = null, log = (m) => console.log(m) }) {
+async function resolveSameStory({
+  embedding, candidate, seen = [], judge = null, bandMin = undefined, log = (m) => console.log(m),
+}) {
   const hard = findSameStory(embedding, seen);
   if (hard) return { similarity: hard.similarity, title: hard.title, by: 'coseno' };
   if (!judge || !judge.enabled()) return null;
 
-  for (const near of seenInJudgeBand(embedding, seen)) {
+  for (const near of seenInJudgeBand(embedding, seen, bandMin === undefined ? {} : { min: bandMin })) {
     let verdict;
     try {
       verdict = await judge.isSameEvent(candidate, near.entry);

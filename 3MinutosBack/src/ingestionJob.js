@@ -6,6 +6,9 @@ const APP_TIME_ZONE = 'America/Argentina/Buenos_Aires';
 
 let isIngestionRunning = false;
 
+// Una ingesta normal tarda ~8 minutos. Con 55 el proceso colgado muere antes de que arranque la siguiente (cada hora).
+const INGESTION_TIMEOUT_MINUTES = 55;
+
 function envFlag(name, defaultValue = false) {
   const value = process.env[name];
 
@@ -24,9 +27,9 @@ function formatArgentinaDateTime(date = new Date()) {
   }).format(date);
 }
 
-function runScript(scriptRelativePath, label) {
+function runScript(scriptRelativePath, label, { timeoutMs = INGESTION_TIMEOUT_MINUTES * 60 * 1000 } = {}) {
   return new Promise((resolve, reject) => {
-    const scriptPath = path.join(__dirname, scriptRelativePath);
+    const scriptPath = path.isAbsolute(scriptRelativePath) ? scriptRelativePath : path.join(__dirname, scriptRelativePath);
 
     console.log(`▶️ Ejecutando ${label}: ${scriptPath}`);
 
@@ -37,23 +40,35 @@ function runScript(scriptRelativePath, label) {
         INGESTION_CHILD_PROCESS: 'true',
       },
     });
+    // La promesa se resuelve una sola vez, y el temporizador se cancela apenas el proceso termina: antes quedaba
+    // vivo y a la hora exacta (justo cuando arranca la ingesta siguiente) logueaba un TIMEOUT falso.
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      if (error) reject(error);
+      else resolve();
+    };
+
     const timeoutId = setTimeout(() => {
+      if (settled) return;
       console.log(`⏳ ¡TIMEOUT! Matando proceso colgado: ${label}`);
-      child.kill('SIGKILL'); // Lo asesinamos sin piedad
-      reject(new Error(`${label} excedió el tiempo límite de 15 minutos y fue abortado.`));
-    }, 60 * 60 * 1000);
+      child.kill('SIGKILL');
+      finish(new Error(`${label} excedió el tiempo límite de ${Math.round(timeoutMs / 60000)} minutos y fue abortado.`));
+    }, timeoutMs);
 
     child.on('error', (error) => {
-      reject(new Error(`${label}: ${error.message}`));
+      finish(new Error(`${label}: ${error.message}`));
     });
 
     child.on('close', (code) => {
       if (code === 0) {
-        resolve();
+        finish();
         return;
       }
 
-      reject(new Error(`${label} terminó con código ${code}`));
+      finish(new Error(`${label} terminó con código ${code}`));
     });
   });
 }
@@ -122,4 +137,6 @@ function startHourlyIngestionJob() {
 module.exports = {
   startHourlyIngestionJob,
   runHourlyIngestion,
+  runScript,
+  INGESTION_TIMEOUT_MINUTES,
 };

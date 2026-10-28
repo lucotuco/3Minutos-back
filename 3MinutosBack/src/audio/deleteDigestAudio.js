@@ -1,4 +1,4 @@
-const { cloudinary } = require('../config/cloudinary');
+const cloudinary = require('../config/cloudinary');
 
 async function deleteDigestAudio(audioStorageKey) {
   if (!audioStorageKey) return;

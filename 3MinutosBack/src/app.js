@@ -37,6 +37,8 @@ app.use(
     },
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
+    // El token renovado (middleware/auth.js) tiene que poder leerse también desde la versión web.
+    exposedHeaders: ['X-Auth-Token'],
   })
 );
 

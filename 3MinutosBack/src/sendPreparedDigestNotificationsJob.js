@@ -1,4 +1,5 @@
 const cron = require('node-cron');
+const { Expo } = require('expo-server-sdk');
 const UserDeliveryRun = require('./models/UserDeliveryRun');
 const UserPreference = require('./models/UserPreference');
 const { sendPushNotification } = require('./utils/sendPushNotification');
@@ -10,6 +11,10 @@ const {
 } = require('./utils/dateHelpers');
 
 let isSendingNotifications = false;
+
+// Cuántas veces se reintenta un push que falló (Expo caído, red) antes de dar la corrida por perdida.
+// El job corre cada minuto: son ~5 minutos de reintentos.
+const MAX_NOTIFICATION_ATTEMPTS = 5;
 
 function isRunDue(run, now = new Date()) {
   if (!run?.deliveryDate || !run?.deliveryTime) return false;
@@ -31,6 +36,37 @@ function isRunDue(run, now = new Date()) {
   return deliveryMinutes <= currentMinutes;
 }
 
+/**
+ * Por qué no se le puede mandar el push a este usuario, o null si se puede.
+ * Una corrida con motivo se marca como salteada y no se vuelve a mirar: antes se quedaba en la cola para
+ * siempre y ocupaba lugar en el limit(100) de cada minuto.
+ */
+function skipReasonFor(user) {
+  if (!user) return 'usuario_inexistente';
+  if (!user.isActive) return 'usuario_inactivo';
+  if (!user.expoPushToken) return 'sin_push_token';
+  if (!Expo.isExpoPushToken(user.expoPushToken)) return 'push_token_invalido';
+  return null;
+}
+
+/** El ticket de Expo dice que el token ya no sirve (la app se desinstaló o el token se renovó). */
+function isDeadTokenTicket(ticket) {
+  return ticket?.status === 'error' && ticket?.details?.error === 'DeviceNotRegistered';
+}
+
+function itemsCountOf(run) {
+  if (Array.isArray(run.digest?.digest?.items)) return run.digest.digest.items.length;
+  if (Array.isArray(run.digest?.items)) return run.digest.items.length;
+  return 0;
+}
+
+async function markSkipped(run, reason) {
+  await UserDeliveryRun.updateOne(
+    { _id: run._id },
+    { $set: { notificationSkippedAt: new Date(), notificationSkipReason: reason } }
+  );
+}
+
 async function sendPreparedDigestNotifications({ now = new Date() } = {}) {
   if (isSendingNotifications) {
     console.log('⏭️ Notificaciones omitidas: ya hay una corrida en curso');
@@ -45,6 +81,7 @@ async function sendPreparedDigestNotifications({ now = new Date() } = {}) {
     const runs = await UserDeliveryRun.find({
       status: 'prepared',
       notificationSentAt: null,
+      notificationSkippedAt: null,
       deliveryDate: today,
       digest: { $ne: null },
     })
@@ -61,46 +98,21 @@ async function sendPreparedDigestNotifications({ now = new Date() } = {}) {
 
     for (const run of dueRuns) {
       try {
-        /*console.log(`\n📦 Procesando run ${run._id}`);
-        console.log(`   userId: ${run.userId}`);
-        console.log(`   deliveryDate: ${run.deliveryDate}`);
-        console.log(`   deliveryTime: ${run.deliveryTime}`);
-        console.log(`   notificationSentAt: ${run.notificationSentAt}`);*/
-
         const user = await UserPreference.findById(run.userId).lean();
+        const reason = skipReasonFor(user);
 
-        if (!user) {
-         //console.log(`⚠️ Usuario no encontrado para run ${run._id}`);
+        if (reason) {
+          await markSkipped(run, reason);
+          console.log(`⏭️ Push salteado run=${run._id} user=${run.userId}: ${reason}`);
           continue;
         }
 
-        /*console.log(`   user.name: ${user.name}`);
-        console.log(`   user.isActive: ${user.isActive}`);
-        console.log(`   expoPushToken: ${user.expoPushToken}`);*/
-
-        if (!user.isActive) {
-          //console.log(`⚠️ Usuario inactivo para run ${run._id}`);
-          continue;
-        }
-
-        if (!user.expoPushToken) {
-          //console.log(`⚠️ Usuario sin expoPushToken: ${user._id}`);
-          continue;
-        }
-
-        const itemsCount = Array.isArray(run.digest?.digest?.items)
-          ? run.digest.digest.items.length
-          : Array.isArray(run.digest?.items)
-            ? run.digest.items.length
-            : 0;
-
+        const itemsCount = itemsCountOf(run);
         const title = 'Tu resumen ya está listo';
         const body =
           itemsCount > 0
             ? `Ya tenés ${itemsCount} noticias nuevas en 3 Minutos.`
             : 'Ya tenés tu nuevo resumen disponible.';
-
-        //console.log('   enviando push...');
 
         const tickets = await sendPushNotification({
           to: user.expoPushToken,
@@ -115,18 +127,33 @@ async function sendPreparedDigestNotifications({ now = new Date() } = {}) {
           },
         });
 
-        //console.log('   tickets Expo:', JSON.stringify(tickets, null, 2));
-
         run.notificationSentAt = new Date();
         await run.save();
 
-        //console.log(`✅ Notificación enviada para run ${run._id}`);
+        if (tickets.some(isDeadTokenTicket)) {
+          // Solo se borra si sigue siendo el mismo token: la app pudo haber mandado uno nuevo mientras tanto.
+          await UserPreference.updateOne(
+            { _id: user._id, expoPushToken: user.expoPushToken },
+            { $set: { expoPushToken: null } }
+          );
+          console.log(`🔕 Token de push dado de baja por Expo, se borra: user=${user._id}`);
+        }
       } catch (error) {
-        //console.error(`❌ Error enviando notificación para run ${run._id}:`, error.message);
+        console.error(`❌ Error enviando notificación para run ${run._id}:`, error.message);
+
+        const attempts = Number(run.notificationAttempts || 0) + 1;
+        const update = { $set: { notificationAttempts: attempts } };
+        if (attempts >= MAX_NOTIFICATION_ATTEMPTS) {
+          update.$set.notificationSkippedAt = new Date();
+          update.$set.notificationSkipReason = `fallo_envio: ${String(error.message || '').slice(0, 200)}`;
+        }
+        await UserDeliveryRun.updateOne({ _id: run._id }, update).catch((saveError) => {
+          console.error(`❌ No se pudo registrar el intento de notificación (run ${run._id}):`, saveError.message);
+        });
       }
     }
   } catch (error) {
-    //console.error('❌ Error general en sendPreparedDigestNotifications:', error.message);
+    console.error('❌ Error general en sendPreparedDigestNotifications:', error.message);
   } finally {
     isSendingNotifications = false;
   }
@@ -148,4 +175,7 @@ module.exports = {
   startSendPreparedDigestNotificationsJob,
   sendPreparedDigestNotifications,
   isRunDue,
+  skipReasonFor,
+  isDeadTokenTicket,
+  MAX_NOTIFICATION_ATTEMPTS,
 };

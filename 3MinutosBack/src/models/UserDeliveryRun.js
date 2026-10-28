@@ -54,6 +54,20 @@ const UserDeliveryRunSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // La corrida no se puede notificar (usuario sin token, inactivo, token inválido, o el envío falló
+    // MAX_NOTIFICATION_ATTEMPTS veces). Se marca para que no vuelva a la cola del job de notificaciones.
+    notificationSkippedAt: {
+      type: Date,
+      default: null,
+    },
+    notificationSkipReason: {
+      type: String,
+      default: '',
+    },
+    notificationAttempts: {
+      type: Number,
+      default: 0,
+    },
   },
   { timestamps: true }
 );

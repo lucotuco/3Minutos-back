@@ -11,6 +11,20 @@ function getJwtSecret() {
   return secret;
 }
 
+// El token dura 180 días y no hay login para pedir otro: si vence, el usuario pierde la cuenta. Por eso cada
+// pedido autenticado con un token de más de TOKEN_REFRESH_AFTER_DAYS días devuelve uno nuevo en este header, y la
+// app lo guarda (services/api.ts del front). Mientras el usuario abra la app al menos una vez cada 180 días, nunca vence.
+const TOKEN_EXPIRES_IN = '180d';
+const TOKEN_REFRESH_AFTER_DAYS = 7;
+const REFRESHED_TOKEN_HEADER = 'X-Auth-Token';
+
+/** true si el token (payload ya verificado) tiene más de `afterDays` días y conviene renovarlo. */
+function shouldRefreshToken(payload, { now = Date.now(), afterDays = TOKEN_REFRESH_AFTER_DAYS } = {}) {
+  const issuedAt = Number(payload?.iat);
+  if (!Number.isFinite(issuedAt)) return true; // un token sin fecha de emisión se reemplaza por uno con fecha
+  return now / 1000 - issuedAt >= afterDays * 86400;
+}
+
 function signUserToken(userId) {
   return jwt.sign(
     {
@@ -19,7 +33,7 @@ function signUserToken(userId) {
     },
     getJwtSecret(),
     {
-      expiresIn: '180d',
+      expiresIn: TOKEN_EXPIRES_IN,
     }
   );
 }
@@ -48,6 +62,10 @@ function authRequired(req, res, next) {
     req.auth = {
       userId: String(payload.sub),
     };
+
+    if (shouldRefreshToken(payload)) {
+      res.set(REFRESHED_TOKEN_HEADER, signUserToken(payload.sub));
+    }
 
     return next();
   } catch {
@@ -82,6 +100,9 @@ function requireSameUserParam(paramName = 'userId') {
 }
 
 module.exports = {
+  REFRESHED_TOKEN_HEADER,
+  TOKEN_REFRESH_AFTER_DAYS,
+  shouldRefreshToken,
   authRequired,
   requireSameUserParam,
   signUserToken,

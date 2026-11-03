@@ -14,6 +14,9 @@ const UserDeliveryRun = require('../models/UserDeliveryRun');
 const ArticleVote = require('../models/ArticleVote');
 const { VOTE_VALUES, VOTE_DOWN, DOWN_REASONS } = require('../models/ArticleVote');
 const { findVoteContext } = require('../utils/voteContext');
+const UserFeedback = require('../models/UserFeedback');
+const { FEEDBACK_RATINGS, FEEDBACK_COMMENT_MAX } = require('../models/UserFeedback');
+const { parseFeedbackBody, snapshotFromRun } = require('../utils/feedbackSnapshot');
 
 const { buildDigestForUser } = require('../utils/buildDigestForUser');
 const { ensureFreshDigest } = require('../utils/staleDigest');
@@ -844,6 +847,78 @@ router.get(
   }
 );
 
+/**
+ * La encuesta semanal: "¿Cómo estuvo tu resumen de hoy?" (una cara de 1 a 3 y un comentario opcional).
+ *
+ * El cliente decide CUÁNDO mostrarla (como mucho una vez por semana); el servidor guarda la respuesta junto a las
+ * notas del digest que el usuario tenía en ese momento, sacadas de su corrida más reciente. Responder de nuevo el
+ * mismo día cambia la respuesta en vez de sumar otra.
+ */
+router.post(
+  '/:userId/feedback',
+  authRequired,
+  validateUserId,
+  requireSameUserParam('userId'),
+  async (req, res) => {
+    try {
+      const user = await findUserOr404(req.params.userId, res);
+      if (!user) return;
+
+      const parsed = parseFeedbackBody(req.body, {
+        ratings: FEEDBACK_RATINGS,
+        commentMax: FEEDBACK_COMMENT_MAX,
+      });
+
+      if (!parsed.ok) {
+        return res.status(400).json({ error: parsed.error, code: parsed.code });
+      }
+
+      // Lo que estaba mirando. Si falla la lectura, la respuesta se guarda igual (sin las notas).
+      let snapshot = { deliveryDate: null, notas: [] };
+      try {
+        const latestRun = await UserDeliveryRun.findOne({ userId: user._id, digest: { $ne: null } })
+          .sort({ preparedAt: -1, createdAt: -1 })
+          .select('deliveryDate digest')
+          .lean();
+        snapshot = snapshotFromRun(latestRun);
+      } catch (error) {
+        console.error('[feedback] no se pudo leer la corrida para el contexto:', error.message);
+      }
+
+      const responseDate = getLocalDateString(new Date());
+
+      await UserFeedback.findOneAndUpdate(
+        { userId: user._id, responseDate },
+        {
+          $set: {
+            rating: parsed.rating,
+            comment: parsed.comment,
+            topics: user.topics || [],
+            deliveryDate: snapshot.deliveryDate,
+            notas: snapshot.notas,
+          },
+          $setOnInsert: { userId: user._id, responseDate },
+        },
+        { upsert: true, setDefaultsOnInsert: true, runValidators: true }
+      );
+
+      console.log(
+        `[feedback] user=${String(user._id)} cara=${parsed.rating}` +
+        `${parsed.comment ? ` comentario="${parsed.comment.slice(0, 120)}"` : ''} notas=${snapshot.notas.length}`
+      );
+
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('[POST /users/:userId/feedback]', error);
+
+      return res.status(500).json({
+        error: 'Failed to save feedback',
+        code: 'SAVE_FEEDBACK_FAILED',
+      });
+    }
+  }
+);
+
 router.post(
   '/:userId/digest/play',
   authRequired,
@@ -1061,6 +1136,7 @@ router.delete(
         UserShownArticle.deleteMany({ userId }),
         DigestTestLog.deleteMany({ idUsuario: userId }),
         ArticleVote.deleteMany({ userId }),
+        UserFeedback.deleteMany({ userId }),
       ]);
 
       console.log(`🗑️ Cuenta y datos eliminados con éxito para el usuario: ${userId}`);

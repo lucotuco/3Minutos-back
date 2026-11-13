@@ -411,7 +411,7 @@
     "category": "deportes",
     "country": "ar",
     "priority": 2,
-    "active": true
+    "active": false
   },
   {
     "name": "Ole Running",
@@ -735,7 +735,7 @@
     "category": "tech",
     "country": "latam",
     "priority": 2,
-    "active": true
+    "active": false
   },
   {
     "name": "G1 Globo",
@@ -834,7 +834,7 @@
     "category": "gaming",
     "country": "ar",
     "priority": 2,
-    "active": true
+    "active": false
   },
   {
     "name": "Perfil Home",
@@ -1328,6 +1328,240 @@
     "url": "https://www.aurora-israel.co.il/feed",
     "category": "general",
     "country": "il",
+    "priority": 2,
+    "active": false
+  },
+  {
+    "name": "Infobae Economía",
+    "type": "rss",
+    "url": "https://www.infobae.com/arc/outboundfeeds/rss/category/economia/?outputType=xml",
+    "category": "economy",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Infobae Sociedad",
+    "type": "rss",
+    "url": "https://www.infobae.com/arc/outboundfeeds/rss/category/sociedad/?outputType=xml",
+    "category": "society",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Infobae Cultura",
+    "type": "rss",
+    "url": "https://www.infobae.com/arc/outboundfeeds/rss/category/cultura/?outputType=xml",
+    "category": "entertainment",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Infobae Turismo",
+    "type": "rss",
+    "url": "https://www.infobae.com/arc/outboundfeeds/rss/category/turismo/?outputType=xml",
+    "category": "lifestyle",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La Nación Deportes",
+    "type": "rss",
+    "url": "https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/deportes/?outputType=xml",
+    "category": "sports",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La Nación Cultura",
+    "type": "rss",
+    "url": "https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/cultura/?outputType=xml",
+    "category": "entertainment",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La Nación Campo",
+    "type": "rss",
+    "url": "https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/economia/campo/?outputType=xml",
+    "category": "economy",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Noticias Argentinas",
+    "type": "rss",
+    "url": "https://noticiasargentinas.com/rss",
+    "category": "general",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "elDiarioAR",
+    "type": "rss",
+    "url": "https://www.eldiarioar.com/rss/",
+    "category": "general",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Perfil Deportes",
+    "type": "rss",
+    "url": "https://www.perfil.com/feed/deportes",
+    "category": "sports",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Motorsport F1 (latam)",
+    "type": "rss",
+    "url": "https://lat.motorsport.com/rss/f1/news/",
+    "category": "sports",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Infobae Tenis",
+    "type": "rss",
+    "url": "https://www.infobae.com/arc/outboundfeeds/rss/category/deportes/tenis/?outputType=xml",
+    "category": "sports",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Infobae Ciencia",
+    "type": "rss",
+    "url": "https://www.infobae.com/arc/outboundfeeds/rss/category/america/ciencia-america/?outputType=xml",
+    "category": "tech",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El País Ciencia",
+    "type": "rss",
+    "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/ciencia/portada",
+    "category": "tech",
+    "country": "es",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El País Tecnología",
+    "type": "rss",
+    "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/tecnologia/portada",
+    "category": "tech",
+    "country": "es",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Wired en Español",
+    "type": "rss",
+    "url": "https://es.wired.com/feed/rss",
+    "category": "tech",
+    "country": "global",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "BBC Mundo",
+    "type": "rss",
+    "url": "https://feeds.bbci.co.uk/mundo/rss.xml",
+    "category": "world",
+    "country": "global",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "France 24 Español",
+    "type": "rss",
+    "url": "https://www.france24.com/es/rss",
+    "category": "world",
+    "country": "global",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El País Internacional",
+    "type": "rss",
+    "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/internacional/portada",
+    "category": "world",
+    "country": "es",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "IGN Latinoamérica",
+    "type": "rss",
+    "url": "https://latam.ign.com/feed.xml",
+    "category": "gaming",
+    "country": "global",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "3DJuegos",
+    "type": "rss",
+    "url": "https://www.3djuegos.com/feedburner.xml",
+    "category": "gaming",
+    "country": "es",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "El Cronista Negocios",
+    "type": "rss",
+    "url": "https://www.cronista.com/files/rss/negocios.xml",
+    "category": "business",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "La Nación Negocios",
+    "type": "rss",
+    "url": "https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/economia/negocios/?outputType=xml",
+    "category": "business",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Bloomberg Línea",
+    "type": "rss",
+    "url": "https://www.bloomberglinea.com/arc/outboundfeeds/rss/?outputType=xml",
+    "category": "economy",
+    "country": "global",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Infobae Economía",
+    "type": "rss",
+    "url": "https://www.infobae.com/arc/outboundfeeds/rss/category/economia/?outputType=xml",
+    "category": "economy",
+    "country": "ar",
+    "priority": 2,
+    "active": true
+  },
+  {
+    "name": "Infobae Turismo",
+    "type": "rss",
+    "url": "https://www.infobae.com/arc/outboundfeeds/rss/category/turismo/?outputType=xml",
+    "category": "lifestyle",
+    "country": "ar",
     "priority": 2,
     "active": true
   }

@@ -19,6 +19,7 @@
  * Uso (desde la carpeta 3MinutosBack):
  *   node src/tests/verificarFuentes.js
  *   node src/tests/verificarFuentes.js --salida fuentes_nuevas.json
+ *   node src/tests/verificarFuentes.js --ronda2 --salida fuentes_ronda2.json
  *
  * Genera fuentes_nuevas.json (o el archivo que digas): un array listo para copiar dentro de Sources.json.
  */
@@ -129,6 +130,34 @@ const CANDIDATOS = [
   { name: 'Otros Cines', category: 'entretenimiento', priority: 6, urls: ['https://www.otroscines.com/feed/'] },
 ];
 
+/**
+ * Ronda 2 (node src/tests/verificarFuentes.js --ronda2): solo medios de alta confianza, apuntando a los huecos que
+ * quedaron después de la ronda 1 (tenis, rugby, automovilismo, Página/12, internacional en español, negocios).
+ */
+const CANDIDATOS_RONDA2 = [
+  { name: 'Infobae Tenis', category: 'sports', priority: 2, urls: ['https://www.infobae.com/arc/outboundfeeds/rss/category/deportes/tenis/?outputType=xml'] },
+  { name: 'Infobae Rugby', category: 'sports', priority: 2, urls: ['https://www.infobae.com/arc/outboundfeeds/rss/category/deportes/rugby/?outputType=xml'] },
+  { name: 'Infobae Automovilismo', category: 'sports', priority: 2, urls: [
+    'https://www.infobae.com/arc/outboundfeeds/rss/category/deportes/automovilismo/?outputType=xml',
+    'https://www.infobae.com/arc/outboundfeeds/rss/category/deportes/formula-1/?outputType=xml',
+  ] },
+  { name: 'La Nación Tenis', category: 'sports', priority: 2, urls: ['https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/deportes/tenis/?outputType=xml'] },
+  { name: 'La Nación Rugby', category: 'sports', priority: 2, urls: ['https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/deportes/rugby/?outputType=xml'] },
+  { name: 'La Nación Automovilismo', category: 'sports', priority: 2, urls: ['https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/deportes/automovilismo/?outputType=xml'] },
+  { name: 'Página/12', category: 'general', priority: 2, urls: [
+    'https://www.pagina12.com.ar/arc/outboundfeeds/rss/?outputType=xml',
+    'https://www.pagina12.com.ar/rss/ultimas-noticias',
+    'https://www.pagina12.com.ar/rss/portada/',
+  ] },
+  { name: 'Bloomberg Línea', category: 'economy', priority: 2, urls: [
+    'https://www.bloomberglinea.com/arc/outboundfeeds/rss/category/latinoamerica/argentina/?outputType=xml',
+    'https://www.bloomberglinea.com/arc/outboundfeeds/rss/?outputType=xml',
+  ] },
+  { name: 'BBC Mundo', category: 'world', priority: 2, urls: ['https://feeds.bbci.co.uk/mundo/rss.xml'] },
+  { name: 'DW Español', category: 'world', priority: 2, urls: ['https://rss.dw.com/xml/rss-sp-all'] },
+  { name: 'France 24 Español', category: 'world', priority: 2, urls: ['https://www.france24.com/es/rss'] },
+];
+
 // ---------------------------------------------------------------- verificación
 
 function horasDesde(fecha) {
@@ -202,7 +231,8 @@ async function main() {
   const sourcesPath = path.join(__dirname, '..', 'Sources.json');
   const existentes = new Set(JSON.parse(fs.readFileSync(sourcesPath, 'utf8')).map((s) => String(s.url).trim()));
 
-  const aProbar = CANDIDATOS
+  const lista = argv.includes('--ronda2') ? CANDIDATOS_RONDA2 : CANDIDATOS;
+  const aProbar = lista
     .map((c) => ({ ...c, urls: c.urls.filter((u) => !existentes.has(u)) }))
     .filter((c) => c.urls.length);
 
@@ -247,4 +277,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { probarUrl, CANDIDATOS };
+module.exports = { probarUrl, CANDIDATOS, CANDIDATOS_RONDA2 };

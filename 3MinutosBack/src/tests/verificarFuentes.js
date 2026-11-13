@@ -131,31 +131,74 @@ const CANDIDATOS = [
 ];
 
 /**
- * Ronda 2 (node src/tests/verificarFuentes.js --ronda2): solo medios de alta confianza, apuntando a los huecos que
- * quedaron después de la ronda 1 (tenis, rugby, automovilismo, Página/12, internacional en español, negocios).
+ * Ronda 2 (node src/tests/verificarFuentes.js --ronda2): solo medios de alta confianza (diarios de referencia,
+ * agencias, medios públicos internacionales y especializados serios), apuntando a los temas que eligen los usuarios y
+ * hoy tienen poca cobertura: Ciencia y Espacio, Emprendedores, Turismo, Tenis, Videojuegos, IA, Medio Oriente,
+ * Inversiones, Rugby y F1.
  */
 const CANDIDATOS_RONDA2 = [
+  // ---------------------------------------------------------------- Ciencia y Espacio / IA
+  { name: 'Infobae Ciencia', category: 'tech', priority: 2, urls: [
+    'https://www.infobae.com/arc/outboundfeeds/rss/category/ciencia/?outputType=xml',
+    'https://www.infobae.com/arc/outboundfeeds/rss/category/america/ciencia-america/?outputType=xml',
+  ] },
+  { name: 'El País Ciencia', category: 'tech', priority: 2, urls: ['https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/ciencia/portada'] },
+  { name: 'El País Tecnología', category: 'tech', priority: 2, urls: ['https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/tecnologia/portada'] },
+  { name: 'Agencia SINC', category: 'tech', priority: 2, urls: [
+    'https://www.agenciasinc.es/var/ezwebin_site/storage/rss/rss_portada.xml',
+    'https://www.agenciasinc.es/rss',
+  ] },
+  { name: 'Europa Press Ciencia', category: 'tech', priority: 2, urls: ['https://www.europapress.es/rss/rss.aspx?ch=00564'] },
+  { name: 'National Geographic en Español', category: 'tech', priority: 2, urls: ['https://www.nationalgeographicla.com/feed', 'https://www.ngenespanol.com/feed/'] },
+  { name: 'Wired en Español', category: 'tech', priority: 2, urls: ['https://es.wired.com/feed/rss'] },
+
+  // ---------------------------------------------------------------- Emprendedores / Inversiones
+  { name: 'El Cronista Apertura', category: 'business', priority: 2, urls: [
+    'https://www.cronista.com/files/rss/apertura.xml',
+    'https://www.cronista.com/files/rss/negocios.xml',
+  ] },
+  { name: 'El Cronista Finanzas', category: 'economy', priority: 2, urls: ['https://www.cronista.com/files/rss/finanzas-mercados.xml'] },
+  { name: 'La Nación Negocios', category: 'business', priority: 2, urls: ['https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/economia/negocios/?outputType=xml'] },
+  { name: 'Infobae Emprendedores', category: 'business', priority: 2, urls: ['https://www.infobae.com/arc/outboundfeeds/rss/category/economia/emprendedores/?outputType=xml'] },
+  { name: 'Bloomberg Línea', category: 'economy', priority: 2, urls: [
+    'https://www.bloomberglinea.com/arc/outboundfeeds/rss/category/latinoamerica/argentina/?outputType=xml',
+    'https://www.bloomberglinea.com/arc/outboundfeeds/rss/?outputType=xml',
+  ] },
+
+  // ---------------------------------------------------------------- Turismo y Viajes
+  { name: 'El País El Viajero', category: 'lifestyle', priority: 2, urls: ['https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/elviajero/portada'] },
+  { name: 'Hosteltur', category: 'lifestyle', priority: 2, urls: ['https://www.hosteltur.com/feed', 'https://www.hosteltur.com/rss'] },
+
+  // ---------------------------------------------------------------- Deportes: Tenis, Rugby, F1
   { name: 'Infobae Tenis', category: 'sports', priority: 2, urls: ['https://www.infobae.com/arc/outboundfeeds/rss/category/deportes/tenis/?outputType=xml'] },
+  { name: 'La Nación Tenis', category: 'sports', priority: 2, urls: ['https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/deportes/tenis/?outputType=xml'] },
+  { name: 'Punto de Break (tenis)', category: 'sports', priority: 2, urls: ['https://www.puntodebreak.com/feed'] },
   { name: 'Infobae Rugby', category: 'sports', priority: 2, urls: ['https://www.infobae.com/arc/outboundfeeds/rss/category/deportes/rugby/?outputType=xml'] },
+  { name: 'La Nación Rugby', category: 'sports', priority: 2, urls: ['https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/deportes/rugby/?outputType=xml'] },
   { name: 'Infobae Automovilismo', category: 'sports', priority: 2, urls: [
     'https://www.infobae.com/arc/outboundfeeds/rss/category/deportes/automovilismo/?outputType=xml',
     'https://www.infobae.com/arc/outboundfeeds/rss/category/deportes/formula-1/?outputType=xml',
   ] },
-  { name: 'La Nación Tenis', category: 'sports', priority: 2, urls: ['https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/deportes/tenis/?outputType=xml'] },
-  { name: 'La Nación Rugby', category: 'sports', priority: 2, urls: ['https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/deportes/rugby/?outputType=xml'] },
   { name: 'La Nación Automovilismo', category: 'sports', priority: 2, urls: ['https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/deportes/automovilismo/?outputType=xml'] },
+
+  // ---------------------------------------------------------------- Videojuegos
+  { name: '3DJuegos', category: 'gaming', priority: 2, urls: ['https://www.3djuegos.com/feedburner.xml', 'https://feeds.weblogssl.com/3djuegos'] },
+  { name: 'Vandal', category: 'gaming', priority: 2, urls: ['https://vandal.elespanol.com/xml.cgi'] },
+  { name: 'IGN Latinoamérica', category: 'gaming', priority: 2, urls: ['https://latam.ign.com/feed.xml'] },
+
+  // ---------------------------------------------------------------- Internacional / Medio Oriente
+  { name: 'BBC Mundo', category: 'world', priority: 2, urls: ['https://feeds.bbci.co.uk/mundo/rss.xml'] },
+  { name: 'DW Español', category: 'world', priority: 2, urls: ['https://rss.dw.com/xml/rss-sp-all'] },
+  { name: 'France 24 Español', category: 'world', priority: 2, urls: ['https://www.france24.com/es/rss'] },
+  { name: 'El País Internacional', category: 'world', priority: 2, urls: ['https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/internacional/portada'] },
+  { name: 'Europa Press Internacional', category: 'world', priority: 2, urls: ['https://www.europapress.es/rss/rss.aspx?ch=00069'] },
+
+  // ---------------------------------------------------------------- diversidad editorial
   { name: 'Página/12', category: 'general', priority: 2, urls: [
     'https://www.pagina12.com.ar/arc/outboundfeeds/rss/?outputType=xml',
     'https://www.pagina12.com.ar/rss/ultimas-noticias',
     'https://www.pagina12.com.ar/rss/portada/',
   ] },
-  { name: 'Bloomberg Línea', category: 'economy', priority: 2, urls: [
-    'https://www.bloomberglinea.com/arc/outboundfeeds/rss/category/latinoamerica/argentina/?outputType=xml',
-    'https://www.bloomberglinea.com/arc/outboundfeeds/rss/?outputType=xml',
-  ] },
-  { name: 'BBC Mundo', category: 'world', priority: 2, urls: ['https://feeds.bbci.co.uk/mundo/rss.xml'] },
-  { name: 'DW Español', category: 'world', priority: 2, urls: ['https://rss.dw.com/xml/rss-sp-all'] },
-  { name: 'France 24 Español', category: 'world', priority: 2, urls: ['https://www.france24.com/es/rss'] },
 ];
 
 // ---------------------------------------------------------------- verificación
@@ -232,6 +275,7 @@ async function main() {
   const existentes = new Set(JSON.parse(fs.readFileSync(sourcesPath, 'utf8')).map((s) => String(s.url).trim()));
 
   const lista = argv.includes('--ronda2') ? CANDIDATOS_RONDA2 : CANDIDATOS;
+  console.log(argv.includes('--ronda2') ? 'RONDA 2 (alta confianza, temas con poca cobertura)' : 'RONDA 1 (lista original)');
   const aProbar = lista
     .map((c) => ({ ...c, urls: c.urls.filter((u) => !existentes.has(u)) }))
     .filter((c) => c.urls.length);

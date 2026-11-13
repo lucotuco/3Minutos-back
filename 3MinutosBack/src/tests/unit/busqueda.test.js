@@ -306,3 +306,41 @@ test('si Atlas falla la búsqueda falla (el motor lo trata como error_busqueda y
     Article.aggregate = original;
   }
 });
+
+// ================================================================ simular otra hora (tests/explicarTema.js)
+test('búsqueda con until: filtra por fecha de publicación y de guardado dentro de las dos consultas', async () => {
+  const HASTA = new Date('2026-11-13T12:00:00.000Z');
+  const DESDE = new Date('2026-11-12T12:00:00.000Z');
+  await searchArticlesBySimilarityAtlas('tenis', 'tenis argentino', { minDate: DESDE, until: HASTA, now: HASTA.getTime() });
+
+  const vector = pipelines.find((p) => p[0]?.$vectorSearch);
+  const texto = pipelines.find((p) => p[0]?.$search);
+  assert.deepEqual(vector[0].$vectorSearch.filter.publishedAt, { $gte: DESDE, $lte: HASTA });
+  assert.deepEqual(vector[1], { $match: { createdAt: { $lte: HASTA } } }, 'lo guardado después no entra');
+  assert.deepEqual(vector[2], { $limit: 50 }, 'trae de más y recorta después del filtro');
+  assert.equal(vector[0].$vectorSearch.limit, 200);
+  assert.deepEqual(texto[1], { $match: { publishedAt: { $gte: DESDE, $lte: HASTA } } });
+  assert.deepEqual(texto[2], { $match: { createdAt: { $lte: HASTA } } });
+  assert.deepEqual(texto[3], { $limit: 50 });
+});
+
+test('búsqueda sin until: las consultas son las de siempre (el motor no pasa la opción)', async () => {
+  const DESDE = new Date('2026-11-12T12:00:00.000Z');
+  await searchArticlesBySimilarityAtlas('tenis', 'tenis argentino', { minDate: DESDE });
+  const vector = pipelines.find((p) => p[0]?.$vectorSearch);
+  const texto = pipelines.find((p) => p[0]?.$search);
+  assert.equal(vector.length, 2, '$vectorSearch + $project, sin filtros extra');
+  assert.equal(vector[0].$vectorSearch.limit, 50);
+  assert.deepEqual(vector[0].$vectorSearch.filter, { publishedAt: { $gte: DESDE } });
+  assert.equal(texto.length, 4, '$search + $match + $limit + $project');
+});
+
+test('búsqueda con now: la frescura se mide desde esa hora', async () => {
+  const publicada = new Date('2026-11-13T10:00:00.000Z');
+  vectorial = [doc('a', { publishedAt: publicada })];
+  const [enElMomento] = await searchArticlesBySimilarityAtlas('x', 'x', { now: publicada.getTime() + 3600e3 });
+  queryEmbeddings.clear();
+  vectorial = [doc('a', { publishedAt: publicada })];
+  const [tresDiasDespues] = await searchArticlesBySimilarityAtlas('x', 'x', { now: publicada.getTime() + 72 * 3600e3 });
+  assert.ok(enElMomento.finalScore > tresDiasDespues.finalScore, 'una hora después es más fresca que tres días después');
+});

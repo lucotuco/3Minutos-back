@@ -92,16 +92,18 @@ function normalize(value) {
     .toLowerCase();
 }
 
-function getHoursSince(date) {
+// `now` es opcional: por defecto la hora actual. El script de diagnóstico (tests/explicarTema.js) lo usa para medir
+// la frescura desde otra hora.
+function getHoursSince(date, now = Date.now()) {
   if (!date) return 9999;
   const published = new Date(date).getTime();
   if (Number.isNaN(published)) return 9999;
-  return Math.max(0, (Date.now() - published) / (1000 * 60 * 60));
+  return Math.max(0, (now - published) / (1000 * 60 * 60));
 }
 
 /** Frescura 0-100 por escalones (FRESHNESS_CURVE). Sin fecha o pasada la ultima edad de la curva: 0. */
-function getFreshnessScore(publishedAt) {
-  const hours = getHoursSince(publishedAt);
+function getFreshnessScore(publishedAt, now = Date.now()) {
+  const hours = getHoursSince(publishedAt, now);
   for (const [maxHours, score] of FRESHNESS_CURVE) {
     if (hours <= maxHours) return score;
   }

@@ -195,3 +195,24 @@ test('loadEmbeddings: sin ids no consulta nada', async () => {
   assert.equal((await store.loadEmbeddings(null)).size, 0);
   assert.equal(llamadas.length, 0);
 });
+
+// ================================================================ simular otra hora (tests/explicarTema.js)
+test('listCandidates con until: deja afuera lo publicado o guardado después; sin until el filtro no cambia', async () => {
+  const HASTA = new Date('2026-10-15T12:00:00.000Z');
+  await store.listCandidates({ category: 'Deportes', topic: 'Tenis', minImportance: 40, since: DESDE, until: HASTA });
+  assert.deepEqual(ultima().filter, {
+    publishedAt: { $gte: DESDE, $lte: HASTA },
+    importanceScore: { $gte: 40 },
+    createdAt: { $lte: HASTA },
+    category: 'Deportes',
+    topic: 'Tenis',
+  });
+
+  await store.listCandidates({ category: 'Deportes', topic: 'Tenis', minImportance: 40, since: DESDE });
+  assert.deepEqual(ultima().filter, {
+    publishedAt: { $gte: DESDE },
+    importanceScore: { $gte: 40 },
+    category: 'Deportes',
+    topic: 'Tenis',
+  }, 'el motor no pasa until: la consulta es la de siempre');
+});

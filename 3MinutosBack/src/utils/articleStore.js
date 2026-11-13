@@ -31,9 +31,16 @@ const FULL_FIELDS = [
  *   { category }              toda la categoría
  *   { category, excludeTopic } la categoría menos un subtema (rescate)
  * Devuelve documentos livianos (lean).
+ *
+ * `until` (opcional, solo para simular otra hora en tests/explicarTema.js): deja afuera lo publicado o guardado
+ * después de ese momento. El motor no lo pasa.
  */
-async function listCandidates({ category, topic = null, excludeTopic = null, minImportance, since }) {
+async function listCandidates({ category, topic = null, excludeTopic = null, minImportance, since, until = null }) {
   const filter = { publishedAt: { $gte: since }, importanceScore: { $gte: minImportance } };
+  if (until) {
+    filter.publishedAt.$lte = until;
+    filter.createdAt = { $lte: until };
+  }
   if (category) filter.category = category;
   if (topic) filter.topic = topic;
   else if (excludeTopic) filter.topic = { $ne: excludeTopic };

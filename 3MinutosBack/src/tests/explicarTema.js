@@ -27,7 +27,8 @@
  *
  * Qué usa de OpenAI: la expansión de los temas libres, el embedding de la búsqueda y los jueces (tema y misma
  * historia). Son las mismas llamadas que un digest normal; con --sin-juez quedan solo las dos primeras.
- * No llama a la curación neutral (esa sí escribe en la nota), así que el título que se muestra es el original.
+ * No llama a la curación neutral (esa sí escribe en la nota): las tablas muestran el título original del medio. En el
+ * resultado final, si la nota ya estaba curada, también aparece el título que ve el usuario en la app.
  */
 
 require('dotenv').config();
@@ -385,7 +386,10 @@ async function main() {
         console.log(`  SIN NOTA (${p.matchReason})`);
         continue;
       }
-      console.log(`  ${a.title}`);
+      console.log(`  ${a.title}   (título original del medio)`);
+      if (a.neutralTitle && a.neutralTitle !== a.title) {
+        console.log(`  en la app: "${a.neutralTitle}"   (título de la curación neutral)`);
+      }
       console.log(`  ${medioDe(a)} | nivel ${p.tier}${p.usedFallback ? ' (RESCATE: es de otro tema del rubro)' : ''} | ` +
         `zona ${p.matchZone} | ${num(p.ageHours)} h | imp ${a.importanceScore}`);
       console.log(`  motivo: ${p.matchReason}`);
@@ -395,6 +399,7 @@ async function main() {
     salida.resultado = picks.map((p) => ({
       tema: p.topic,
       titulo: p.article?.title || null,
+      tituloEnLaApp: p.article?.neutralTitle || null,
       url: p.article?.url || null,
       nivel: p.tier, zona: p.matchZone, rescate: Boolean(p.usedFallback),
       edadHoras: p.ageHours, motivo: p.matchReason,

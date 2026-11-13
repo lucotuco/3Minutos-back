@@ -17,8 +17,10 @@
  * Opciones:
  *   --usuario <id>   usa el historial de ese usuario (lo que vio en 48 h no se repite, igual que en su digest)
  *                    y, si no pasás temas, toma sus 3 temas
- *   --hora "<fecha>" simula ese momento (hora de Argentina): la ventana de 24 h y la edad se miden desde ahí y se
- *                    ignoran las notas publicadas después. Aproximado: no saca las que se guardaron más tarde.
+ *   --hora "<fecha>" simula ese momento (hora de Argentina), como lo habría visto el motor: solo las notas que ya
+ *                    estaban guardadas (publicadas y guardadas antes de esa hora), la edad y la frescura medidas
+ *                    desde ahí y, con --usuario, solo lo que había visto hasta entonces. Las notas se borran a los
+ *                    30 días, así que sirve para fechas recientes.
  *   --top <n>        cuántas candidatas mostrar por tema (por defecto 15)
  *   --sin-juez       no le pregunta al juez de tema (más rápido, sin costo de OpenAI); el motor real corre sin jueces
  *   --json <archivo> además guarda todo el detalle en un archivo
@@ -33,6 +35,7 @@ const fs = require('fs');
 const mongoose = require('mongoose');
 
 const UserPreference = require('../models/UserPreference');
+const UserShownArticle = require('../models/UserShownArticle');
 const articleStore = require('../utils/articleStore');
 const { searchArticlesBySimilarityAtlas } = require('../embeddings/searchArticlesBySimilarityAtlas');
 const { resolveOfficialTopic } = require('../utils/officialTopics');
@@ -108,20 +111,38 @@ function contarMotivos(rechazadas) {
 
 // ---------------------------------------------------------------- simular la hora
 
-/** Deja afuera lo publicado después de `now` (para --hora). Con la hora actual no cambia nada. */
-const hastaAhora = (now) => (lista) => (lista || []).filter((a) => !a?.publishedAt || new Date(a.publishedAt).getTime() <= now);
-
-function storeHasta(now) {
-  const filtrar = hastaAhora(now);
+/**
+ * Con --hora el motor ve la base como estaba en ese momento: ni lo publicado después ni lo que se guardó después
+ * (createdAt). El filtro va DENTRO de las consultas (opción `until` de articleStore y de la búsqueda), no después:
+ * la búsqueda de temas libres puntúa por posición, así que una nota que todavía no existía no debe ocupar lugar
+ * ni cambiar el puntaje de las demás. Sin --hora son las funciones de siempre, sin cambios.
+ */
+function storeHasta(now, simulado) {
+  if (!simulado) return articleStore;
+  const until = new Date(now);
   return {
     ...articleStore,
-    listCandidates: async (q) => filtrar(await articleStore.listCandidates(q)),
+    listCandidates: (q) => articleStore.listCandidates({ ...q, until }),
   };
 }
 
-function searchHasta(now) {
-  const filtrar = hastaAhora(now);
-  return async (exact, vector, opts) => filtrar(await searchArticlesBySimilarityAtlas(exact, vector, opts));
+function searchHasta(now, simulado) {
+  if (!simulado) return searchArticlesBySimilarityAtlas;
+  const until = new Date(now);
+  return (exact, vector, opts) => searchArticlesBySimilarityAtlas(exact, vector, { ...opts, until, now });
+}
+
+/** El historial del usuario tal como estaba a esa hora: solo lo que había visto hasta entonces. */
+function historialHasta(now, simulado) {
+  if (!simulado) return {};
+  return {
+    UserShownArticle: {
+      find: (filtro) => UserShownArticle.find({
+        ...filtro,
+        shownAt: { ...(filtro.shownAt || {}), $lte: new Date(now) },
+      }),
+    },
+  };
 }
 
 // ---------------------------------------------------------------- tema OFICIAL
@@ -302,6 +323,7 @@ async function main() {
   }
 
   const now = parseHora(args.hora);
+  const simulado = Boolean(args.hora);
   if (args.sinJuez) {
     // Apaga los jueces de este proceso (no toca el servidor): el motor real corre "como si no existieran".
     process.env.TOPIC_JUDGE = 'off';
@@ -318,18 +340,19 @@ async function main() {
       const user = await UserPreference.findById(args.usuario).lean();
       if (!user) throw new Error(`No existe el usuario ${args.usuario}`);
       if (!temas.length) temas = user.topics || [];
-      historial = await getAlreadyShownHistoryForUser(user._id, { now });
+      historial = await getAlreadyShownHistoryForUser(user._id, { now, models: historialHasta(now, simulado) });
       console.log(`Usuario: ${user.name} (${args.usuario}) | temas: ${(user.topics || []).join(', ')}`);
       console.log(`Historial de 48 h: ${historial.urls.length} notas ya vistas (no se repiten) y ` +
         `${historial.seenEmbeddings.length} para el control de misma historia`);
     } else {
       console.log('Sin --usuario: como un usuario nuevo (sin historial).');
     }
-    console.log(`Momento: ${fechaAR(now)} (hora de Argentina)${args.hora ? ' [simulado]' : ''}`);
+    console.log(`Momento: ${fechaAR(now)} (hora de Argentina)` +
+      `${simulado ? ' [simulado: solo notas guardadas antes de esa hora]' : ''}`);
     console.log(`Jueces: ${args.sinJuez ? 'apagados (--sin-juez)' : 'prendidos'}`);
 
-    const store = storeHasta(now);
-    const search = searchHasta(now);
+    const store = storeHasta(now, simulado);
+    const search = searchHasta(now, simulado);
     const usedUrls = new Set(historial.urls);
     const salida = { momento: new Date(now).toISOString(), usuario: args.usuario, temas: [] };
 

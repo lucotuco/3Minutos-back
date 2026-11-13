@@ -86,7 +86,11 @@ async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options 
     section,
     region,
     minDate,
-    category
+    category,
+    // Solo para simular otra hora (tests/explicarTema.js): busca entre las notas que ya estaban guardadas en ese
+    // momento y mide la frescura desde ahí. El motor no las pasa: sin ellas la búsqueda es exactamente la de siempre.
+    until = null,
+    now = Date.now(),
   } = options;
 
   const queryVector = await queryEmbeddings.get(vectorQuery);
@@ -96,6 +100,11 @@ async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options 
   if (section) filter.section = section;
   if (region) filter.region = region;
   if (minDate) filter.publishedAt = { $gte: new Date(minDate) };
+  if (until) filter.publishedAt = { ...(filter.publishedAt || {}), $lte: new Date(until) };
+
+  // Con `until`, además de lo publicado después se deja afuera lo que se guardó después (createdAt). El vector trae
+  // de más y recorta después del filtro, así el top queda igual al que había en ese momento.
+  const createdUntil = until ? [{ $match: { createdAt: { $lte: new Date(until) } } }] : [];
 
   const projectFields = {
     _id: 1, title: 1, url: 1, sourceName: 1, section: 1, region: 1, tags: 1,
@@ -113,11 +122,12 @@ async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options 
         index: VECTOR_INDEX_NAME,
         path: 'embedding',
         queryVector,
-        numCandidates,
-        limit: vectorLimit,
+        numCandidates: until ? numCandidates * 2 : numCandidates,
+        limit: until ? vectorLimit * 4 : vectorLimit,
         ...(Object.keys(filter).length ? { filter } : {}),
       },
     },
+    ...(until ? [...createdUntil, { $limit: vectorLimit }] : []),
     { $project: { ...projectFields, vectorScore: { $meta: 'vectorSearchScore' } } }
   ];
 
@@ -135,6 +145,7 @@ async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options 
       }
     },
     { $match: filter },
+    ...createdUntil,
     { $limit: vectorLimit },
     { $project: { ...projectFields, textScore: { $meta: 'searchScore' } } }
   ];
@@ -187,7 +198,7 @@ async function searchArticlesBySimilarityAtlas(exactQuery, vectorQuery, options 
 
   const reranked = combinedResults.map((article) => ({
     ...article,
-    finalScore: computeFinalScore(article),
+    finalScore: computeFinalScore(article, { now }),
   }));
 
   reranked.sort((a, b) => (b.finalScore - a.finalScore) || compareIds(a, b));
@@ -208,10 +219,10 @@ function compareIds(a, b) {
 const FINAL_WEIGHTS = { similarity: 0.55, importance: 0.05, freshness: 0.40 };
 const PREVIEW_PENALTY = 0.5; // previas/agenda/en vivo valen la mitad
 
-function computeFinalScore(article = {}) {
+function computeFinalScore(article = {}, { now = Date.now() } = {}) {
   const similarity = Number(article.score || 0);
   const importance = Number(article.importanceScore || 0) / 100;
-  const freshness = getFreshnessScore(article.publishedAt) / 100;
+  const freshness = getFreshnessScore(article.publishedAt, now) / 100;
 
   const base =
     similarity * FINAL_WEIGHTS.similarity +

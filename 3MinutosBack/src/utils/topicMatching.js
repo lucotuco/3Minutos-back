@@ -69,6 +69,10 @@ function articleTokenSet(article) {
     toPlainText(article?.rawSummary),
     toPlainText(article?.contentSnippet),
     ...(Array.isArray(article?.tags) ? article.tags : []),
+    // El subtema que le puso el clasificador ("Tenis", "Fútbol"). Cuenta como una etiqueta más: una nota de La Nación
+    // sobre la final de Tirante habla de "ATP" y "tenista" pero nunca escribe "tenis", y sin esto quedaba afuera de
+    // "tenis argentino" por el ancla léxica aunque la IA la había clasificado como Tenis.
+    article?.topic,
   ].join(' ');
   return new Set(tokenize(text));
 }

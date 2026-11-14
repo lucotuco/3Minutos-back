@@ -13,7 +13,9 @@
  *   3. país           en Sociedad, geoScope Argentina o Global (Política/Economía ya lo garantiza la ingesta)
  *   4. no opinión     ni columnas ni editoriales (por la URL, el título, las etiquetas o el tipo que dijo la IA)
  *      ni publicidad  ni contenido patrocinado ("In House") ni notas de servicio (tutoriales, "dónde ver", recetas)
- *   5. no previa      ni agenda ni "en vivo" ni minuto a minuto
+ *   5. no previa      ni agenda ni "en vivo" ni minuto a minuto. Excepción (solo si el que llama pasa
+ *                     ctx.allowTodayPreviews, hoy los temas libres): la previa de UN evento que es HOY
+ *                     ("juega hoy a las 9 la final") se puede entregar (freshness.isTodayEventPreview)
  *   6. no repetida    URL no vista, y no es "la misma historia" que algo visto en 48 h ni que algo ya elegido
  *                     (coseno >= 0,88; entre 0,80 y 0,88 decide el juez de sameEventJudge.js)
  *
@@ -25,7 +27,9 @@
  * escalón arbitrario. La relevancia la deciden el ancla léxica, el corral y el juez de tema; el orden, la calidad.
  */
 
-const { MAX_ARTICLE_AGE_HOURS, FRESHNESS_WEIGHT, freshnessOfAge, isPreviewOrAgenda } = require('./freshness');
+const {
+  MAX_ARTICLE_AGE_HOURS, FRESHNESS_WEIGHT, freshnessOfAge, isPreviewOrAgenda, isTodayEventPreview,
+} = require('./freshness');
 const { exclusionReasonOf } = require('./contentTypes');
 
 // ---------------------------------------------------------------- umbrales
@@ -230,9 +234,10 @@ function seenInJudgeBand(embedding, seen = [], {
  * @param {object} [ctx]
  * @param {number} [ctx.now]          epoch ms (por defecto, ahora)
  * @param {Set<string>} [ctx.usedUrls] URLs ya vistas o ya elegidas
+ * @param {boolean} [ctx.allowTodayPreviews] acepta la previa de un evento de hoy (ver arriba)
  * @returns {{ok:boolean, tier:string|null, ageHours:number|null, importance:number, reasons:string[]}}
  */
-function checkEligibility(article, { now = Date.now(), usedUrls = new Set() } = {}) {
+function checkEligibility(article, { now = Date.now(), usedUrls = new Set(), allowTodayPreviews = false } = {}) {
   const reasons = [];
   const importance = importanceOf(article);
   const ageHours = ageHoursOf(article, now);
@@ -254,6 +259,11 @@ function checkEligibility(article, { now = Date.now(), usedUrls = new Set() } = 
   // campo no lo tienen y se tratan como noticia. Si la URL o el título ya dieron el mismo motivo, no se repite.
   const typeReason = exclusionReasonOf(article?.contentType);
   if (typeReason && !reasons.includes(typeReason)) reasons.push(typeReason);
+
+  // La previa de un evento de HOY sí sirve (ver isTodayEventPreview). Solo se levanta ese motivo: una previa vencida,
+  // sin importancia, de servicio o repetida sigue afuera por su propio motivo.
+  const previewAt = reasons.indexOf('previa_o_agenda');
+  if (allowTodayPreviews && previewAt !== -1 && isTodayEventPreview(article, now)) reasons.splice(previewAt, 1);
 
   return {
     ok: reasons.length === 0,

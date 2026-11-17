@@ -116,61 +116,6 @@ function isPreviewOrAgenda(title) {
   return PREVIEW_OR_AGENDA_KEYWORDS.some((kw) => t.includes(kw)) || PREVIEW_MARKERS.some((re) => re.test(t));
 }
 
-// ---------------------------------------------------------------- previas de un evento de HOY
-// Una previa no se entrega en general (eligibility.js), salvo en temas libres cuando el evento es el mismo día del
-// digest: a las 9, "Tirante juega HOY a las 9 la final ante Fritz" le sirve más al lector que "Tirante llegó a la final"
-// (eso pasó ayer). Solo previas de UN evento: las coberturas en vivo, formaciones, tablas, fixtures y agendas de varios
-// partidos siguen afuera.
-const NOT_TODAY_PREVIEW_KEYWORDS = [
-  'en vivo', 'minuto a minuto', 'formaciones', 'agenda', 'partidos de hoy', 'tabla de posiciones', 'fixture',
-];
-
-// Argentina no tiene horario de verano: UTC-3 todo el año.
-const AR_OFFSET_MS = -3 * 3600e3;
-const WEEKDAYS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
-const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre',
-  'noviembre', 'diciembre'];
-// "hoy" solo vale si la nota es del mismo día: el "hoy" de una nota de ayer es ayer.
-const TODAY_WORDS = /\b(?:hoy|esta noche|esta tarde|esta manana)\b/;
-
-function argentinaDate(ms) {
-  const d = new Date(ms + AR_OFFSET_MS);
-  return { year: d.getUTCFullYear(), month: d.getUTCMonth(), day: d.getUTCDate(), weekday: d.getUTCDay() };
-}
-
-/**
- * true si el texto de la nota ubica el evento en el día de `now` (hora argentina): nombra el día de la semana de hoy
- * ("este sábado", sin "próximo"/"pasado"), la fecha de hoy ("14 de noviembre") o dice "hoy" en una nota publicada hoy.
- */
-function mentionsToday({ title, contentSnippet, rawSummary, publishedAt } = {}, now = Date.now()) {
-  const text = normalize([title, contentSnippet || rawSummary].filter(Boolean).join(' ')).replace(/\s+/g, ' ');
-  const today = argentinaDate(now);
-  const weekday = WEEKDAYS[today.weekday];
-
-  const weekdayRe = new RegExp(`\\b${weekday}\\b`, 'g');
-  for (const m of text.matchAll(weekdayRe)) {
-    const before = text.slice(Math.max(0, m.index - 10), m.index);
-    const after = text.slice(m.index + weekday.length, m.index + weekday.length + 12);
-    if (/proximo\s*$/.test(before) || /^\s*(?:pasado|que viene|anterior)\b/.test(after)) continue;
-    return true;
-  }
-  if (new RegExp(`\\b${today.day} de ${MONTHS[today.month]}\\b`).test(text)) return true;
-
-  const published = new Date(publishedAt).getTime();
-  if (!Number.isNaN(published) && TODAY_WORDS.test(text)) {
-    const p = argentinaDate(published);
-    if (p.year === today.year && p.month === today.month && p.day === today.day) return true;
-  }
-  return false;
-}
-
-/** true si la nota es la previa de UN evento que se juega/pasa hoy (ver arriba). */
-function isTodayEventPreview(article, now = Date.now()) {
-  const t = normalize(article?.title);
-  if (NOT_TODAY_PREVIEW_KEYWORDS.some((kw) => t.includes(kw))) return false;
-  return mentionsToday(article, now);
-}
-
 module.exports = {
   MAX_ARTICLE_AGE_HOURS,
   DEFAULT_FRESHNESS_WEIGHT,
@@ -183,6 +128,4 @@ module.exports = {
   getHoursSince,
   getFreshnessScore,
   isPreviewOrAgenda,
-  mentionsToday,
-  isTodayEventPreview,
 };

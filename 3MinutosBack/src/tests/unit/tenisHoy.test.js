@@ -7,8 +7,7 @@
  *   - La Nación (13/11, 19:49 ARG): lo mismo, pero ya con el rival (Fritz) y la hora (las 9). Era la mejor versión y
  *     quedaba afuera por el ancla léxica: su texto dice "ATP" y "tenista", nunca "tenis", y la IA no le puso la
  *     etiqueta "tenis" (a las otras dos sí). La IA sí la había clasificado con el subtema Tenis.
- *   - Olé (13/11, 17:55 ARG): "Tirante vs. Fritz: a qué hora juegan y dónde ver la final", la previa de un evento que
- *     era ESE sábado a las 9. Quedaba afuera por ser previa.
+ *   - Olé (13/11, 17:55 ARG): "Tirante vs. Fritz: a qué hora juegan y dónde ver la final", una previa: sigue afuera.
  *
  * Los textos son los reales (recortados). Mongo, búsqueda, expansión e IA son FALSOS: ningún test llama a OpenAI.
  * Correr:  npm run test:unit
@@ -23,7 +22,6 @@ const assert = require('node:assert/strict');
 const { pickBestArticlePerTopic } = require('../../utils/pickBestArticlePerTopic');
 const { matchesAnchors, selectBestCandidate } = require('../../utils/topicMatching');
 const { checkEligibility } = require('../../utils/eligibility');
-const { mentionsToday, isTodayEventPreview } = require('../../utils/freshness');
 
 test.before(() => {
   for (const m of ['log', 'warn', 'error']) console[m] = () => {};
@@ -31,8 +29,6 @@ test.before(() => {
 
 // 14/11/2026 11:45 UTC = sábado 8:45 en Argentina (cuando se armó el digest de las 9).
 const NOW = Date.parse('2026-11-14T11:45:00.000Z');
-// viernes 13/11 20:00 en Argentina: la víspera.
-const VIERNES_NOCHE = Date.parse('2026-11-13T23:00:00.000Z');
 
 let seq = 0;
 const unico = (i) => Array.from({ length: 64 }, (_, k) => (k === i % 64 ? 1 : 0));
@@ -186,51 +182,7 @@ test('ancla: en la selección, La Nación queda ACEPTADA (antes: "rechazo: sin a
   assert.equal(sel.accepted.length, 3);
 });
 
-// ================================================================ 2. previa de un evento de HOY
-test('hoy: "este sábado" en una nota del viernes es HOY si el digest es del sábado', () => {
-  assert.equal(mentionsToday(olePrevia(), NOW), true);
-});
-
-test('hoy: el viernes a la noche esa misma previa NO es de hoy', () => {
-  assert.equal(mentionsToday(olePrevia(), VIERNES_NOCHE), false);
-});
-
-test('hoy: "el próximo sábado" y "el sábado pasado" no cuentan', () => {
-  const base = { publishedAt: new Date(NOW - 3600e3) };
-  assert.equal(mentionsToday({ ...base, title: 'Boca juega el próximo sábado ante River' }, NOW), false);
-  assert.equal(mentionsToday({ ...base, title: 'Lo que dejó el sábado pasado en Núñez' }, NOW), false);
-});
-
-test('hoy: la fecha de hoy ("14 de noviembre") cuenta', () => {
-  assert.equal(mentionsToday({ title: 'La final se juega el 14 de noviembre', publishedAt: new Date(NOW - 20 * 3600e3) }, NOW), true);
-});
-
-test('hoy: "hoy" solo vale si la nota es de hoy (el "hoy" de una nota de ayer es ayer)', () => {
-  const titulo = 'Tirante juega hoy la semifinal';
-  assert.equal(mentionsToday({ title: titulo, publishedAt: new Date('2026-11-14T10:00:00Z') }, NOW), true);
-  assert.equal(mentionsToday({ title: titulo, publishedAt: new Date('2026-11-13T12:00:00Z') }, NOW), false);
-});
-
-test('hoy: las agendas de varios eventos y las coberturas en vivo siguen afuera aunque sean de hoy', () => {
-  assert.equal(isTodayEventPreview(agendaTv(), NOW), false);
-  assert.equal(isTodayEventPreview({ title: 'Tirante vs. Fritz, EN VIVO: la final de este sábado', publishedAt: new Date(NOW) }, NOW), false);
-  assert.equal(isTodayEventPreview(olePrevia(), NOW), true);
-});
-
-test('elegibilidad: la previa de hoy es elegible solo si el que llama lo permite', () => {
-  assert.deepEqual(checkEligibility(olePrevia(), { now: NOW }).reasons, ['previa_o_agenda']);
-  assert.equal(checkEligibility(olePrevia(), { now: NOW, allowTodayPreviews: true }).ok, true);
-  assert.equal(checkEligibility(olePrevia(), { now: VIERNES_NOCHE, allowTodayPreviews: true }).ok, false);
-});
-
-test('elegibilidad: una previa de hoy que además es de servicio, vencida o poco importante sigue afuera', () => {
-  const ctx = { now: NOW, allowTodayPreviews: true };
-  assert.ok(checkEligibility({ ...olePrevia(), contentType: 'servicio' }, ctx).reasons.includes('servicio'));
-  assert.ok(checkEligibility({ ...olePrevia(), importanceScore: 30 }, ctx).reasons.includes('importancia_baja'));
-  assert.ok(checkEligibility({ ...olePrevia(), publishedAt: new Date(NOW - 30 * 3600e3) }, ctx).reasons.includes('vencida'));
-});
-
-// ================================================================ 3. el motor completo
+// ================================================================ 2. el motor completo
 test('motor: a las 8:45 del 14/11 "Tenis Argentino" entrega la versión de La Nación (rival y hora confirmados)', async () => {
   const r = await elegir('Tenis Argentino', [perfil(), oleNoticia(), laNacion(), olePrevia(), agendaTv()]);
   assert.equal(r.article.sourceName, 'La Nación Deportes');
@@ -240,30 +192,4 @@ test('motor: a las 8:45 del 14/11 "Tenis Argentino" entrega la versión de La Na
 test('motor: sin el arreglo del ancla (La Nación sin subtema) se entregaba la de Perfil, la desactualizada', async () => {
   const r = await elegir('Tenis Argentino', [perfil(), oleNoticia(), laNacion({ topic: '' }), olePrevia()]);
   assert.equal(r.article.sourceName, 'Perfil Home');
-});
-
-test('motor: si la única nota del tema es la previa de hoy, se entrega la previa (antes: rescate de otro tema)', async () => {
-  // La previa real de Olé dice "hora de Argentina" pero nunca "argentino": sin otras notas que muestren que la prensa
-  // escribe solo "tenis", el ancla pide las dos palabras. Esta variante nombra al "tenista argentino".
-  const previa = { ...olePrevia(), contentSnippet: `${olePrevia().contentSnippet} El tenista argentino llega en su mejor momento.` };
-  const r = await elegir('Tenis Argentino', [previa, agendaTv()]);
-  assert.equal(r.article.url, previa.url);
-  assert.equal(r.usedFallback, false);
-});
-
-test('motor: el viernes a la noche esa previa no se entrega (el evento es mañana)', async () => {
-  const r = await elegir('Tenis Argentino', [olePrevia()], { now: VIERNES_NOCHE });
-  assert.notEqual(r.article?.url, olePrevia().url);
-});
-
-test('motor: el rescate (nota sugerida del rubro) nunca entrega una previa, aunque sea de hoy', async () => {
-  const previaFutbol = nota({
-    ...olePrevia(),
-    url: 'https://www.ole.com.ar/boca/a-que-hora-juega-boca-hoy',
-    title: 'Boca vs. Banfield: a qué hora juegan y dónde ver el partido de este sábado',
-    topic: 'Fútbol',
-    importanceScore: 60,
-  });
-  const r = await elegir('Tenis Argentino', [], { docs: [previaFutbol] });
-  assert.notEqual(r.article?.url, previaFutbol.url);
 });

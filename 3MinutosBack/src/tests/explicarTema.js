@@ -211,7 +211,7 @@ async function explicarOficial(official, { now, usedUrls, top, store }) {
 
 async function explicarLibre(tema, { now, usedUrls, top, sinJuez, search }) {
   const since = new Date(now - MAX_ARTICLE_AGE_HOURS * 3600e3);
-  const ctx = { now, usedUrls, allowTodayPreviews: true }; // igual que el motor en un tema libre
+  const ctx = { now, usedUrls };
 
   console.log(`Tipo: LIBRE "${tema}"`);
   console.log('Cómo elige: expande el tema con IA -> búsqueda híbrida (significado + palabras) -> zonas, ancla léxica y ' +

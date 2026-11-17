@@ -118,7 +118,7 @@ async function startFreeTopic(topic, { expand, search, perTopicLimit, since, now
   if (topicJudge?.enabled()) {
     try {
       const candidates = await searchPromise;
-      const { eligible } = rankFreeCandidates(topic, expansion, candidates, { now, usedUrls, allowTodayPreviews: true }, { softCorral: true });
+      const { eligible } = rankFreeCandidates(topic, expansion, candidates, { now, usedUrls }, { softCorral: true });
       for (const entry of eligible.slice(0, PREFETCH_MAX_CANDIDATES)) topicJudge.prefetch(topic, noteForJudge(entry.article));
     } catch { /* sin adelanto: las preguntas salen en la fase 2 */ }
   }
@@ -133,10 +133,7 @@ async function pickFreeTopic(trimmedTopic, prepared, {
   now, usedUrls, seenEmbeddings, store, judge = null, topicJudge = null,
 }) {
   const since = new Date(now - MAX_ARTICLE_AGE_HOURS * 3600e3);
-  // En un tema libre la previa de un evento de HOY se puede entregar ("juega hoy a las 9 la final"); en el rescate no
-  // (ver rescueCtx): una previa de otro tema del rubro no es un buen premio consuelo.
-  const ctx = { now, usedUrls, allowTodayPreviews: true };
-  const rescueCtx = { now, usedUrls };
+  const ctx = { now, usedUrls };
   const loadDocs = embeddingLoader(store);
   const { expansion } = prepared;
 
@@ -243,7 +240,7 @@ async function pickFreeTopic(trimmedTopic, prepared, {
     // búsqueda: así el rescate anda aunque la búsqueda o OpenAI estén caídos y no hay consulta que sesgue el resultado.
     const rescued = await pickRescueArticle(
       { category: rescueCategory, hintOf: (a) => hintLevel(a, expansion) },
-      { ctx: rescueCtx, since, seenEmbeddings, store, judge },
+      { ctx, since, seenEmbeddings, store, judge },
     );
 
     if (rescued.hit) {

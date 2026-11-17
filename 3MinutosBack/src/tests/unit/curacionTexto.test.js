@@ -176,3 +176,43 @@ test('resumen ya guardado: se devuelve limpio y sin llamar a la IA', async () =>
   assert.deepEqual([r.cached, r.summary], [true, 'Ya hecho & listo']);
   assert.equal(pedidosIA.length, 0);
 });
+
+// ================================================================ prueba sin guardar (tests/probarCuracion.js)
+const CURACION_OK = {
+  output_parsed: {
+    politicalBiasRisk: 'low', biasAnalysis: '', neutralTitle: 'Ponzio arma el equipo de River',
+    neutralLead: 'River se prepara para el cruce con Lanús por los playoffs.',
+    neutralSummary: 'Leonardo Ponzio define la formación de River para enfrentar a Lanús en los playoffs del Clausura.',
+    neutralityScore: 92,
+  },
+};
+
+test('dryRun: devuelve la curación nueva pero no graba la nota (ni cuando la IA responde ni cuando falla)', async () => {
+  articulo = nota({ curationStatus: 'done', neutralTitle: 'viejo', neutralLead: 'viejo', neutralSummary: 'viejo' });
+  respuestaIA = async () => CURACION_OK;
+  const r = await generateNeutralCuration('a1', { force: true, dryRun: true });
+  assert.equal(r.neutralTitle, 'Ponzio arma el equipo de River');
+  assert.equal(articulo.guardados.length, 0);
+
+  respuestaIA = async () => { throw new Error('IA caída'); };
+  const f = await generateNeutralCuration('a1', { force: true, dryRun: true });
+  assert.equal(f.fallback, true);
+  assert.equal(articulo.guardados.length, 0);
+});
+
+test('sin dryRun la curación se graba como siempre', async () => {
+  articulo = nota();
+  respuestaIA = async () => CURACION_OK;
+  await generateNeutralCuration('a1');
+  assert.equal(articulo.guardados.length, 1);
+});
+
+test('el prompt pide no mezclar datos de otro evento, ignorar epígrafes y no agregar cargos a las personas', async () => {
+  articulo = nota();
+  respuestaIA = async () => CURACION_OK;
+  await generateNeutralCuration('a1');
+  const sistema = pedidosIA[0].input.find((m) => m.role === 'system').content;
+  assert.match(sistema, /pertenecer AL MISMO hecho/);
+  assert.match(sistema, /epígrafes de fotos/);
+  assert.match(sistema, /No agregues cargos, apodos ni descripciones/);
+});

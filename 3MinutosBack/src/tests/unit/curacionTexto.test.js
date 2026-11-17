@@ -207,12 +207,11 @@ test('sin dryRun la curación se graba como siempre', async () => {
   assert.equal(articulo.guardados.length, 1);
 });
 
-test('el prompt pide no mezclar datos de otro evento, ignorar epígrafes y no agregar cargos a las personas', async () => {
+test('el prompt pide no mezclar datos de otro evento e ignorar epígrafes', async () => {
   articulo = nota();
   respuestaIA = async () => CURACION_OK;
   await generateNeutralCuration('a1');
   const sistema = pedidosIA[0].input.find((m) => m.role === 'system').content;
   assert.match(sistema, /pertenecer AL MISMO hecho/);
   assert.match(sistema, /epígrafes de fotos/);
-  assert.match(sistema, /No agregues cargos, apodos ni descripciones/);
 });

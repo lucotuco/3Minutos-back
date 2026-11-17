@@ -230,7 +230,6 @@ async function generateNeutralCuration(articleId, options = {}) {
             '  Mal: "River se prepara para Lanús. El partido se jugará el 19 de enero contra el equipo de Messi." (el 19 de enero es OTRO partido, un amistoso)\n' +
             '  Bien: "River se prepara para el cruce con Lanús por los playoffs."\n' +
             '- El texto de la fuente puede traer pegados epígrafes de fotos, créditos ("(Olé: Nico Berardo)", "(Prensa River)", "Foto: ..."), avisos de suscripción, "Mirá también" o resúmenes de notas relacionadas. No son parte de la noticia: ignoralos.\n' +
-            '- Describí a las personas por su nombre. No agregues cargos, apodos ni descripciones ("el capitán de la Selección", "el exministro", "el campeón del mundo") salvo que la noticia sea justamente sobre ese rol: las fuentes a veces usan descripciones viejas o equivocadas.\n' +
             '- Neutral no significa suavizar hechos graves: significa contarlos sin tomar partido.\n' +
             '- Eliminá adjetivos cargados, tono partidario, dramatización, bajada ideológica, épica, sarcasmo, acusaciones no atribuidas y clickbait.\n' +
             '- No conviertas la noticia en propaganda de ningún actor.\n' +

@@ -125,7 +125,7 @@ ${JSON.stringify(payload, null, 2)}
 `.trim();
 }
 
-async function saveFallbackCuration(article, errorMessage = '') {
+async function saveFallbackCuration(article, errorMessage = '', { dryRun = false } = {}) {
   const fallbackTitle = buildFallbackTitle(article);
   const fallbackLead = buildFallbackLead(article);
   const fallbackSummary = buildFallbackSummary(article);
@@ -141,7 +141,7 @@ async function saveFallbackCuration(article, errorMessage = '') {
   article.curationError = errorMessage || 'Neutral curation failed';
   article.curationModel = OPENAI_MODEL;
 
-  await article.save();
+  if (!dryRun) await article.save();
 
   return {
     article,
@@ -155,8 +155,14 @@ async function saveFallbackCuration(article, errorMessage = '') {
   };
 }
 
+/**
+ * @param {object} [options]
+ * @param {boolean} [options.force]   vuelve a curar aunque ya haya una curación guardada
+ * @param {boolean} [options.dryRun]  no guarda nada en Mongo: devuelve la curación nueva para mirarla
+ *                                    (lo usa tests/probarCuracion.js)
+ */
 async function generateNeutralCuration(articleId, options = {}) {
-  const { force = false } = options;
+  const { force = false, dryRun = false } = options;
 
   const article = await Article.findById(articleId);
 
@@ -220,6 +226,10 @@ async function generateNeutralCuration(articleId, options = {}) {
             '- No inventes datos.\n' +
             '- No agregues contexto externo que no esté en el artículo.\n' +
             '- No ocultes conflicto, críticas, denuncias o posturas enfrentadas si son parte central de la noticia.\n' +
+            '- Cada fecha, hora, rival, lugar o cifra que escribas tiene que pertenecer AL MISMO hecho del que habla la noticia. Si el texto menciona otro evento (un amistoso futuro, otro partido, otra causa), no le pases sus datos al hecho principal: o lo dejás afuera o aclarás que es otra cosa.\n' +
+            '  Mal: "River se prepara para Lanús. El partido se jugará el 19 de enero contra el equipo de Messi." (el 19 de enero es OTRO partido, un amistoso)\n' +
+            '  Bien: "River se prepara para el cruce con Lanús por los playoffs."\n' +
+            '- El texto de la fuente puede traer pegados epígrafes de fotos, créditos ("(Olé: Nico Berardo)", "(Prensa River)", "Foto: ..."), avisos de suscripción, "Mirá también" o resúmenes de notas relacionadas. No son parte de la noticia: ignoralos.\n' +
             '- Neutral no significa suavizar hechos graves: significa contarlos sin tomar partido.\n' +
             '- Eliminá adjetivos cargados, tono partidario, dramatización, bajada ideológica, épica, sarcasmo, acusaciones no atribuidas y clickbait.\n' +
             '- No conviertas la noticia en propaganda de ningún actor.\n' +
@@ -382,7 +392,7 @@ async function generateNeutralCuration(articleId, options = {}) {
       article.curationError = 'Generated text contained forbidden source attribution';
     }
 
-    await article.save();
+    if (!dryRun) await article.save();
 
     timer.end({
       cached: false,
@@ -414,7 +424,8 @@ async function generateNeutralCuration(articleId, options = {}) {
 
     return saveFallbackCuration(
       article,
-      error.message || 'Neutral curation generation failed'
+      error.message || 'Neutral curation generation failed',
+      { dryRun }
     );
   }
 }

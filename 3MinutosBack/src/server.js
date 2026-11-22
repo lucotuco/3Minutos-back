@@ -9,6 +9,8 @@ const { startHourlyIngestionJob, runHourlyIngestion } = require('./ingestionJob'
 const { startCleanupAudiosJob } = require('./cleanupAudiosJob');
 const { startGlobalContextCron } = require('./cronGlobalContextCron');
 const { enablePersistentExpansionCache } = require('./utils/topicExpansionStore');
+const { releaseDuplicatedPushTokens } = require('./utils/releasePushToken');
+const UserPreference = require('./models/UserPreference');
 
 
 const PORT = Number(process.env.PORT || 3000);
@@ -58,6 +60,11 @@ async function start() {
     } else {
       console.log('⏸️ Copia de expansiones de temas en Mongo deshabilitada (TOPIC_EXPANSION_STORE=off)');
     }
+
+    // Un token de notificaciones = una cuenta: limpia los repetidos que quedaron de antes (ver utils/releasePushToken.js).
+    releaseDuplicatedPushTokens(UserPreference).catch((error) => {
+      console.error('❌ Error limpiando tokens de notificaciones repetidos:', error.message);
+    });
 
     startGlobalContextCron();
 

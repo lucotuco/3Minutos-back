@@ -1,0 +1,36 @@
+'use strict';
+
+/**
+ * Un celular tiene UN token de notificaciones (Expo). Si dos cuentas lo tienen guardado, ese celular recibe las
+ * notificaciones de las dos: le llegaba el aviso de una cuenta vieja que ya no usa (con otro horario) y, al abrir la
+ * app, veía el digest de la cuenta actual, que todavía no estaba listo. Caso real: Naty F, dos cuentas con el mismo
+ * token, notificaciones a las 9:55 y a las 10:50 durante meses.
+ *
+ * Cuando una cuenta guarda un token, se lo saca a cualquier otra cuenta que lo tenga: la última que lo registró es
+ * la que está usando ese celular. Las otras cuentas no se tocan en nada más.
+ *
+ * @param {object} UserPreference  el modelo (se recibe para poder probarlo sin Mongo)
+ * @param {string} token           el token que se acaba de guardar
+ * @param {*}      ownerId         la cuenta que lo guardó
+ * @returns {Promise<number>}      cuántas cuentas lo perdieron
+ */
+async function releasePushTokenFromOtherUsers(UserPreference, token, ownerId) {
+  if (!token || !ownerId) return 0;
+  try {
+    const result = await UserPreference.updateMany(
+      { expoPushToken: token, _id: { $ne: ownerId } },
+      { $set: { expoPushToken: null } }
+    );
+    const released = result?.modifiedCount ?? 0;
+    if (released > 0) {
+      console.log(`[push-token] el token de user=${String(ownerId)} se sacó de ${released} cuenta(s) más`);
+    }
+    return released;
+  } catch (error) {
+    // No frena el guardado: lo peor que pasa es que el celular siga recibiendo dos avisos.
+    console.error('[push-token] no se pudo sacar el token de otras cuentas:', error.message);
+    return 0;
+  }
+}
+
+module.exports = { releasePushTokenFromOtherUsers };

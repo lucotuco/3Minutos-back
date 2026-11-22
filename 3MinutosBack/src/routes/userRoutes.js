@@ -10,6 +10,7 @@ const { uploadDigestAudio } = require('../audio/uploadDigestAudio');
 
 const UserPreference = require('../models/UserPreference');
 const UserShownArticle = require('../models/UserShownArticle');
+const { releasePushTokenFromOtherUsers } = require('../utils/releasePushToken');
 const UserDeliveryRun = require('../models/UserDeliveryRun');
 const ArticleVote = require('../models/ArticleVote');
 const { VOTE_VALUES, VOTE_DOWN, DOWN_REASONS } = require('../models/ArticleVote');
@@ -282,6 +283,8 @@ router.post('/preferences', async (req, res) => {
       expoPushToken: expoPushToken || null,
     });
 
+    if (expoPushToken) await releasePushTokenFromOtherUsers(UserPreference, expoPushToken, user._id);
+
     const token = signUserToken(user._id);
 
     return res.status(201).json({
@@ -400,6 +403,8 @@ router.patch(
         return userNotFoundResponse(res);
       }
 
+      if (updates.expoPushToken) await releasePushTokenFromOtherUsers(UserPreference, updates.expoPushToken, user._id);
+
       return res.json({
         user: publicUser(user),
       });
@@ -453,6 +458,8 @@ router.patch(
       if (!user) {
         return userNotFoundResponse(res);
       }
+
+      await releasePushTokenFromOtherUsers(UserPreference, expoPushToken, user._id);
 
       return res.json({
         ok: true,

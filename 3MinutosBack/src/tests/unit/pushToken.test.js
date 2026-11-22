@@ -101,7 +101,7 @@ async function montar(modelo, userId) {
 }
 
 // ================================================================ la función
-test('saca el token de las otras cuentas y no toca la que lo guardó ni las de otro celular', async () => {
+test('saca el token de las otras cuentas (y las desactiva) sin tocar la que lo guardó ni las de otro celular', async () => {
   const modelo = modeloFalso([
     { _id: VIEJA, expoPushToken: TOKEN },
     { _id: ACTUAL, expoPushToken: TOKEN },
@@ -109,7 +109,9 @@ test('saca el token de las otras cuentas y no toca la que lo guardó ni las de o
   ]);
   assert.equal(await releasePushTokenFromOtherUsers(modelo, TOKEN, ACTUAL), 1);
   assert.equal(modelo.docs.get(VIEJA).expoPushToken, null);
-  assert.equal(modelo.docs.get(VIEJA).isActive, true, 'la cuenta vieja no se desactiva: solo pierde el token');
+  assert.equal(modelo.docs.get(VIEJA).isActive, false, 'la cuenta vieja queda inactiva');
+  assert.equal(modelo.docs.get(ACTUAL).isActive, true, 'la que guardó el token sigue activa');
+  assert.equal(modelo.docs.get(OTRA).isActive, true, 'la de otro celular no se toca');
   assert.equal(modelo.docs.get(ACTUAL).expoPushToken, TOKEN);
   assert.equal(modelo.docs.get(OTRA).expoPushToken, OTRO_TOKEN);
 });
@@ -151,6 +153,9 @@ test('limpieza al arrancar: un token en tres cuentas queda solo en la más recie
   assert.equal(modelo.docs.get(OTRA).expoPushToken, TOKEN);
   assert.equal(modelo.docs.get(VIEJA).expoPushToken, null);
   assert.equal(modelo.docs.get(ACTUAL).expoPushToken, null);
+  assert.equal(modelo.docs.get(VIEJA).isActive, false);
+  assert.equal(modelo.docs.get(ACTUAL).isActive, false);
+  assert.equal(modelo.docs.get(OTRA).isActive, true);
 });
 
 // ================================================================ las rutas

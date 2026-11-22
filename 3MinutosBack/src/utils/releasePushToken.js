@@ -7,7 +7,9 @@
  * token, notificaciones a las 9:55 y a las 10:50 durante meses.
  *
  * Cuando una cuenta guarda un token, se lo saca a cualquier otra cuenta que lo tenga: la última que lo registró es
- * la que está usando ese celular. Las otras cuentas no se tocan en nada más.
+ * la que está usando ese celular. Las otras además quedan inactivas (isActive: false): la app no tiene login, así que
+ * una cuenta que perdió su celular frente a otra ya no la puede abrir nadie, y seguir armándole un digest por día
+ * solo gasta OpenAI y ancho de banda.
  *
  * @param {object} UserPreference  el modelo (se recibe para poder probarlo sin Mongo)
  * @param {string} token           el token que se acaba de guardar
@@ -19,7 +21,7 @@ async function releasePushTokenFromOtherUsers(UserPreference, token, ownerId) {
   try {
     const result = await UserPreference.updateMany(
       { expoPushToken: token, _id: { $ne: ownerId } },
-      { $set: { expoPushToken: null } }
+      { $set: { expoPushToken: null, isActive: false } }
     );
     const released = result?.modifiedCount ?? 0;
     if (released > 0) {
@@ -36,7 +38,7 @@ async function releasePushTokenFromOtherUsers(UserPreference, token, ownerId) {
 /**
  * Limpia los tokens que YA están repetidos (los que quedaron de antes de releasePushTokenFromOtherUsers): por cada
  * token que tienen dos o más cuentas, se lo queda la que se actualizó por última vez (la que usa la app hoy) y a las
- * demás se les saca. Se corre al arrancar el servidor; si no hay repetidos no cambia nada, así que correrlo de nuevo
+ * demás se les saca (y quedan inactivas, como arriba). Se corre al arrancar el servidor; si no hay repetidos no cambia nada, así que correrlo de nuevo
  * es inofensivo.
  *
  * @param {object} UserPreference  el modelo (se recibe para poder probarlo sin Mongo)

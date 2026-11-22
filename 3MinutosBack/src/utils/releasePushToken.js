@@ -33,4 +33,31 @@ async function releasePushTokenFromOtherUsers(UserPreference, token, ownerId) {
   }
 }
 
-module.exports = { releasePushTokenFromOtherUsers };
+/**
+ * Limpia los tokens que YA están repetidos (los que quedaron de antes de releasePushTokenFromOtherUsers): por cada
+ * token que tienen dos o más cuentas, se lo queda la que se actualizó por última vez (la que usa la app hoy) y a las
+ * demás se les saca. Se corre al arrancar el servidor; si no hay repetidos no cambia nada, así que correrlo de nuevo
+ * es inofensivo.
+ *
+ * @param {object} UserPreference  el modelo (se recibe para poder probarlo sin Mongo)
+ * @returns {Promise<{tokens:number, released:number}>}  tokens repetidos encontrados y cuentas que perdieron el token
+ */
+async function releaseDuplicatedPushTokens(UserPreference) {
+  const repeated = await UserPreference.aggregate([
+    { $match: { expoPushToken: { $type: 'string', $ne: '' } } },
+    { $sort: { updatedAt: -1, _id: -1 } },
+    { $group: { _id: '$expoPushToken', owners: { $push: '$_id' }, n: { $sum: 1 } } },
+    { $match: { n: { $gt: 1 } } },
+  ]);
+
+  let released = 0;
+  for (const { _id: token, owners } of repeated) {
+    released += await releasePushTokenFromOtherUsers(UserPreference, token, owners[0]);
+  }
+  if (repeated.length) {
+    console.log(`[push-token] tokens repetidos: ${repeated.length}, cuentas que perdieron el token: ${released}`);
+  }
+  return { tokens: repeated.length, released };
+}
+
+module.exports = { releasePushTokenFromOtherUsers, releaseDuplicatedPushTokens };

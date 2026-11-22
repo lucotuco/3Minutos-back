@@ -18,7 +18,7 @@ process.env.OPENAI_API_KEY_EMBEDDINGS ||= 'test';
 process.env.OPENAI_API_KEY_REVIEW ||= 'test';
 
 const SRC = path.join(__dirname, '..', '..');
-const { releasePushTokenFromOtherUsers } = require('../../utils/releasePushToken');
+const { releasePushTokenFromOtherUsers, releaseDuplicatedPushTokens } = require('../../utils/releasePushToken');
 
 const VIEJA = '6a5e344751a0b1eb89521f62';
 const ACTUAL = '6a621d21903a120db4315984';
@@ -37,6 +37,17 @@ function modeloFalso(usuarios) {
     && (!filtro._id?.$ne || String(d._id) !== String(filtro._id.$ne));
   return {
     docs,
+    // Solo lo que hace releaseDuplicatedPushTokens: tokens con más de una cuenta, la más recién actualizada primero.
+    async aggregate() {
+      const porToken = new Map();
+      const ordenados = [...docs.values()].filter((d) => typeof d.expoPushToken === 'string' && d.expoPushToken)
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0) || (String(b._id) > String(a._id) ? 1 : -1));
+      for (const d of ordenados) {
+        if (!porToken.has(d.expoPushToken)) porToken.set(d.expoPushToken, []);
+        porToken.get(d.expoPushToken).push(d._id);
+      }
+      return [...porToken].filter(([, owners]) => owners.length > 1).map(([_id, owners]) => ({ _id, owners, n: owners.length }));
+    },
     async updateMany(filtro, { $set }) {
       let modifiedCount = 0;
       for (const d of docs.values()) if (coincide(d, filtro)) { Object.assign(d, $set); modifiedCount++; }
@@ -112,6 +123,34 @@ test('sin token o sin dueño no hace nada, y si Mongo falla no rompe el guardado
 
   const roto = { updateMany: async () => { throw new Error('Mongo caído'); } };
   assert.equal(await releasePushTokenFromOtherUsers(roto, TOKEN, ACTUAL), 0);
+});
+
+// ================================================================ limpieza de los repetidos que ya existen
+test('limpieza al arrancar: por cada token repetido se lo queda la cuenta actualizada por última vez', async () => {
+  const modelo = modeloFalso([
+    { _id: VIEJA, expoPushToken: TOKEN, updatedAt: new Date('2026-07-23T13:52:43Z') },
+    { _id: ACTUAL, expoPushToken: TOKEN, updatedAt: new Date('2026-11-22T13:43:54Z') },
+    { _id: OTRA, expoPushToken: OTRO_TOKEN, updatedAt: new Date('2026-11-01T00:00:00Z') },
+    { _id: '6b0000000000000000000009', expoPushToken: null },
+  ]);
+  assert.deepEqual(await releaseDuplicatedPushTokens(modelo), { tokens: 1, released: 1 });
+  assert.equal(modelo.docs.get(VIEJA).expoPushToken, null);
+  assert.equal(modelo.docs.get(ACTUAL).expoPushToken, TOKEN);
+  assert.equal(modelo.docs.get(OTRA).expoPushToken, OTRO_TOKEN, 'un token que tiene una sola cuenta no se toca');
+
+  assert.deepEqual(await releaseDuplicatedPushTokens(modelo), { tokens: 0, released: 0 }, 'correrla otra vez no cambia nada');
+});
+
+test('limpieza al arrancar: un token en tres cuentas queda solo en la más reciente', async () => {
+  const modelo = modeloFalso([
+    { _id: VIEJA, expoPushToken: TOKEN, updatedAt: new Date('2026-07-01') },
+    { _id: OTRA, expoPushToken: TOKEN, updatedAt: new Date('2026-11-21') },
+    { _id: ACTUAL, expoPushToken: TOKEN, updatedAt: new Date('2026-09-01') },
+  ]);
+  assert.deepEqual(await releaseDuplicatedPushTokens(modelo), { tokens: 1, released: 2 });
+  assert.equal(modelo.docs.get(OTRA).expoPushToken, TOKEN);
+  assert.equal(modelo.docs.get(VIEJA).expoPushToken, null);
+  assert.equal(modelo.docs.get(ACTUAL).expoPushToken, null);
 });
 
 // ================================================================ las rutas
